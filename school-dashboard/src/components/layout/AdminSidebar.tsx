@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  LayoutDashboard,
   Building2,
   Bus,
   Users,
@@ -22,9 +23,11 @@ interface SidebarItem {
   href: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
+  exact?: boolean;
 }
 
 const navItems: SidebarItem[] = [
+  { name: 'Dashboard Overview', href: '/admin', icon: LayoutDashboard, exact: true },
   { name: 'Live Operations', href: '/admin/live', icon: Radio, badge: 'Live' },
   { name: 'School Profile', href: '/admin/profile', icon: Building2 },
   { name: 'Fleet / Buses', href: '/admin/buses', icon: Bus },
@@ -101,9 +104,9 @@ export function AdminSidebar({
             Transport Control
           </div>
           {navItems.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              (item.href !== '/admin' && pathname?.startsWith(item.href));
+            const isActive = item.exact
+              ? pathname === item.href
+              : pathname === item.href || (item.href !== '/admin' && pathname?.startsWith(item.href));
             const Icon = item.icon;
             return (
               <Link

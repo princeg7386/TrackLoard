@@ -40,7 +40,7 @@
 | **P4-PAR-02** | Safety | Parent Live Tracking | **Secure Parent Live Web View**: Responsive, secure tokenized web tracking showing live bus location, stop ETA, and driver contact. | P2-ETA-03, P2-TRP-04, P0-SEC-03 | Not Started |
 | **P5-DLY-01** | Safety | Anomaly & Delay | **Delay & Route Deviation Detection**: Automated detection of unapproved stops, route divergence, and heavy traffic delays. | P2-GPS-01, P2-GEO-02 | Not Started |
 | **P5-SOS-02** | Safety | Emergency & Incident | **Driver SOS & Incident Management**: Instant alert dispatch to school admin, priority WhatsApp broadcast, incident audit trail. | P2-GPS-01, P3-DWA-02, P4-NOT-01 | Not Started |
-| **P5-ADM-03** | Core | School Dashboard UI | **Operational Admin Dashboard**: Live fleet map canvas, active trip status, delay monitor, exception queues, and quick actions. | P2-TRP-04, P5-DLY-01, P5-SOS-02 | Not Started |
+| **P5-ADM-03** | Core | School Dashboard UI | **Operational Admin Dashboard & Home Overview**: Dashboard cards, transport status summary, safety alert monitor, real-time audit activity feed, live dispatch quick actions, and 7-state UI. | P0-SEC-03, P1-SCH-01 | **Done** |
 | **P6-RPT-01** | Supporting | Reports & Analytics | **Fleet Operations & Safety Reports**: On-time performance, driver route adherence, attendance logs, SOS resolution records. | P2-TRP-04, P3-ATT-03, P5-SOS-02 | Not Started |
 
 ---
