@@ -6,11 +6,11 @@ export enum LogLevel {
 }
 
 export interface LogContext {
-  schoolId?: string;
-  tripId?: string;
-  busId?: string;
-  driverId?: string;
-  userId?: string;
+  schoolId?: string | null;
+  tripId?: string | null;
+  busId?: string | null;
+  driverId?: string | null;
+  userId?: string | null;
   [key: string]: any;
 }
 

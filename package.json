@@ -28,5 +28,8 @@
     "flutter"
   ],
   "author": "Antigravity Engineering",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
+  }
 }

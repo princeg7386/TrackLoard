@@ -595,3 +595,48 @@ export function sanitizeString(val: string): string {
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // remove script tags
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * Authentication & Security DTOs
+ * -----------------------------------------------------------------------------
+ */
+
+export const LoginRequestSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+export type LoginRequest = z.infer<typeof LoginRequestSchema>;
+
+export const ForgotPasswordRequestSchema = z.object({
+  email: z.string().email('Please enter a valid email address'),
+});
+export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordRequestSchema>;
+
+export const ResetPasswordRequestSchema = z.object({
+  token: z.string().min(10, 'Valid reset token required'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+export type ResetPasswordRequest = z.infer<typeof ResetPasswordRequestSchema>;
+
+export const ChangePasswordRequestSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;
+
+export interface AuthUserPayload {
+  id: string;
+  schoolId: string | null;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  phone?: string;
+}
+
+export interface LoginResponseData {
+  token: string;
+  user: AuthUserPayload;
+  expiresIn: string;
+}
+
+
