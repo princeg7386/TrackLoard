@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # PostgreSQL with PostGIS extension pre-installed
+  # PostgreSQL with PostGIS extension
   postgis:
     image: postgis/postgis:16-3.4
     container_name: school_bus_postgis
@@ -14,12 +14,30 @@ services:
       - '5432:5432'
     volumes:
       - postgis_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres -d school_bus_tracker']
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # Redis for pub/sub live coordinates & fast session tokens
+  redis:
+    image: redis:7-alpine
+    container_name: school_bus_redis
+    restart: always
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgis_data:
+    driver: local
+  redis_data:
     driver: local
