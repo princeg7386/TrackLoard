@@ -7,12 +7,14 @@ import {
   AuthUserPayload,
   LoginResponseData,
   UserRole,
+  normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
 import {
   UnauthorizedError,
   NotFoundError,
   AppError,
 } from '../middlewares/error.middleware.js';
+import { AuditService } from './audit.service.js';
 import { logger } from './logger.service.js';
 
 export class AuthService {
@@ -258,6 +260,67 @@ export class AuthService {
       fullName: admin.full_name,
       role: admin.role as UserRole,
       phone: admin.phone || undefined,
+    };
+  }
+
+  /**
+   * Updates administrator's own profile (full name, mobile phone)
+   */
+  static async updateAdminProfile(
+    userId: string,
+    data: { fullName: string; phone?: string },
+    clientIp?: string
+  ): Promise<AuthUserPayload> {
+    const current = await this.getMe(userId);
+
+    const cleanPhone = data.phone ? normalizeIndianPhoneNumber(data.phone) : null;
+    const cleanName = data.fullName.trim();
+
+    const rows = await query<{
+      id: string;
+      school_id: string | null;
+      email: string;
+      full_name: string;
+      phone: string | null;
+      role: string;
+    }>(
+      `UPDATE admins
+       SET full_name = $1, phone = $2, updated_at = NOW()
+       WHERE id = $3 AND deleted_at IS NULL
+       RETURNING id, school_id, email, full_name, phone, role;`,
+      [cleanName, cleanPhone, userId]
+    );
+
+    const updated = rows[0];
+    if (!updated) {
+      throw new NotFoundError('Admin profile could not be updated');
+    }
+
+    if (current.schoolId) {
+      await AuditService.logAction({
+        schoolId: current.schoolId,
+        userId,
+        userRole: current.role,
+        action: 'ADMIN_PROFILE_UPDATE',
+        entityType: 'ADMIN',
+        entityId: userId,
+        diffJson: {
+          before: { fullName: current.fullName, phone: current.phone },
+          after: { fullName: updated.full_name, phone: updated.phone },
+        },
+        ipAddress: clientIp,
+      });
+    }
+
+    logger.info('Admin user updated profile successfully', { adminId: userId });
+
+    return {
+      id: updated.id,
+      schoolId: updated.school_id,
+      email: updated.email,
+      fullName: updated.full_name,
+      role: updated.role as UserRole,
+      phone: updated.phone || undefined,
     };
   }
 }

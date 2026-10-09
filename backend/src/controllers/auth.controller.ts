@@ -70,4 +70,15 @@ export class AuthController {
       next(error);
     }
   }
+
+  static async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const userId = req.user!.id;
+      const clientIp = req.socket.remoteAddress;
+      const updated = await AuthService.updateAdminProfile(userId, req.body, clientIp);
+      sendSuccess(res, updated, 'Admin profile updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }

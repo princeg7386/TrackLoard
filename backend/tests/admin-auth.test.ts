@@ -113,6 +113,34 @@ describe('Admin Authentication & Security Engine', () => {
     getMeSpy.mockRestore();
   });
 
+  it('PUT /api/v1/auth/profile updates admin mobile phone and full name', async () => {
+    const token = AuthService.generateToken(mockAdminUser);
+    const updatedUser = {
+      ...mockAdminUser,
+      fullName: 'Vikram Singh Verma',
+      phone: '+919811998877',
+    };
+
+    const updateSpy = vi
+      .spyOn(AuthService, 'updateAdminProfile')
+      .mockResolvedValueOnce(updatedUser);
+
+    const res = await request(app)
+      .put('/api/v1/auth/profile')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        fullName: 'Vikram Singh Verma',
+        phone: '9811998877',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.fullName).toBe('Vikram Singh Verma');
+    expect(res.body.data.phone).toBe('+919811998877');
+
+    updateSpy.mockRestore();
+  });
+
   it('verifies migration 005_auth_password_reset.sql exists with correct schema alterations', () => {
     const migrationPath = path.join(
       __dirname,

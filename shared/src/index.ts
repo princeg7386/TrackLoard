@@ -642,6 +642,12 @@ export const ChangePasswordRequestSchema = z.object({
 });
 export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequestSchema>;
 
+export const UpdateAdminProfileRequestSchema = z.object({
+  fullName: z.string().min(2, 'Full name must be at least 2 characters').max(255),
+  phone: z.string().min(10, 'Valid 10-digit mobile phone required').optional().or(z.literal('')),
+});
+export type UpdateAdminProfileRequest = z.infer<typeof UpdateAdminProfileRequestSchema>;
+
 export interface AuthUserPayload {
   id: string;
   schoolId: string | null;

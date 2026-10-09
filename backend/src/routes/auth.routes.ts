@@ -7,6 +7,7 @@ import {
   ForgotPasswordRequestSchema,
   ResetPasswordRequestSchema,
   ChangePasswordRequestSchema,
+  UpdateAdminProfileRequestSchema,
 } from '@school-bus/shared';
 
 const authRouter = Router();
@@ -45,5 +46,13 @@ authRouter.post(
 
 // 6. Get Current User Profile (Authenticated)
 authRouter.get('/me', authenticateToken, AuthController.getMe);
+
+// 7. Update Admin Profile (Authenticated)
+authRouter.put(
+  '/profile',
+  authenticateToken,
+  validateRequest({ body: UpdateAdminProfileRequestSchema }),
+  AuthController.updateProfile
+);
 
 export default authRouter;
