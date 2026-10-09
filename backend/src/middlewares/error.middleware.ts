@@ -15,6 +15,18 @@ export class AppError extends Error {
   }
 }
 
+export class BadRequestError extends AppError {
+  constructor(message: string = 'Bad request', details?: any) {
+    super(message, 400, details);
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message: string = 'Validation failed', details?: any) {
+    super(message, 422, details);
+  }
+}
+
 export class NotFoundError extends AppError {
   constructor(message: string = 'Resource not found') {
     super(message, 404);

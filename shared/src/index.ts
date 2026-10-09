@@ -676,5 +676,143 @@ export interface DriverAuthResponseData {
   expiresIn: string;
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * Parent Identity & Secure Tracking Link Schemas & DTOs
+ * -----------------------------------------------------------------------------
+ */
+
+export interface ParentIdentityStudentInfo {
+  id: string;
+  schoolId: string;
+  fullName: string;
+  admissionNumber: string;
+  classGrade: string;
+  section: string;
+  rollNumber?: string | null;
+  emergencyContactPhone?: string | null;
+}
+
+export interface ParentIdentityRecord {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  fullName: string;
+  relationship: string;
+  phone: string;
+  email?: string | null;
+  student: ParentIdentityStudentInfo;
+  school: {
+    id: string;
+    name: string;
+    code: string;
+    city: string;
+    timezone: string;
+  };
+  pickupStop?: {
+    id: string;
+    stopName: string;
+    sequenceOrder: number;
+    scheduledTime: string;
+    latitude: number;
+    longitude: number;
+    geofenceRadiusMeters: number;
+  } | null;
+}
+
+export const ParentIdentityLookupRequestSchema = z.object({
+  phone: z.string().min(10, 'Valid WhatsApp phone number is required'),
+  schoolId: z.string().uuid().optional(),
+});
+export type ParentIdentityLookupRequest = z.infer<typeof ParentIdentityLookupRequestSchema>;
+
+export const GenerateParentTokenRequestSchema = z.object({
+  parentId: z.string().uuid('Valid parent ID required'),
+  studentId: z.string().uuid('Valid student ID required'),
+  schoolId: z.string().uuid('Valid school ID required'),
+  tripId: z.string().uuid().optional().nullable(),
+  ttlHours: z.number().int().min(1).max(168).default(12),
+  purpose: z.enum(['LIVE_TRACKING', 'PICKUP_NOTIFICATION', 'MANUAL_REQUEST']).default('LIVE_TRACKING'),
+});
+export type GenerateParentTokenRequest = z.infer<typeof GenerateParentTokenRequestSchema>;
+
+export const RevokeParentTokenRequestSchema = z
+  .object({
+    token: z.string().optional(),
+    tokenId: z.string().uuid().optional(),
+    reason: z.string().optional(),
+  })
+  .refine((data) => Boolean(data.token || data.tokenId), {
+    message: 'Either token or tokenId must be provided for revocation',
+  });
+export type RevokeParentTokenRequest = z.infer<typeof RevokeParentTokenRequestSchema>;
+
+export const RevokeStudentTokensRequestSchema = z.object({
+  studentId: z.string().uuid('Valid student ID required'),
+  schoolId: z.string().uuid('Valid school ID required'),
+  reason: z.string().optional(),
+});
+export type RevokeStudentTokensRequest = z.infer<typeof RevokeStudentTokensRequestSchema>;
+
+export interface ParentTrackingTokenData {
+  id: string;
+  token: string;
+  trackingUrl: string;
+  expiresAt: string;
+  purpose: string;
+  parentId: string;
+  studentId: string;
+  schoolId: string;
+  tripId?: string | null;
+}
+
+export interface ParentLiveTrackingSession {
+  isValid: boolean;
+  expiresAt: string;
+  parent: {
+    id: string;
+    fullName: string;
+    relationship: string;
+    phone: string;
+  };
+  student: ParentIdentityStudentInfo;
+  school: {
+    id: string;
+    name: string;
+    code: string;
+    timezone: string;
+  };
+  pickupStop?: {
+    id: string;
+    stopName: string;
+    sequenceOrder: number;
+    scheduledTime: string;
+    latitude: number;
+    longitude: number;
+    geofenceRadiusMeters: number;
+  } | null;
+  activeTrip?: {
+    id: string;
+    routeId: string;
+    routeName: string;
+    routeType: RouteType;
+    status: TripStatus;
+    busNumber: string;
+    registrationNumber: string;
+    driverName: string;
+    driverPhone?: string;
+    delayMinutes: number;
+    currentStopSequence: number;
+    lastGpsLocation?: {
+      latitude: number;
+      longitude: number;
+      speedKmh: number;
+      bearingDegrees?: number;
+      recordedAt: string;
+    } | null;
+  } | null;
+}
+
+
 
 

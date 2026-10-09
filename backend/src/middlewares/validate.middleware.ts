@@ -48,11 +48,20 @@ export function validateRequest(validators: RequestValidators) {
 
       next();
     } catch (error) {
-      if (error instanceof ZodError) {
-        next(error);
-      } else {
-        next(error);
-      }
+      next(error);
     }
   };
 }
+
+export function validateBody(schema: ZodSchema) {
+  return validateRequest({ body: schema });
+}
+
+export function validateQuery(schema: ZodSchema) {
+  return validateRequest({ query: schema });
+}
+
+export function validateParams(schema: ZodSchema) {
+  return validateRequest({ params: schema });
+}
+

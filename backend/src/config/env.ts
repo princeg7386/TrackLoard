@@ -19,6 +19,7 @@ const EnvSchema = z.object({
   JWT_EXPIRES_IN: z.string().default('7d'),
   PARENT_TOKEN_SECRET: z.string().default('development-parent-secret-key-min-32-chars-strictly-for-testing-only'),
   PARENT_TOKEN_TTL_HOURS: z.coerce.number().int().default(12),
+  PARENT_TRACKING_BASE_URL: z.string().default('http://localhost:3000/track'),
 
   // Providers & GIS
   ROUTING_PROVIDER: z.enum(['osrm', 'valhalla', 'google_maps']).default('osrm'),
