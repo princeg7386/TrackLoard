@@ -639,4 +639,42 @@ export interface LoginResponseData {
   expiresIn: string;
 }
 
+export const DriverLoginRequestSchema = z.object({
+  phone: z.string().min(10, 'Valid phone number required'),
+  pin: z.string().min(4).max(6).optional(), // 4-6 digit PIN
+  licenseNumber: z.string().optional(),
+});
+export type DriverLoginRequest = z.infer<typeof DriverLoginRequestSchema>;
+
+export interface DriverAuthPayload {
+  id: string;
+  schoolId: string;
+  phone: string;
+  fullName: string;
+  role: UserRole.DRIVER;
+  assignedBusId?: string | null;
+}
+
+export interface DriverAssignedBusInfo {
+  id: string;
+  registrationNumber: string;
+  busNumber: string;
+  makeModel?: string;
+}
+
+export interface DriverProfileResponseData {
+  driver: DriverAuthPayload;
+  assignedBus?: DriverAssignedBusInfo | null;
+  activeTrip?: Trip | null;
+  todayTrips: Trip[];
+}
+
+export interface DriverAuthResponseData {
+  token: string;
+  driver: DriverAuthPayload;
+  assignedBus?: DriverAssignedBusInfo | null;
+  expiresIn: string;
+}
+
+
 
