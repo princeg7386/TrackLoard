@@ -813,6 +813,111 @@ export interface ParentLiveTrackingSession {
   } | null;
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * Role-Based Access Control & Multi-Tenant Isolation Definitions
+ * -----------------------------------------------------------------------------
+ */
+
+export enum PermissionAction {
+  CREATE = 'CREATE',
+  READ = 'READ',
+  UPDATE = 'UPDATE',
+  DELETE = 'DELETE',
+  EXECUTE = 'EXECUTE',
+  DISPATCH = 'DISPATCH',
+  RESOLVE = 'RESOLVE',
+}
+
+export enum ResourceDomain {
+  SCHOOL = 'SCHOOL',
+  FLEET_BUS = 'FLEET_BUS',
+  DRIVER = 'DRIVER',
+  STUDENT = 'STUDENT',
+  PARENT = 'PARENT',
+  ROUTE = 'ROUTE',
+  TRIP = 'TRIP',
+  TELEMETRY = 'TELEMETRY',
+  ATTENDANCE = 'ATTENDANCE',
+  INCIDENT = 'INCIDENT',
+  SOS = 'SOS',
+  REPORT = 'REPORT',
+  AUDIT_LOG = 'AUDIT_LOG',
+}
+
+export interface TenantContext {
+  schoolId: string;
+  isSuperAdmin: boolean;
+  userId: string;
+  role: UserRole;
+}
+
+/**
+ * Checks whether a given user role possesses permission to execute an action on a domain
+ */
+export function hasRolePermission(
+  role: UserRole,
+  domain: ResourceDomain,
+  action: PermissionAction
+): boolean {
+  if (role === UserRole.SUPER_ADMIN) {
+    return true; // Super admin has global unrestricted permissions
+  }
+
+  if (role === UserRole.SCHOOL_ADMIN) {
+    // School Admin has full access within their school tenant
+    return true;
+  }
+
+  if (role === UserRole.TRANSPORT_COORDINATOR) {
+    // Coordinator cannot delete school or audit logs
+    if (
+      domain === ResourceDomain.SCHOOL &&
+      (action === PermissionAction.DELETE || action === PermissionAction.CREATE)
+    ) {
+      return false;
+    }
+    if (domain === ResourceDomain.AUDIT_LOG && action === PermissionAction.DELETE) {
+      return false;
+    }
+    return true;
+  }
+
+  if (role === UserRole.DRIVER) {
+    if (
+      domain === ResourceDomain.TELEMETRY &&
+      (action === PermissionAction.CREATE || action === PermissionAction.READ)
+    ) return true;
+    if (
+      domain === ResourceDomain.ATTENDANCE &&
+      (action === PermissionAction.CREATE || action === PermissionAction.UPDATE || action === PermissionAction.READ)
+    ) return true;
+    if (
+      domain === ResourceDomain.TRIP &&
+      (action === PermissionAction.READ || action === PermissionAction.EXECUTE || action === PermissionAction.UPDATE)
+    ) return true;
+    if (domain === ResourceDomain.ROUTE && action === PermissionAction.READ) return true;
+    if (domain === ResourceDomain.FLEET_BUS && action === PermissionAction.READ) return true;
+    if (domain === ResourceDomain.STUDENT && action === PermissionAction.READ) return true;
+    if (domain === ResourceDomain.SOS && action === PermissionAction.CREATE) return true;
+    if (
+      domain === ResourceDomain.INCIDENT &&
+      (action === PermissionAction.CREATE || action === PermissionAction.READ)
+    ) return true;
+    return false;
+  }
+
+  if (role === UserRole.PARENT) {
+    if (domain === ResourceDomain.TELEMETRY && action === PermissionAction.READ) return true;
+    if (domain === ResourceDomain.TRIP && action === PermissionAction.READ) return true;
+    if (domain === ResourceDomain.STUDENT && action === PermissionAction.READ) return true;
+    return false;
+  }
+
+  return false;
+}
+
+
 
 
 
