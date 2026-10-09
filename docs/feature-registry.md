@@ -7,6 +7,7 @@
 | **P0-RUL-03** | Supporting | Project Control | **Product Rules & Channel Architecture**: WhatsApp-first workflows, Zero-App Parent Web, Minimalist Driver Flutter App, FOSS-first strategy. | P0-REG-01 | **Done** |
 | **P0-DOD-04** | Supporting | Project Control | **Definition of Done & Quality Gates**: 6-tier quality gates, UI 7-state completeness, unit/integration/E2E test plan. | P0-REG-01 | **Done** |
 | **P0-DEV-05** | Supporting | Development Env | **Developer Workstation Audit & Tooling**: Audit of Git, VS Code, Node.js, npm, and winget automated install scripts for Docker/Flutter. | P0-REG-01 | **Done** |
+| **P0-GIT-06** | Supporting | Development Env | **Git Repository & Branch Management**: Initialized repo, main & development branches, .gitignore, .env.example, PR/issue templates. | P0-REG-01 | **Done** |
 | **P0-ENV-02** | Supporting | Infrastructure | **Environment & Monorepo Scaffold**: Repository structure, TypeScript configs, linting, shared packages. | P0-REG-01 | Not Started |
 | **P0-SEC-03** | Core | Security & Auth | **Multi-Tenant RBAC & Auth Engine**: School-level data isolation, JWT/Session auth for Admin, Driver, and Parent tokens. | P0-ENV-02 | Not Started |
 | **P1-SCH-01** | Core | School Management | **School Profile & Academic Year Setup**: School configuration, operating hours, shift management. | P0-SEC-03 | Not Started |
