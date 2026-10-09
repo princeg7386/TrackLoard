@@ -55,6 +55,29 @@ export enum AttendanceStatus {
 }
 
 /**
+ * Incident Severity & Status
+ */
+export enum IncidentSeverity {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  CRITICAL = 'CRITICAL',
+}
+
+export enum IncidentStatus {
+  OPEN = 'OPEN',
+  ACKNOWLEDGED = 'ACKNOWLEDGED',
+  RESOLVED = 'RESOLVED',
+}
+
+export enum SosStatus {
+  TRIGGERED = 'TRIGGERED',
+  ACKNOWLEDGED = 'ACKNOWLEDGED',
+  FIRST_RESPONDERS_NOTIFIED = 'FIRST_RESPONDERS_NOTIFIED',
+  RESOLVED = 'RESOLVED',
+}
+
+/**
  * Geographic Coordinate Schema
  */
 export const GeoCoordinatesSchema = z.object({
@@ -107,7 +130,7 @@ export const DriverSchema = z.object({
   fullName: z.string().min(2, 'Full name required'),
   phone: z.string().regex(/^\+?[1-9]\d{9,14}$/, 'Valid phone number with country code required'),
   licenseNumber: z.string().min(5, 'Valid license number required'),
-  licenseExpiry: z.string().optional(), // ISO date YYYY-MM-DD
+  licenseExpiry: z.string().optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
 });
@@ -225,7 +248,7 @@ export const TripSchema = z.object({
 });
 export type Trip = z.infer<typeof TripSchema>;
 
-// 11. GPS Telemetry Ingestion Payload & Location Record
+// 11. GPS Telemetry Payload
 export const TelemetryIngestSchema = z.object({
   tripId: z.string().uuid(),
   busId: z.string().uuid(),
@@ -271,6 +294,144 @@ export const DropEventSchema = z.object({
   recordedAt: z.string().datetime().optional(),
 });
 export type DropEvent = z.infer<typeof DropEventSchema>;
+
+/**
+ * -----------------------------------------------------------------------------
+ * Operations & Safety Entity Schemas & Types
+ * -----------------------------------------------------------------------------
+ */
+
+// 13. Notification
+export const NotificationSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid().nullable().optional(),
+  recipientPhone: z.string().regex(/^\+?[1-9]\d{9,14}$/),
+  recipientRole: z.enum(['PARENT', 'DRIVER', 'ADMIN']).default('PARENT'),
+  channel: z.enum(['WHATSAPP', 'SMS', 'PUSH', 'WEBHOOK']).default('WHATSAPP'),
+  templateName: z.string().optional(),
+  messageBody: z.string().min(1),
+  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED']).default('SENT'),
+  providerMessageId: z.string().optional(),
+  failureReason: z.string().optional(),
+  createdAt: z.string().datetime().optional(),
+});
+export type NotificationRecord = z.infer<typeof NotificationSchema>;
+
+// 14. Delay Record
+export const DelayRecordSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  stopId: z.string().uuid().nullable().optional(),
+  expectedArrival: z.string().datetime(),
+  predictedArrival: z.string().datetime(),
+  delayMinutes: z.number().int().min(1),
+  reason: z.string().optional(),
+  notifiedParentsCount: z.number().int().default(0),
+  createdAt: z.string().datetime().optional(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+});
+export type DelayRecord = z.infer<typeof DelayRecordSchema>;
+
+// 15. Incident
+export const IncidentSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid().nullable().optional(),
+  busId: z.string().uuid().nullable().optional(),
+  driverId: z.string().uuid().nullable().optional(),
+  incidentType: z.string().min(2),
+  severity: z.nativeEnum(IncidentSeverity).default(IncidentSeverity.MEDIUM),
+  status: z.nativeEnum(IncidentStatus).default(IncidentStatus.OPEN),
+  description: z.string().min(5),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  reportedBy: z.enum(['DRIVER', 'ADMIN', 'PARENT']).default('DRIVER'),
+  acknowledgedBy: z.string().uuid().nullable().optional(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
+});
+export type Incident = z.infer<typeof IncidentSchema>;
+
+// 16. SOS Event
+export const SosEventSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid(),
+  triggerSource: z.enum(['APP_SOS_BUTTON', 'WHATSAPP_SOS', 'ADMIN_OVERRIDE']).default('APP_SOS_BUTTON'),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  speedKmh: z.number().min(0).default(0),
+  status: z.nativeEnum(SosStatus).default(SosStatus.TRIGGERED),
+  acknowledgedBy: z.string().uuid().nullable().optional(),
+  acknowledgedAt: z.string().datetime().nullable().optional(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+  resolutionNotes: z.string().optional(),
+  createdAt: z.string().datetime().optional(),
+});
+export type SosEvent = z.infer<typeof SosEventSchema>;
+
+// 17. Temporary Pickup Request
+export const TemporaryPickupRequestSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  requestedByPhone: z.string().regex(/^\+?[1-9]\d{9,14}$/),
+  originalStopId: z.string().uuid(),
+  requestedStopId: z.string().uuid(),
+  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tripType: z.enum(['MORNING_PICKUP', 'AFTERNOON_DROP', 'BOTH']).default('MORNING_PICKUP'),
+  verifiedByCoordinator: z.boolean().default(true),
+  coordinatorId: z.string().uuid().nullable().optional(),
+  notes: z.string().optional(),
+  createdAt: z.string().datetime().optional(),
+});
+export type TemporaryPickupRequest = z.infer<typeof TemporaryPickupRequestSchema>;
+
+// 18. Absence Record
+export const AbsenceRecordSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  absenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tripType: z.enum(['MORNING', 'AFTERNOON', 'FULL_DAY']).default('FULL_DAY'),
+  reportedVia: z.enum(['WHATSAPP', 'PARENT_WEB', 'ADMIN_PHONE']).default('WHATSAPP'),
+  reportedByPhone: z.string().regex(/^\+?[1-9]\d{9,14}$/),
+  reason: z.string().optional(),
+  driverNotified: z.boolean().default(false),
+  createdAt: z.string().datetime().optional(),
+});
+export type AbsenceRecord = z.infer<typeof AbsenceRecordSchema>;
+
+// 19. Operational Report
+export const OperationalReportSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  reportType: z.enum(['DAILY_PUNCTUALITY', 'ROUTE_EFFICIENCY', 'ATTENDANCE_LEDGER', 'INCIDENT_SAFETY_SUMMARY']),
+  reportDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  metricsJson: z.record(z.any()).default({}),
+  createdAt: z.string().datetime().optional(),
+});
+export type OperationalReport = z.infer<typeof OperationalReportSchema>;
+
+// 20. Audit Log
+export const AuditLogSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  userId: z.string().uuid().nullable().optional(),
+  userRole: z.string().default('SCHOOL_ADMIN'),
+  action: z.string().min(2),
+  entityType: z.string().min(2),
+  entityId: z.string().uuid(),
+  diffJson: z.record(z.any()).optional(),
+  ipAddress: z.string().optional(),
+  createdAt: z.string().datetime().optional(),
+});
+export type AuditLog = z.infer<typeof AuditLogSchema>;
 
 /**
  * Parent Live Web Tracking Session Token Payload
