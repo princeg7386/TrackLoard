@@ -1,44 +1,34 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { AdminSidebar } from '../../../components/layout/AdminSidebar';
-import { AdminHeader } from '../../../components/layout/AdminHeader';
 import { SchoolProfileForm } from '../../../components/school/SchoolProfileForm';
+import { useAuth } from '../../../contexts/AuthContext';
 
 export default function SchoolProfilePage() {
-  // Demo / active session state (populated from JWT or auth session)
-  const [schoolId, setSchoolId] = useState<string>('111e4567-e89b-12d3-a456-426614174001');
-  const [schoolName, setSchoolName] = useState<string>('Delhi Public Academy');
-  const [schoolCode, setSchoolCode] = useState<string>('DPA-ND');
+  const { user } = useAuth();
+  const [schoolId, setSchoolId] = useState<string>(
+    user?.schoolId || '111e4567-e89b-12d3-a456-426614174001'
+  );
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (user?.schoolId) {
+      setSchoolId(user.schoolId);
+    } else if (typeof window !== 'undefined') {
       const storedSchoolId = localStorage.getItem('sb_school_id');
-      const storedSchoolName = localStorage.getItem('sb_school_name');
-      const storedSchoolCode = localStorage.getItem('sb_school_code');
-
       if (storedSchoolId) setSchoolId(storedSchoolId);
-      if (storedSchoolName) setSchoolName(storedSchoolName);
-      if (storedSchoolCode) setSchoolCode(storedSchoolCode);
     }
-  }, []);
+  }, [user]);
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden">
-      {/* Sidebar Navigation */}
-      <AdminSidebar schoolName={schoolName} schoolCode={schoolCode} />
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <AdminHeader
-          title="School Profile & Settings"
-          subtitle="Manage official institutional identity, physical campus address, and contact points"
-        />
-
-        <main className="flex-1 overflow-y-auto p-6 md:p-8">
-          <SchoolProfileForm schoolId={schoolId} canEdit={true} />
-        </main>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-bold text-slate-900 tracking-tight">School Profile & Settings</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Manage official institutional identity, physical campus address, and emergency contact points.
+        </p>
       </div>
+
+      <SchoolProfileForm schoolId={schoolId} canEdit={true} />
     </div>
   );
 }
