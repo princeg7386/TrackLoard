@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import authRouter from './auth.routes.js';
 import driverAuthRouter from './driver-auth.routes.js';
 import parentRouter from './parent-identity.routes.js';
+import schoolProfileRouter from './school-profile.routes.js';
 
 const apiRouter = Router();
 
@@ -9,6 +10,7 @@ const apiRouter = Router();
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/driver/auth', driverAuthRouter);
 apiRouter.use('/parent', parentRouter);
+apiRouter.use('/schools', schoolProfileRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({
