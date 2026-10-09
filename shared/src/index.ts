@@ -502,3 +502,94 @@ export interface ParentTrackingTokenPayload {
   stopId: string;
   exp: number;
 }
+
+/**
+ * -----------------------------------------------------------------------------
+ * Standard API Response Envelopes & Pagination
+ * -----------------------------------------------------------------------------
+ */
+
+export interface ApiFieldError {
+  path: string;
+  message: string;
+}
+
+export interface ApiErrorResponse {
+  code: string;
+  message: string;
+  details?: ApiFieldError[] | Record<string, any>;
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: ApiErrorResponse;
+  timestamp: string;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export const PaginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+  sortBy: z.string().optional(),
+  sortOrder: z.enum(['asc', 'desc']).default('asc'),
+});
+export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
+
+/**
+ * -----------------------------------------------------------------------------
+ * Input Sanitization & Normalization Helpers
+ * -----------------------------------------------------------------------------
+ */
+
+/**
+ * Normalizes Indian mobile phone numbers to E.164 international format (+91XXXXXXXXXX)
+ */
+export function normalizeIndianPhoneNumber(phone: string): string {
+  if (!phone) return phone;
+  // Strip spaces, dashes, parentheses, dots
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+
+  // Handle leading 0 (e.g. 09876543210 -> 9876543210)
+  if (cleaned.startsWith('0') && cleaned.length === 11) {
+    cleaned = cleaned.substring(1);
+  }
+
+  // If 10 digits, prepend +91
+  if (/^[6-9]\d{9}$/.test(cleaned)) {
+    return `+91${cleaned}`;
+  }
+
+  // If 12 digits starting with 91, prepend +
+  if (/^91[6-9]\d{9}$/.test(cleaned)) {
+    return `+${cleaned}`;
+  }
+
+  // If already in +91 format
+  if (/^\+91[6-9]\d{9}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  return cleaned;
+}
+
+/**
+ * Basic XSS and string sanitization (trims whitespace, removes null bytes & HTML tags)
+ */
+export function sanitizeString(val: string): string {
+  if (typeof val !== 'string') return val;
+  return val
+    .trim()
+    .replace(/\0/g, '') // remove null bytes
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // remove script tags
+}
+
