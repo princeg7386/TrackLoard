@@ -87,6 +87,65 @@ export const GeoCoordinatesSchema = z.object({
 export type GeoCoordinates = z.infer<typeof GeoCoordinatesSchema>;
 
 /**
+ * Pure Haversine distance formula (in meters) between two coordinates
+ */
+export function calculateHaversineDistanceMeters(
+  point1: GeoCoordinates,
+  point2: GeoCoordinates
+): number {
+  const R = 6371e3; // Earth radius in meters
+  const lat1Rad = (point1.latitude * Math.PI) / 180;
+  const lat2Rad = (point2.latitude * Math.PI) / 180;
+  const deltaLat = ((point2.latitude - point1.latitude) * Math.PI) / 180;
+  const deltaLng = ((point2.longitude - point1.longitude) * Math.PI) / 180;
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1Rad) *
+      Math.cos(lat2Rad) *
+      Math.sin(deltaLng / 2) *
+      Math.sin(deltaLng / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
+/**
+ * Checks if point is within circular geofence radius
+ */
+export function isPointInGeofence(
+  point: GeoCoordinates,
+  center: GeoCoordinates,
+  radiusMeters: number
+): boolean {
+  const distance = calculateHaversineDistanceMeters(point, center);
+  return distance <= radiusMeters;
+}
+
+/**
+ * Calculates bearing angle in degrees (0 - 360) from start to destination
+ */
+export function calculateBearingDegrees(
+  start: GeoCoordinates,
+  end: GeoCoordinates
+): number {
+  const startLat = (start.latitude * Math.PI) / 180;
+  const startLng = (start.longitude * Math.PI) / 180;
+  const endLat = (end.latitude * Math.PI) / 180;
+  const endLng = (end.longitude * Math.PI) / 180;
+
+  const dLng = endLng - startLng;
+
+  const y = Math.sin(dLng) * Math.cos(endLat);
+  const x =
+    Math.cos(startLat) * Math.sin(endLat) -
+    Math.sin(startLat) * Math.cos(endLat) * Math.cos(dLng);
+
+  const brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return Math.round((brng + 360) % 360);
+}
+
+/**
  * -----------------------------------------------------------------------------
  * Core Entity Schemas & Types
  * -----------------------------------------------------------------------------
