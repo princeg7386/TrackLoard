@@ -1,5 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
+import { ApiResponse } from '@school-bus/shared';
+import { env } from '../config/env.js';
 
 export class AppError extends Error {
   public statusCode: number;
@@ -31,15 +33,23 @@ export class ForbiddenError extends AppError {
   }
 }
 
+export class TooManyRequestsError extends AppError {
+  constructor(message: string = 'Rate limit exceeded, please retry later') {
+    super(message, 429);
+  }
+}
+
 export function errorHandler(
   err: any,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void {
-  // Handle Zod Validation Errors
+  const requestId = req.id;
+
+  // 1. Handle Zod Schema Validation Errors
   if (err instanceof ZodError) {
-    res.status(422).json({
+    const payload: ApiResponse = {
       success: false,
       error: {
         code: 'VALIDATION_ERROR',
@@ -48,34 +58,44 @@ export function errorHandler(
           path: e.path.join('.'),
           message: e.message,
         })),
+        requestId,
       },
+      requestId,
       timestamp: new Date().toISOString(),
-    });
+    };
+    res.status(422).json(payload);
     return;
   }
 
-  // Handle Custom App Errors
+  // 2. Handle Custom Domain / Application Errors
   if (err instanceof AppError) {
-    res.status(err.statusCode).json({
+    const payload: ApiResponse = {
       success: false,
       error: {
         code: err.constructor.name,
         message: err.message,
         details: err.details,
+        requestId,
       },
+      requestId,
       timestamp: new Date().toISOString(),
-    });
+    };
+    res.status(err.statusCode).json(payload);
     return;
   }
 
-  // Handle Uncaught Server Exceptions
-  console.error('[Unhandled Server Exception]:', err);
-  res.status(500).json({
+  // 3. Handle Uncaught Server Exceptions
+  console.error(`[Unhandled Server Exception] [ReqID: ${requestId}]:`, err);
+  const payload: ApiResponse = {
     success: false,
     error: {
       code: 'INTERNAL_SERVER_ERROR',
       message: 'An unexpected internal error occurred. Please retry shortly.',
+      details: env.NODE_ENV === 'development' ? { stack: err?.stack } : undefined,
+      requestId,
     },
+    requestId,
     timestamp: new Date().toISOString(),
-  });
+  };
+  res.status(500).json(payload);
 }

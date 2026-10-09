@@ -518,6 +518,7 @@ export interface ApiErrorResponse {
   code: string;
   message: string;
   details?: ApiFieldError[] | Record<string, any>;
+  requestId?: string;
 }
 
 export interface ApiResponse<T = any> {
@@ -525,6 +526,7 @@ export interface ApiResponse<T = any> {
   data?: T;
   message?: string;
   error?: ApiErrorResponse;
+  requestId?: string;
   timestamp: string;
 }
 
