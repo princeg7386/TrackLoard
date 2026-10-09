@@ -11,7 +11,8 @@
 | **P0-ENV-02** | Supporting | Infrastructure | **Environment & Monorepo Scaffold**: Repository structure, TypeScript configs, monorepo workspaces (backend, driver-app, school-dashboard, parent-web, shared, infrastructure, tests). | P0-REG-01 | **Done** |
 | **P1-LOC-04** | Supporting | Infrastructure | **Local Services & PostGIS / Redis**: Docker Compose configuration for PostgreSQL 16 + PostGIS 3.4 & Redis 7, init scripts, and connection pool module. | P0-ENV-02 | **Done** |
 | **P1-COR-01** | Core | Database & Domain | **Core Entities Data Model & Schema**: Idempotent SQL migration (001_core_entities.sql), migration runner, and Zod/TypeScript contracts for Schools, Admins, Drivers, Buses, Students, and Parents. | P1-LOC-04 | **Done** |
-| **P0-SEC-03** | Core | Security & Auth | **Multi-Tenant RBAC & Auth Engine**: School-level data isolation, JWT/Session auth for Admin, Driver, and Parent tokens. | P1-COR-01 | Not Started |
+| **P1-TRN-02** | Core | Database & Domain | **Transport Entities Data Model & Spatial Schema**: PostGIS migration (002_transport_entities.sql), GIST spatial indexing, and Zod contracts for Routes, Pickup Locations, Trips, GPS Telemetry, Boarding & Drop Events. | P1-COR-01 | **Done** |
+| **P0-SEC-03** | Core | Security & Auth | **Multi-Tenant RBAC & Auth Engine**: School-level data isolation, JWT/Session auth for Admin, Driver, and Parent tokens. | P1-TRN-02 | Not Started |
 | **P1-SCH-01** | Core | School Management | **School Profile & Academic Year Setup**: School configuration, operating hours, shift management. | P0-SEC-03 | Not Started |
 | **P1-FLT-02** | Core | Fleet Management | **Bus / Vehicle Directory**: Registration number, GPS device identifier, driver assignment. *(No capacity / active-inactive toggles)* | P1-SCH-01 | Not Started |
 | **P1-DRV-03** | Core | Driver Management | **Driver Profile & WhatsApp Binding**: Phone verification, licensing info, bus binding. | P1-SCH-01 | Not Started |
