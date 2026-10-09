@@ -1,13 +1,9 @@
 import { Pool, PoolConfig } from 'pg';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { env } from './env.js';
 
 const poolConfig: PoolConfig = {
-  connectionString:
-    process.env.DATABASE_URL ||
-    'postgresql://postgres:postgrespassword@localhost:5432/school_bus_tracker',
-  max: parseInt(process.env.DB_MAX_CONNECTIONS || '20', 10),
+  connectionString: env.DATABASE_URL,
+  max: env.DB_MAX_CONNECTIONS,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 };
@@ -22,7 +18,7 @@ export async function query<T = any>(text: string, params?: any[]): Promise<T[]>
   const start = Date.now();
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
-  if (process.env.NODE_ENV === 'development' && duration > 100) {
+  if (env.NODE_ENV === 'development' && duration > 100) {
     console.warn(`[Slow Query ${duration}ms]: ${text}`);
   }
   return res.rows;
