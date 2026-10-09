@@ -11,11 +11,45 @@ import { env } from './config/env.js';
 export function createApp(): Express {
   const app = express();
 
-  // 1. Request ID Tagging & Logging
+  // 1. Trust Reverse Proxy (when deployed behind Cloudflare, AWS ALB, Nginx)
+  if (env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+  }
+
+  // 2. Request ID Tagging & Logging
   app.use(requestIdMiddleware);
 
-  // 2. Security Headers & CORS
-  app.use(helmet());
+  // 3. Strict Security Headers (HSTS, CSP, Frameguard, NoSniff)
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
+          connectSrc: ["'self'", 'https:'],
+          fontSrc: ["'self'", 'https:'],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: env.NODE_ENV === 'production' ? [] : null,
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000, // 1 year
+        includeSubDomains: true,
+        preload: true,
+      },
+      frameguard: {
+        action: 'deny',
+      },
+      noSniff: true,
+      referrerPolicy: {
+        policy: 'strict-origin-when-cross-origin',
+      },
+    })
+  );
+
   const allowedOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim());
   app.use(
     cors({
@@ -30,7 +64,7 @@ export function createApp(): Express {
     })
   );
 
-  // 3. Global API Rate Limiter (e.g. 120 req/min in prod, high in test)
+  // 4. Global API Rate Limiter (e.g. 120 req/min in prod, high in test)
   if (env.NODE_ENV !== 'test') {
     app.use(
       createRateLimiter({
