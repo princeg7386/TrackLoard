@@ -23,6 +23,7 @@ interface ParentListTableProps {
   onRefresh?: () => void;
   onManageParent?: (parent: ParentRecordWithStudent) => void;
   onViewStudent?: (studentId: string) => void;
+  onViewAssignment?: (parent: ParentRecordWithStudent) => void;
 }
 
 export function ParentListTable({
@@ -31,6 +32,7 @@ export function ParentListTable({
   onRefresh,
   onManageParent,
   onViewStudent,
+  onViewAssignment,
 }: ParentListTableProps) {
   if (isLoading) {
     return (
@@ -266,6 +268,15 @@ export function ParentListTable({
                 {/* 6. Quick Actions */}
                 <td className="py-3 px-4 text-right">
                   <div className="flex items-center justify-end gap-1.5">
+                    {onViewAssignment && (
+                      <button
+                        type="button"
+                        onClick={() => onViewAssignment(parent)}
+                        className="px-2.5 py-1 text-xs font-semibold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded shadow-2xs transition-colors"
+                      >
+                        View Assignment
+                      </button>
+                    )}
                     {onManageParent && (
                       <button
                         type="button"

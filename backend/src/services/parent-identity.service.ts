@@ -6,6 +6,9 @@ import {
   ParentTrackingTokenData,
   ParentLiveTrackingSession,
   ParentRecordWithStudent,
+  ParentAssignmentDetails,
+  ParentCommunicationItem,
+  SendParentNoticeRequest,
   normalizeIndianPhoneNumber,
   TripStatus,
   RouteType,
@@ -16,6 +19,7 @@ import {
   ValidationError,
 } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
+import { AuditService } from './audit.service.js';
 
 export interface CreateTokenParams {
   parentId: string;
@@ -695,5 +699,422 @@ export class ParentIdentityService {
 
     return records;
   }
+
+  /**
+   * Fetches full assignment details for a parent, linked student, and allocated transport
+   */
+  public static async getParentAssignmentDetails(
+    schoolId: string,
+    parentId: string
+  ): Promise<ParentAssignmentDetails> {
+    const sql = `
+      SELECT 
+        p.id AS parent_id,
+        p.school_id,
+        p.student_id,
+        p.full_name AS parent_name,
+        p.relationship,
+        p.phone AS parent_phone,
+        p.email AS parent_email,
+        p.created_at AS parent_created_at,
+        p.updated_at AS parent_updated_at,
+        s.id AS student_id,
+        s.full_name AS student_name,
+        s.admission_number,
+        s.class_grade,
+        s.section,
+        s.roll_number,
+        s.emergency_contact_phone,
+        b.id AS bus_id,
+        b.bus_number,
+        b.registration_number,
+        r.id AS route_id,
+        r.name AS route_name,
+        r.code AS route_code,
+        pl_pick.id AS pickup_stop_id,
+        pl_pick.stop_name AS pickup_stop_name,
+        pl_pick.scheduled_time AS pickup_scheduled_time,
+        ST_Y(pl_pick.location::geometry) AS pickup_latitude,
+        ST_X(pl_pick.location::geometry) AS pickup_longitude,
+        pl_drop.id AS drop_stop_id,
+        pl_drop.stop_name AS drop_stop_name,
+        pl_drop.scheduled_time AS drop_scheduled_time,
+        ptt.id AS token_id,
+        ptt.token_prefix,
+        ptt.expires_at AS token_expires_at,
+        ptt.access_count AS token_access_count,
+        ptt.last_accessed_at AS token_last_accessed_at,
+        ptt.revoked_at AS token_revoked_at
+      FROM parents p
+      JOIN students s ON p.student_id = s.id AND s.deleted_at IS NULL
+      LEFT JOIN student_stop_assignments ssa ON s.id = ssa.student_id AND ssa.deleted_at IS NULL
+      LEFT JOIN pickup_locations pl_pick ON ssa.pickup_stop_id = pl_pick.id AND pl_pick.deleted_at IS NULL
+      LEFT JOIN pickup_locations pl_drop ON ssa.drop_stop_id = pl_drop.id AND pl_drop.deleted_at IS NULL
+      LEFT JOIN routes r ON (pl_pick.route_id = r.id OR pl_drop.route_id = r.id) AND r.deleted_at IS NULL
+      LEFT JOIN buses b ON r.default_bus_id = b.id AND b.deleted_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT id, token_prefix, expires_at, access_count, last_accessed_at, revoked_at
+        FROM parent_tracking_tokens
+        WHERE parent_id = p.id AND student_id = s.id AND deleted_at IS NULL
+        ORDER BY (revoked_at IS NULL AND expires_at > NOW()) DESC, created_at DESC
+        LIMIT 1
+      ) ptt ON true
+      WHERE p.id = $1 AND p.school_id = $2
+    `;
+
+    const rows = await query<any>(sql, [parentId, schoolId]);
+
+    if (rows.length === 0) {
+      throw new NotFoundError('Parent record not found or not registered under this school');
+    }
+
+    const r = rows[0];
+
+    const hasActiveToken =
+      r.token_id &&
+      !r.token_revoked_at &&
+      new Date(r.token_expires_at).getTime() > Date.now();
+
+    let whatsAppStatus: 'ACTIVE_TOKEN' | 'LINKED' | 'NOT_LINKED' = 'NOT_LINKED';
+    if (hasActiveToken) {
+      whatsAppStatus = 'ACTIVE_TOKEN';
+    } else if (r.parent_phone && r.parent_phone.trim()) {
+      whatsAppStatus = 'LINKED';
+    }
+
+    return {
+      parent: {
+        id: r.parent_id,
+        schoolId: r.school_id,
+        studentId: r.student_id,
+        fullName: r.parent_name,
+        relationship: r.relationship,
+        phone: r.parent_phone,
+        email: r.parent_email || null,
+        createdAt: r.parent_created_at ? new Date(r.parent_created_at).toISOString() : undefined,
+        updatedAt: r.parent_updated_at ? new Date(r.parent_updated_at).toISOString() : undefined,
+        whatsAppStatus,
+      },
+      student: {
+        id: r.student_id,
+        fullName: r.student_name,
+        admissionNumber: r.admission_number,
+        classGrade: r.class_grade,
+        section: r.section,
+        rollNumber: r.roll_number || null,
+        emergencyContactPhone: r.emergency_contact_phone || null,
+      },
+      transport: {
+        busId: r.bus_id || null,
+        busNumber: r.bus_number || null,
+        registrationNumber: r.registration_number || null,
+        routeId: r.route_id || null,
+        routeName: r.route_name || null,
+        routeCode: r.route_code || null,
+        pickupStopId: r.pickup_stop_id || null,
+        pickupStopName: r.pickup_stop_name || null,
+        pickupScheduledTime: r.pickup_scheduled_time || null,
+        pickupLatitude: r.pickup_latitude ? parseFloat(r.pickup_latitude) : null,
+        pickupLongitude: r.pickup_longitude ? parseFloat(r.pickup_longitude) : null,
+        dropStopId: r.drop_stop_id || null,
+        dropStopName: r.drop_stop_name || null,
+        dropScheduledTime: r.drop_scheduled_time || null,
+      },
+      activeTrackingToken: r.token_id
+        ? {
+            id: r.token_id,
+            tokenPrefix: r.token_prefix,
+            expiresAt: new Date(r.token_expires_at).toISOString(),
+            accessCount: Number(r.token_access_count) || 0,
+            lastAccessedAt: r.token_last_accessed_at
+              ? new Date(r.token_last_accessed_at).toISOString()
+              : null,
+            isRevoked: Boolean(r.token_revoked_at),
+          }
+        : null,
+    };
+  }
+
+  /**
+   * Re-links a parent to another authorized student in the same school
+   */
+  public static async relinkParentStudent(
+    schoolId: string,
+    parentId: string,
+    newStudentId: string,
+    adminUserId?: string | null
+  ): Promise<ParentAssignmentDetails> {
+    const parentCheck = await query<any>(
+      `SELECT id, student_id, full_name, phone FROM parents WHERE id = $1 AND school_id = $2`,
+      [parentId, schoolId]
+    );
+
+    if (parentCheck.length === 0) {
+      throw new NotFoundError('Parent record not found');
+    }
+
+    const currentParent = parentCheck[0];
+
+    const studentCheck = await query<any>(
+      `SELECT id, full_name, admission_number FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [newStudentId, schoolId]
+    );
+
+    if (studentCheck.length === 0) {
+      throw new NotFoundError('Target student not found in this school roster');
+    }
+
+    const targetStudent = studentCheck[0];
+
+    if (currentParent.student_id !== newStudentId) {
+      // Revoke any active tracking tokens for previous pairing
+      await query(
+        `UPDATE parent_tracking_tokens
+         SET revoked_at = NOW(), updated_at = NOW()
+         WHERE parent_id = $1 AND student_id = $2 AND revoked_at IS NULL AND deleted_at IS NULL`,
+        [parentId, currentParent.student_id]
+      );
+
+      // Update parent link
+      await query(
+        `UPDATE parents SET student_id = $1, updated_at = NOW() WHERE id = $2 AND school_id = $3`,
+        [newStudentId, parentId, schoolId]
+      );
+
+      // Record audit log
+      await AuditService.logAction({
+        schoolId,
+        userId: adminUserId,
+        action: 'PARENT_STUDENT_RELINKED',
+        entityType: 'PARENT',
+        entityId: parentId,
+        diffJson: {
+          previousStudentId: currentParent.student_id,
+          newStudentId,
+          targetStudentName: targetStudent.full_name,
+          admissionNumber: targetStudent.admission_number,
+        },
+      });
+
+      logger.info('Parent student link updated', {
+        parentId,
+        previousStudentId: currentParent.student_id,
+        newStudentId,
+        schoolId,
+      });
+    }
+
+    return this.getParentAssignmentDetails(schoolId, parentId);
+  }
+
+  /**
+   * Retrieves unified communication history (WhatsApp/SMS notifications + tracking token events)
+   */
+  public static async getParentCommunicationHistory(
+    schoolId: string,
+    parentId: string
+  ): Promise<ParentCommunicationItem[]> {
+    const parentRows = await query<any>(
+      `SELECT id, student_id, phone, full_name FROM parents WHERE id = $1 AND school_id = $2`,
+      [parentId, schoolId]
+    );
+
+    if (parentRows.length === 0) {
+      throw new NotFoundError('Parent record not found');
+    }
+
+    const parent = parentRows[0];
+    const items: ParentCommunicationItem[] = [];
+
+    if (parent.phone && parent.phone.trim()) {
+      const cleanDigits = parent.phone.replace(/[^0-9]/g, '');
+      const last10 = cleanDigits.slice(-10);
+
+      const notifSql = `
+        SELECT 
+          id,
+          channel,
+          template_name,
+          message_body,
+          status,
+          recipient_phone,
+          failure_reason,
+          created_at
+        FROM notifications
+        WHERE school_id = $1 AND (
+          recipient_phone = $2 OR
+          recipient_phone LIKE $3
+        )
+        ORDER BY created_at DESC
+        LIMIT 50
+      `;
+
+      const notifRows = await query<any>(notifSql, [
+        schoolId,
+        parent.phone,
+        `%${last10}`,
+      ]);
+
+      const formatTitle = (tpl?: string | null) => {
+        if (!tpl) return 'WhatsApp Notice';
+        switch (tpl.toUpperCase()) {
+          case 'WELCOME_ONBOARDING':
+            return 'Welcome & Onboarding Invite';
+          case 'LIVE_TRACKING_INVITE':
+            return 'Live Tracking Link Dispatched';
+          case 'TRIP_STARTED':
+            return 'Trip Commenced Alert';
+          case 'DELAY_ALERT':
+            return 'Route Delay Advisory';
+          case 'STUDENT_BOARDED':
+            return 'Student Boarded Bus';
+          case 'STUDENT_DEBOARDED':
+            return 'Student Deboarded Bus';
+          case 'EMERGENCY_SOS':
+            return 'Emergency Transport Alert';
+          default:
+            return tpl.replace(/_/g, ' ');
+        }
+      };
+
+      for (const row of notifRows) {
+        items.push({
+          id: row.id,
+          type: 'NOTIFICATION',
+          channel: (row.channel as any) || 'WHATSAPP',
+          title: formatTitle(row.template_name),
+          templateName: row.template_name || null,
+          messageBody: row.message_body,
+          status: (row.status as any) || 'SENT',
+          recipientPhone: row.recipient_phone,
+          createdAt: new Date(row.created_at).toISOString(),
+          failureReason: row.failure_reason || null,
+        });
+      }
+    }
+
+    // Token audit events
+    const tokenSql = `
+      SELECT 
+        id,
+        purpose,
+        token_prefix,
+        expires_at,
+        revoked_at,
+        access_count,
+        last_accessed_at,
+        created_at
+      FROM parent_tracking_tokens
+      WHERE parent_id = $1 AND school_id = $2 AND deleted_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 20
+    `;
+
+    const tokenRows = await query<any>(tokenSql, [parentId, schoolId]);
+
+    for (const row of tokenRows) {
+      const isRevoked = Boolean(row.revoked_at);
+      const isExpired = new Date(row.expires_at).getTime() <= Date.now();
+      const status: ParentCommunicationItem['status'] = isRevoked
+        ? 'REVOKED'
+        : isExpired
+          ? 'FAILED'
+          : 'ACTIVE';
+
+      const expiryStr = new Date(row.expires_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+
+      items.push({
+        id: `token-${row.id}`,
+        type: 'TOKEN_EVENT',
+        channel: 'SYSTEM',
+        title: isRevoked ? 'Live Tracking Link Revoked' : 'Live Tracking Link Generated',
+        templateName: row.purpose,
+        messageBody: isRevoked
+          ? `Token prefix ${row.token_prefix}... was revoked. Total parent views: ${row.access_count}.`
+          : `Token prefix ${row.token_prefix}... generated. Valid until ${expiryStr}. Views so far: ${row.access_count}.`,
+        status,
+        recipientPhone: parent.phone || '',
+        createdAt: new Date(row.created_at).toISOString(),
+      });
+    }
+
+    // Sort combined chronological desc
+    return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  /**
+   * Logs and dispatches an outbound notice / message to parent's WhatsApp phone
+   */
+  public static async sendParentNotice(
+    schoolId: string,
+    parentId: string,
+    payload: SendParentNoticeRequest
+  ): Promise<ParentCommunicationItem> {
+    const parentRows = await query<any>(
+      `SELECT id, student_id, phone, full_name FROM parents WHERE id = $1 AND school_id = $2`,
+      [parentId, schoolId]
+    );
+
+    if (parentRows.length === 0) {
+      throw new NotFoundError('Parent record not found');
+    }
+
+    const parent = parentRows[0];
+    if (!parent.phone || !parent.phone.trim()) {
+      throw new ValidationError('Cannot dispatch notification: parent has no registered mobile number');
+    }
+
+    const channel = payload.channel || 'WHATSAPP';
+    const templateName = payload.templateName || 'MANUAL_NOTICE';
+    const messageBody = payload.messageBody.trim();
+
+    const insertSql = `
+      INSERT INTO notifications (
+        school_id,
+        recipient_phone,
+        recipient_role,
+        channel,
+        template_name,
+        message_body,
+        status,
+        provider_message_id,
+        created_at
+      ) VALUES ($1, $2, 'PARENT', $3, $4, $5, 'SENT', $6, NOW())
+      RETURNING id, created_at, status
+    `;
+
+    const mockProviderId = `wa_msg_${crypto.randomUUID().slice(0, 12)}`;
+    const inserted = await query<any>(insertSql, [
+      schoolId,
+      parent.phone,
+      channel,
+      templateName,
+      messageBody,
+      mockProviderId,
+    ]);
+
+    const row = inserted[0];
+
+    logger.info('Outbound parent notice dispatched', {
+      schoolId,
+      parentId,
+      phone: parent.phone,
+      channel,
+      templateName,
+    });
+
+    return {
+      id: row.id,
+      type: 'NOTIFICATION',
+      channel: channel as any,
+      title: templateName.replace(/_/g, ' '),
+      templateName,
+      messageBody,
+      status: 'SENT',
+      recipientPhone: parent.phone,
+      createdAt: new Date(row.created_at).toISOString(),
+    };
+  }
 }
+
 

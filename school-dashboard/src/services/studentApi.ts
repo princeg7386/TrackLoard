@@ -8,6 +8,9 @@ import {
   AssignStudentTransportPayload,
   StudentTransportHistoryResponse,
   ParentRecordWithStudent,
+  ParentAssignmentDetails,
+  ParentCommunicationItem,
+  SendParentNoticeRequest,
 } from '@school-bus/shared';
 
 
@@ -346,6 +349,127 @@ export async function fetchSchoolParents(
     return [];
   }
 }
+
+/**
+ * Fetches full assignment details for a parent (authorized student, transport allocations, live token)
+ */
+export async function fetchParentAssignmentDetails(
+  schoolId: string,
+  parentId: string
+): Promise<ParentAssignmentDetails | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/assignment`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    );
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      return null;
+    }
+
+    const json = await res.json();
+    return json.data || null;
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return null;
+  }
+}
+
+/**
+ * Re-links a parent to another authorized student in the school
+ */
+export async function relinkParentStudent(
+  schoolId: string,
+  parentId: string,
+  studentId: string
+): Promise<ParentAssignmentDetails> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/relink`,
+    {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ studentId }),
+    }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Failed to re-link student (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Fetches unified communication history for a parent (WhatsApp notices + live token events)
+ */
+export async function fetchParentCommunicationHistory(
+  schoolId: string,
+  parentId: string
+): Promise<ParentCommunicationItem[]> {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/communications`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    );
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      return [];
+    }
+
+    const json = await res.json();
+    return json.data || [];
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return [];
+  }
+}
+
+/**
+ * Dispatches an outbound WhatsApp/SMS notice or invite to parent's registered mobile
+ */
+export async function sendParentNotice(
+  schoolId: string,
+  parentId: string,
+  payload: SendParentNoticeRequest
+): Promise<ParentCommunicationItem> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/communications`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Failed to dispatch notice (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
 
 
 

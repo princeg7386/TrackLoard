@@ -675,6 +675,80 @@ export interface ParentRecordWithStudent {
   };
 }
 
+export interface ParentAssignmentDetails {
+  parent: {
+    id: string;
+    schoolId: string;
+    studentId: string;
+    fullName: string;
+    relationship: 'MOTHER' | 'FATHER' | 'GUARDIAN' | 'PARENT' | string;
+    phone: string;
+    email?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+    whatsAppStatus: 'ACTIVE_TOKEN' | 'LINKED' | 'NOT_LINKED';
+  };
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string;
+    classGrade: string;
+    section: string;
+    rollNumber?: string | null;
+    emergencyContactPhone?: string | null;
+  };
+  transport: {
+    busId?: string | null;
+    busNumber?: string | null;
+    registrationNumber?: string | null;
+    routeId?: string | null;
+    routeName?: string | null;
+    routeCode?: string | null;
+    pickupStopId?: string | null;
+    pickupStopName?: string | null;
+    pickupScheduledTime?: string | null;
+    pickupLatitude?: number | null;
+    pickupLongitude?: number | null;
+    dropStopId?: string | null;
+    dropStopName?: string | null;
+    dropScheduledTime?: string | null;
+  };
+  activeTrackingToken?: {
+    id: string;
+    tokenPrefix: string;
+    expiresAt: string;
+    accessCount: number;
+    lastAccessedAt?: string | null;
+    isRevoked: boolean;
+  } | null;
+}
+
+export interface ParentCommunicationItem {
+  id: string;
+  type: 'NOTIFICATION' | 'TOKEN_EVENT';
+  channel: 'WHATSAPP' | 'SMS' | 'SYSTEM';
+  title: string;
+  templateName?: string | null;
+  messageBody: string;
+  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'REVOKED' | 'ACTIVE';
+  recipientPhone: string;
+  createdAt: string;
+  failureReason?: string | null;
+}
+
+export const RelinkParentStudentRequestSchema = z.object({
+  studentId: z.string().uuid('Valid student ID required'),
+});
+export type RelinkParentStudentRequest = z.infer<typeof RelinkParentStudentRequestSchema>;
+
+export const SendParentNoticeRequestSchema = z.object({
+  templateName: z.string().min(1).default('MANUAL_NOTICE'),
+  messageBody: z.string().min(1, 'Message body is required'),
+  channel: z.enum(['WHATSAPP', 'SMS']).default('WHATSAPP'),
+});
+export type SendParentNoticeRequest = z.infer<typeof SendParentNoticeRequestSchema>;
+
+
 
 /**
  * -----------------------------------------------------------------------------

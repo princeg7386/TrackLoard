@@ -4,6 +4,8 @@ import {
   UpdateStudentRequestSchema,
   UpsertParentGuardianRequestSchema,
   AssignStudentTransportPayloadSchema,
+  RelinkParentStudentRequestSchema,
+  SendParentNoticeRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -56,6 +58,60 @@ studentRouter.get(
     UserRole.SUPER_ADMIN
   ),
   ParentIdentityController.listSchoolParents
+);
+
+// 3c. Get Parent Assignment Details (Student, Transport, Active Live Tracking Link)
+studentRouter.get(
+  '/:schoolId/parents/:parentId/assignment',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  ParentIdentityController.getAssignmentDetails
+);
+
+// 3d. Re-link Parent to Authorized Student (1:1 direct link update)
+studentRouter.put(
+  '/:schoolId/parents/:parentId/relink',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(RelinkParentStudentRequestSchema),
+  ParentIdentityController.relinkStudent
+);
+
+// 3e. Get Parent Communication History (Notifications & Token Lifecycle Events)
+studentRouter.get(
+  '/:schoolId/parents/:parentId/communications',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  ParentIdentityController.getCommunicationHistory
+);
+
+// 3f. Send Outbound WhatsApp / SMS Notice to Parent
+studentRouter.post(
+  '/:schoolId/parents/:parentId/communications',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(SendParentNoticeRequestSchema),
+  ParentIdentityController.sendNotice
 );
 
 // 4. Get Student Transport Attendance History

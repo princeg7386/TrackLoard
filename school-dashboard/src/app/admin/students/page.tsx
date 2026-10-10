@@ -18,6 +18,7 @@ import { StudentWithDetails, ParentRecordWithStudent } from '@school-bus/shared'
 import { fetchStudents, fetchSchoolParents } from '../../../services/studentApi';
 import { StudentListTable } from '../../../components/student/StudentListTable';
 import { ParentListTable } from '../../../components/student/ParentListTable';
+import { ParentAssignmentModal } from '../../../components/student/ParentAssignmentModal';
 import { CreateStudentModal } from '../../../components/student/CreateStudentModal';
 import { ManageParentModal } from '../../../components/student/ManageParentModal';
 import { AssignTransportModal } from '../../../components/student/AssignTransportModal';
@@ -56,6 +57,7 @@ export default function StudentsDirectoryPage() {
   const [selectedStudentForEdit, setSelectedStudentForEdit] = useState<StudentWithDetails | null>(null);
   const [selectedStudentForDelete, setSelectedStudentForDelete] = useState<StudentWithDetails | null>(null);
   const [selectedStudentForHistory, setSelectedStudentForHistory] = useState<StudentWithDetails | null>(null);
+  const [selectedParentForAssignment, setSelectedParentForAssignment] = useState<ParentRecordWithStudent | null>(null);
 
   const [isOffline, setIsOffline] = useState(false);
 
@@ -462,6 +464,7 @@ export default function StudentsDirectoryPage() {
               onRefresh={loadParents}
               onManageParent={handleParentRowManage}
               onViewStudent={handleStudentViewFromParent}
+              onViewAssignment={(parent) => setSelectedParentForAssignment(parent)}
             />
           </>
         )}
@@ -529,6 +532,21 @@ export default function StudentsDirectoryPage() {
         student={selectedStudentForHistory}
         isOpen={Boolean(selectedStudentForHistory)}
         onClose={() => setSelectedStudentForHistory(null)}
+      />
+
+      {/* Parent Assignment & Communication History Modal */}
+      <ParentAssignmentModal
+        schoolId={schoolId}
+        parent={selectedParentForAssignment}
+        isOpen={Boolean(selectedParentForAssignment)}
+        onClose={() => setSelectedParentForAssignment(null)}
+        onAssignmentUpdated={() => {
+          loadParents();
+          loadStudents();
+        }}
+        onViewStudentDetail={(studentId) => {
+          handleStudentViewFromParent(studentId);
+        }}
       />
     </div>
   );

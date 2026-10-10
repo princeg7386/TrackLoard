@@ -147,4 +147,92 @@ export class ParentIdentityController {
       'School parents retrieved successfully'
     );
   }
+
+  /**
+   * Get full assignment details (student, transport, live tracking token) for a parent
+   */
+  public static async getAssignmentDetails(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const { schoolId, parentId } = req.params;
+    const assignment = await ParentIdentityService.getParentAssignmentDetails(
+      schoolId,
+      parentId
+    );
+
+    sendSuccess(
+      res,
+      assignment,
+      'Parent assignment details retrieved successfully'
+    );
+  }
+
+  /**
+   * Re-link an existing parent to another authorized student in the same school
+   */
+  public static async relinkStudent(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const { schoolId, parentId } = req.params;
+    const { studentId } = req.body;
+    const adminUserId = req.user?.id || null;
+
+    const assignment = await ParentIdentityService.relinkParentStudent(
+      schoolId,
+      parentId,
+      studentId,
+      adminUserId
+    );
+
+    sendSuccess(
+      res,
+      assignment,
+      'Parent successfully linked to authorized student'
+    );
+  }
+
+  /**
+   * Get communication history (WhatsApp notices + token events) for a parent
+   */
+  public static async getCommunicationHistory(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const { schoolId, parentId } = req.params;
+    const history = await ParentIdentityService.getParentCommunicationHistory(
+      schoolId,
+      parentId
+    );
+
+    sendSuccess(
+      res,
+      history,
+      'Parent communication history retrieved successfully'
+    );
+  }
+
+  /**
+   * Dispatch an outbound notice/message to parent's registered WhatsApp phone
+   */
+  public static async sendNotice(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const { schoolId, parentId } = req.params;
+    const notice = await ParentIdentityService.sendParentNotice(
+      schoolId,
+      parentId,
+      req.body
+    );
+
+    sendSuccess(
+      res,
+      notice,
+      'Notice dispatched successfully to parent',
+      201
+    );
+  }
 }
+
