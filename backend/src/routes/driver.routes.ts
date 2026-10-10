@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { AssignDriverBusPayloadSchema, CreateDriverRequestSchema, UserRole } from '@school-bus/shared';
+import {
+  AssignDriverBusPayloadSchema,
+  CreateDriverRequestSchema,
+  UpdateDriverRequestSchema,
+  ResetDriverPinRequestSchema,
+  UserRole,
+} from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -59,6 +65,61 @@ driverRouter.get(
   DriverController.getDriverHistory
 );
 
+// 6. Update Driver Profile
+driverRouter.put(
+  '/:schoolId/drivers/:driverId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateDriverRequestSchema),
+  DriverController.updateDriver
+);
+
+// 7. Reset Driver PIN
+driverRouter.post(
+  '/:schoolId/drivers/:driverId/reset-pin',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(ResetDriverPinRequestSchema),
+  DriverController.resetPin
+);
+
+// 8. Revoke Driver Mobile Sessions
+driverRouter.post(
+  '/:schoolId/drivers/:driverId/revoke-sessions',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  DriverController.revokeSessions
+);
+
+// 9. Remove / Delete Driver Profile
+driverRouter.delete(
+  '/:schoolId/drivers/:driverId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  DriverController.removeDriver
+);
+
 export default driverRouter;
+
 
 

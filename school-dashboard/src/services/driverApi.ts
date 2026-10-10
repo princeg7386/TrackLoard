@@ -1,6 +1,7 @@
 import {
   DriverWithBus,
   CreateDriverRequest,
+  UpdateDriverRequest,
   AssignDriverBusPayload,
   BusWithDriver,
   DriverFullHistoryResponse,
@@ -103,6 +104,112 @@ export async function createDriver(
 }
 
 /**
+ * Updates driver profile information
+ */
+export async function updateDriverProfile(
+  schoolId: string,
+  driverId: string,
+  payload: UpdateDriverRequest
+): Promise<DriverWithBus> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers/${driverId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error(
+        json.error?.message || 'Another driver in your school is already registered with this mobile number.'
+      );
+    }
+    if (res.status === 422) {
+      const details = json.error?.details;
+      if (Array.isArray(details) && details.length > 0) {
+        throw new Error(details[0].message || 'Validation error');
+      }
+      throw new Error(json.error?.message || 'Invalid driver details provided.');
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to update driver profile (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
+/**
+ * Resets driver mobile app login PIN
+ */
+export async function resetDriverPin(
+  schoolId: string,
+  driverId: string,
+  pin: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers/${driverId}/reset-pin`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ pin }),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to reset driver PIN (HTTP ${res.status})`);
+  }
+}
+
+/**
+ * Revokes all active driver mobile app sessions
+ */
+export async function revokeDriverSessions(
+  schoolId: string,
+  driverId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers/${driverId}/revoke-sessions`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to revoke driver sessions (HTTP ${res.status})`);
+  }
+}
+
+/**
+ * Removes / soft-deletes a driver profile
+ */
+export async function deleteDriver(
+  schoolId: string,
+  driverId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers/${driverId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to remove driver profile (HTTP ${res.status})`);
+  }
+}
+
+/**
  * Updates bus assignment for a driver (assign or unassign)
  */
 export async function updateDriverBusAssignment(
@@ -172,5 +279,6 @@ export async function fetchDriverFullHistory(
 
   return json.data;
 }
+
 
 

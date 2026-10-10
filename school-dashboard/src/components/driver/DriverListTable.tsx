@@ -11,6 +11,7 @@ import {
   Clock,
   Plus,
   History,
+  Eye,
 } from 'lucide-react';
 import { DriverWithBus } from '@school-bus/shared';
 import { EmptyState } from '../ui/EmptyState';
@@ -21,8 +22,8 @@ interface DriverListTableProps {
   onAddDriver: () => void;
   onManageAssignment?: (driver: DriverWithBus) => void;
   onViewHistory?: (driver: DriverWithBus) => void;
+  onViewDetail?: (driver: DriverWithBus) => void;
 }
-
 
 export function DriverListTable({
   drivers,
@@ -30,6 +31,7 @@ export function DriverListTable({
   onAddDriver,
   onManageAssignment,
   onViewHistory,
+  onViewDetail,
 }: DriverListTableProps) {
   if (isLoading) {
     return (
@@ -82,25 +84,32 @@ export function DriverListTable({
             <tr key={driver.id} className="hover:bg-slate-50/60 transition-colors">
               {/* Driver Identity */}
               <td className="py-3.5 px-4 font-semibold text-slate-900">
-                <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onViewDetail?.(driver)}
+                  className="flex items-center gap-3 text-left group focus:outline-hidden"
+                  title="Click to view driver details and credentials"
+                >
                   {driver.photoUrl ? (
                     <img
                       src={driver.photoUrl}
                       alt={driver.fullName}
-                      className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
+                      className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0 group-hover:ring-2 group-hover:ring-sky-500 transition-all"
                     />
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-sky-100 border border-sky-200 text-sky-700 font-bold text-xs flex items-center justify-center shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-sky-100 border border-sky-200 text-sky-700 font-bold text-xs flex items-center justify-center shrink-0 group-hover:bg-sky-200 transition-colors">
                       {getInitials(driver.fullName)}
                     </div>
                   )}
                   <div>
-                    <span className="font-semibold text-slate-900 block">{driver.fullName}</span>
+                    <span className="font-semibold text-slate-900 block group-hover:text-sky-600 transition-colors">
+                      {driver.fullName}
+                    </span>
                     <span className="text-[10px] text-slate-400 font-mono font-normal">
                       ID: {driver.id?.slice(0, 8)}
                     </span>
                   </div>
-                </div>
+                </button>
               </td>
 
               {/* Mobile Phone */}
@@ -176,7 +185,17 @@ export function DriverListTable({
 
               {/* Actions */}
               <td className="py-3.5 px-4 text-right">
-                <div className="inline-flex items-center gap-2 justify-end">
+                <div className="inline-flex items-center gap-1.5 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => onViewDetail?.(driver)}
+                    title="View Profile & Credentials"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition-colors"
+                  >
+                    <Eye className="w-3.5 h-3.5 text-slate-500" />
+                    <span>Details</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => onViewHistory?.(driver)}
@@ -194,7 +213,7 @@ export function DriverListTable({
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition-colors"
                   >
                     <Bus className="w-3.5 h-3.5 text-slate-500" />
-                    <span>{driver.assignedBusId ? 'Reassign' : 'Pair Bus'}</span>
+                    <span>{driver.assignedBusId ? 'Reassign' : 'Pair'}</span>
                   </button>
                 </div>
               </td>
@@ -205,5 +224,6 @@ export function DriverListTable({
     </div>
   );
 }
+
 
 

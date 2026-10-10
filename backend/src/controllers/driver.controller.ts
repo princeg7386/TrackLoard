@@ -99,7 +99,94 @@ export class DriverController {
       next(error);
     }
   }
+
+  /**
+   * Updates driver profile information
+   * PUT /api/v1/schools/:schoolId/drivers/:driverId
+   */
+  public static async updateDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, driverId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const updated = await DriverService.updateDriver(schoolId, driverId, req.body, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        data: updated,
+        message: 'Driver profile updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Resets driver mobile app login PIN
+   * POST /api/v1/schools/:schoolId/drivers/:driverId/reset-pin
+   */
+  public static async resetPin(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, driverId } = req.params;
+      const { pin } = req.body;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      await DriverService.resetDriverPin(schoolId, driverId, pin, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        message: 'Driver login PIN reset successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Revokes all active driver mobile sessions
+   * POST /api/v1/schools/:schoolId/drivers/:driverId/revoke-sessions
+   */
+  public static async revokeSessions(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, driverId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      await DriverService.revokeDriverSessions(schoolId, driverId, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        message: 'Driver sessions revoked successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Removes / soft-deletes driver profile
+   * DELETE /api/v1/schools/:schoolId/drivers/:driverId
+   */
+  public static async removeDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, driverId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      await DriverService.removeDriver(schoolId, driverId, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        message: 'Driver profile removed successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
 
 
 

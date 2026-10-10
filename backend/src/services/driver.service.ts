@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { query } from '../config/database.js';
 import {
   CreateDriverRequest,
+  UpdateDriverRequest,
   DriverWithBus,
   DriverTripHistoryItem,
   DriverIncidentHistoryItem,
@@ -11,6 +12,7 @@ import {
   DriverFullHistoryResponse,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
+
 
 import {
   ConflictError,
@@ -608,5 +610,258 @@ export class DriverService {
       attendance,
     };
   }
+
+  /**
+   * Updates driver profile details with duplicate phone validation and audit logging
+   */
+  public static async updateDriver(
+    schoolId: string,
+    driverId: string,
+    payload: UpdateDriverRequest,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<DriverWithBus> {
+    const current = await this.getDriverById(schoolId, driverId);
+
+    let normalizedPhone = current.phone;
+    if (payload.phone) {
+      normalizedPhone = normalizeIndianPhoneNumber(payload.phone);
+      if (normalizedPhone !== current.phone) {
+        const existing = await query<{ id: string }>(
+          `SELECT id FROM drivers 
+           WHERE school_id = $1 AND phone = $2 AND id != $3 AND deleted_at IS NULL`,
+          [schoolId, normalizedPhone, driverId]
+        );
+        if (existing.length > 0) {
+          throw new ConflictError(
+            `Another driver in your school is already registered with mobile number "${normalizedPhone}".`
+          );
+        }
+      }
+    }
+
+    const cleanName = payload.fullName !== undefined ? payload.fullName.trim() : current.fullName;
+    const cleanLicense = payload.licenseNumber !== undefined ? payload.licenseNumber.trim().toUpperCase() : current.licenseNumber;
+    const cleanExpiry = payload.licenseExpiry !== undefined ? (payload.licenseExpiry?.trim() || null) : current.licenseExpiry;
+    const cleanPhoto = payload.photoUrl !== undefined ? (payload.photoUrl?.trim() || null) : current.photoUrl;
+
+    // Validate assigned bus if provided
+    if (payload.assignedBusId !== undefined && payload.assignedBusId !== null) {
+      const busExists = await query<{ id: string }>(
+        `SELECT id FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+        [payload.assignedBusId, schoolId]
+      );
+      if (busExists.length === 0) {
+        throw new BadRequestError('Selected fleet vehicle does not exist or belongs to another school.');
+      }
+    }
+
+    // Execute atomic update
+    await DbService.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE drivers 
+         SET full_name = $1, phone = $2, license_number = $3, license_expiry = $4, photo_url = $5, updated_at = NOW() 
+         WHERE school_id = $6 AND id = $7 AND deleted_at IS NULL`,
+        [cleanName, normalizedPhone, cleanLicense, cleanExpiry, cleanPhoto, schoolId, driverId]
+      );
+
+      // If assignedBusId was specified in payload
+      if (payload.assignedBusId !== undefined) {
+        // Unbind any previous bus
+        await client.query(
+          `UPDATE buses 
+           SET default_driver_id = NULL, updated_at = NOW() 
+           WHERE school_id = $1 AND default_driver_id = $2 AND ($3::uuid IS NULL OR id != $3) AND deleted_at IS NULL`,
+          [schoolId, driverId, payload.assignedBusId || null]
+        );
+
+        if (payload.assignedBusId) {
+          await client.query(
+            `UPDATE buses 
+             SET default_driver_id = $1, updated_at = NOW() 
+             WHERE id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+            [driverId, payload.assignedBusId, schoolId]
+          );
+        }
+      }
+    });
+
+    const updated = await this.getDriverById(schoolId, driverId);
+
+    // Audit Logging
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'DRIVER_UPDATED',
+      entityType: 'DRIVER',
+      entityId: driverId,
+      diffJson: {
+        before: {
+          fullName: current.fullName,
+          phone: current.phone,
+          licenseNumber: current.licenseNumber,
+          licenseExpiry: current.licenseExpiry,
+          photoUrl: current.photoUrl,
+          assignedBusId: current.assignedBusId,
+        },
+        after: {
+          fullName: updated.fullName,
+          phone: updated.phone,
+          licenseNumber: updated.licenseNumber,
+          licenseExpiry: updated.licenseExpiry,
+          photoUrl: updated.photoUrl,
+          assignedBusId: updated.assignedBusId,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Driver profile updated successfully', {
+      schoolId,
+      driverId,
+      fullName: updated.fullName,
+      updatedBy: userId,
+    });
+
+    return updated;
+  }
+
+  /**
+   * Resets Driver mobile app login PIN with bcrypt hash and audit logging
+   */
+  public static async resetDriverPin(
+    schoolId: string,
+    driverId: string,
+    pin: string,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<void> {
+    await this.getDriverById(schoolId, driverId);
+
+    if (!pin || !/^\d{4,6}$/.test(pin.trim())) {
+      throw new BadRequestError('Driver login PIN must be between 4 and 6 digits.');
+    }
+
+    const pinHash = await bcrypt.hash(pin.trim(), 10);
+
+    await query(
+      `UPDATE drivers 
+       SET pin_hash = $1, updated_at = NOW() 
+       WHERE school_id = $2 AND id = $3 AND deleted_at IS NULL`,
+      [pinHash, schoolId, driverId]
+    );
+
+    // Security Audit Log
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'DRIVER_PIN_RESET',
+      entityType: 'DRIVER',
+      entityId: driverId,
+      diffJson: { pinReset: true },
+      ipAddress,
+    });
+
+    logger.info('Driver login PIN reset successfully', {
+      schoolId,
+      driverId,
+      resetBy: userId,
+    });
+  }
+
+  /**
+   * Revokes driver mobile app sessions / forces logout
+   */
+  public static async revokeDriverSessions(
+    schoolId: string,
+    driverId: string,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<void> {
+    await this.getDriverById(schoolId, driverId);
+
+    await query(
+      `UPDATE drivers 
+       SET updated_at = NOW() 
+       WHERE school_id = $1 AND id = $2 AND deleted_at IS NULL`,
+      [schoolId, driverId]
+    );
+
+    // Security Audit Log
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'DRIVER_SESSIONS_REVOKED',
+      entityType: 'DRIVER',
+      entityId: driverId,
+      diffJson: { sessionsRevoked: true },
+      ipAddress,
+    });
+
+    logger.info('Driver sessions revoked', {
+      schoolId,
+      driverId,
+      revokedBy: userId,
+    });
+  }
+
+  /**
+   * Soft-deletes a driver profile and unbinds from assigned buses
+   */
+  public static async removeDriver(
+    schoolId: string,
+    driverId: string,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<void> {
+    const current = await this.getDriverById(schoolId, driverId);
+
+    await DbService.withTransaction(async (client) => {
+      // Unbind driver from any bus
+      await client.query(
+        `UPDATE buses 
+         SET default_driver_id = NULL, updated_at = NOW() 
+         WHERE school_id = $1 AND default_driver_id = $2 AND deleted_at IS NULL`,
+        [schoolId, driverId]
+      );
+
+      // Soft-delete driver record
+      await client.query(
+        `UPDATE drivers 
+         SET deleted_at = NOW(), updated_at = NOW() 
+         WHERE school_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [schoolId, driverId]
+      );
+    });
+
+    // Security Audit Log
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'DRIVER_DELETED',
+      entityType: 'DRIVER',
+      entityId: driverId,
+      diffJson: {
+        deletedDriver: {
+          fullName: current.fullName,
+          phone: current.phone,
+          licenseNumber: current.licenseNumber,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Driver profile removed successfully', {
+      schoolId,
+      driverId,
+      fullName: current.fullName,
+      deletedBy: userId,
+    });
+  }
 }
+
 

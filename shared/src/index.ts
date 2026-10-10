@@ -228,10 +228,16 @@ export type CreateDriverRequest = z.infer<typeof CreateDriverRequestSchema>;
 export const UpdateDriverRequestSchema = CreateDriverRequestSchema.partial();
 export type UpdateDriverRequest = z.infer<typeof UpdateDriverRequestSchema>;
 
+export const ResetDriverPinRequestSchema = z.object({
+  pin: z.string().regex(/^\d{4,6}$/, 'Driver login PIN must be 4 to 6 digits'),
+});
+export type ResetDriverPinRequest = z.infer<typeof ResetDriverPinRequestSchema>;
+
 export const AssignDriverBusPayloadSchema = z.object({
   busId: z.string().uuid('Valid vehicle UUID required').nullable().optional(),
 });
 export type AssignDriverBusPayload = z.infer<typeof AssignDriverBusPayloadSchema>;
+
 
 export interface DriverWithBus extends Driver {
   assignedBusId?: string | null;

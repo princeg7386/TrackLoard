@@ -9,6 +9,9 @@ import { DriverListTable } from '../../../components/driver/DriverListTable';
 import { CreateDriverModal } from '../../../components/driver/CreateDriverModal';
 import { AssignDriverModal } from '../../../components/driver/AssignDriverModal';
 import { DriverHistoryModal } from '../../../components/driver/DriverHistoryModal';
+import { DriverDetailModal } from '../../../components/driver/DriverDetailModal';
+import { EditDriverModal } from '../../../components/driver/EditDriverModal';
+import { ResetDriverPinModal } from '../../../components/driver/ResetDriverPinModal';
 
 export default function DriversDirectoryPage() {
   const { user } = useAuth();
@@ -23,8 +26,10 @@ export default function DriversDirectoryPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedDriverForAssign, setSelectedDriverForAssign] = useState<DriverWithBus | null>(null);
   const [selectedDriverForHistory, setSelectedDriverForHistory] = useState<DriverWithBus | null>(null);
+  const [selectedDriverForDetail, setSelectedDriverForDetail] = useState<DriverWithBus | null>(null);
+  const [selectedDriverForEdit, setSelectedDriverForEdit] = useState<DriverWithBus | null>(null);
+  const [selectedDriverForResetPin, setSelectedDriverForResetPin] = useState<DriverWithBus | null>(null);
   const [isOffline, setIsOffline] = useState(false);
-
 
   useEffect(() => {
     if (user?.schoolId) {
@@ -79,7 +84,29 @@ export default function DriversDirectoryPage() {
     setDrivers((prev) =>
       prev.map((d) => (d.id === updatedDriver.id ? updatedDriver : d))
     );
+    if (selectedDriverForDetail && selectedDriverForDetail.id === updatedDriver.id) {
+      setSelectedDriverForDetail(updatedDriver);
+    }
     setSelectedDriverForAssign(null);
+  };
+
+  const handleDriverUpdated = (updatedDriver: DriverWithBus) => {
+    setDrivers((prev) =>
+      prev.map((d) => (d.id === updatedDriver.id ? updatedDriver : d))
+    );
+    if (selectedDriverForDetail && selectedDriverForDetail.id === updatedDriver.id) {
+      setSelectedDriverForDetail(updatedDriver);
+    }
+    setSelectedDriverForEdit(null);
+  };
+
+  const handleDriverDeleted = (driverId: string) => {
+    setDrivers((prev) => prev.filter((d) => d.id !== driverId));
+    setSelectedDriverForDetail(null);
+  };
+
+  const handlePinResetSuccess = () => {
+    setSelectedDriverForResetPin(null);
   };
 
   const filteredDrivers = drivers.filter(
@@ -179,6 +206,7 @@ export default function DriversDirectoryPage() {
           drivers={filteredDrivers}
           isLoading={isLoading}
           onAddDriver={() => setIsCreateModalOpen(true)}
+          onViewDetail={(driver) => setSelectedDriverForDetail(driver)}
           onManageAssignment={(driver) => setSelectedDriverForAssign(driver)}
           onViewHistory={(driver) => setSelectedDriverForHistory(driver)}
         />
@@ -207,6 +235,43 @@ export default function DriversDirectoryPage() {
         isOpen={Boolean(selectedDriverForHistory)}
         driver={selectedDriverForHistory}
         onClose={() => setSelectedDriverForHistory(null)}
+      />
+
+      {/* Driver Profile & Credential Controls Detail Modal */}
+      <DriverDetailModal
+        schoolId={schoolId}
+        driverId={selectedDriverForDetail?.id ?? null}
+        isOpen={Boolean(selectedDriverForDetail)}
+        onClose={() => setSelectedDriverForDetail(null)}
+        onEdit={(driver) => setSelectedDriverForEdit(driver)}
+        onManageAssignment={(driver) => {
+          setSelectedDriverForAssign(driver);
+        }}
+        onResetPin={(driver) => {
+          setSelectedDriverForResetPin(driver);
+        }}
+        onViewHistory={(driver) => {
+          setSelectedDriverForHistory(driver);
+        }}
+        onDriverDeleted={handleDriverDeleted}
+      />
+
+      {/* Edit Driver Profile Modal */}
+      <EditDriverModal
+        schoolId={schoolId}
+        driver={selectedDriverForEdit}
+        isOpen={Boolean(selectedDriverForEdit)}
+        onClose={() => setSelectedDriverForEdit(null)}
+        onSuccess={handleDriverUpdated}
+      />
+
+      {/* Reset Driver Login PIN Modal */}
+      <ResetDriverPinModal
+        schoolId={schoolId}
+        driver={selectedDriverForResetPin}
+        isOpen={Boolean(selectedDriverForResetPin)}
+        onClose={() => setSelectedDriverForResetPin(null)}
+        onSuccess={handlePinResetSuccess}
       />
     </div>
   );
