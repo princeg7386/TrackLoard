@@ -132,4 +132,51 @@ export class StudentController {
       next(error);
     }
   }
+
+  /**
+   * Retrieves transport options (routes and their stops) for transport assignment
+   * GET /api/v1/schools/:schoolId/students/transport-options
+   */
+  public static async getTransportOptions(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const options = await StudentService.getTransportOptions(schoolId);
+
+      res.status(200).json({
+        success: true,
+        data: options,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Assigns or updates transport/bus/stop for a student (or unassigns if stops are null)
+   * PUT /api/v1/schools/:schoolId/students/:studentId/transport
+   */
+  public static async assignTransport(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, studentId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const student = await StudentService.assignTransport(
+        schoolId,
+        studentId,
+        req.body,
+        userId,
+        ipAddress
+      );
+
+      res.status(200).json({
+        success: true,
+        data: student,
+        message: 'Student transport assignment updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

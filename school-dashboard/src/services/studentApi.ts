@@ -4,7 +4,10 @@ import {
   UpdateStudentRequest,
   UpsertParentGuardianRequest,
   ParentGuardianRecord,
+  RouteWithStopsOption,
+  AssignStudentTransportPayload,
 } from '@school-bus/shared';
+
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
 
@@ -176,3 +179,55 @@ export async function deleteStudentParent(
     throw new Error(errorMsg);
   }
 }
+
+/**
+ * Fetches available transport options (routes and their ordered pickup/drop stops)
+ */
+export async function fetchTransportOptions(
+  schoolId: string
+): Promise<RouteWithStopsOption[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/transport-options`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      return [];
+    }
+
+    const json = await res.json();
+    return json.data || [];
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return [];
+  }
+}
+
+/**
+ * Assigns or updates transport/bus/stop for a student (or unassigns if stops are null)
+ */
+export async function assignStudentTransport(
+  schoolId: string,
+  studentId: string,
+  payload: AssignStudentTransportPayload
+): Promise<StudentWithDetails> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}/transport`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok || !json.success) {
+    const errorMsg = json.error?.message || json.message || 'Failed to update transport assignment.';
+    throw new Error(errorMsg);
+  }
+
+  return json.data;
+}
+

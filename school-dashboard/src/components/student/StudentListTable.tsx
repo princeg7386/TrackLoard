@@ -22,6 +22,7 @@ interface StudentListTableProps {
   onAddStudent: () => void;
   onViewDetail?: (student: StudentWithDetails) => void;
   onManageParent?: (student: StudentWithDetails) => void;
+  onAssignTransport?: (student: StudentWithDetails) => void;
 }
 
 export function StudentListTable({
@@ -30,7 +31,9 @@ export function StudentListTable({
   onAddStudent,
   onViewDetail,
   onManageParent,
+  onAssignTransport,
 }: StudentListTableProps) {
+
   if (isLoading) {
     return (
       <div className="p-6 space-y-4">
@@ -141,23 +144,43 @@ export function StudentListTable({
                 </td>
 
                 {/* 5. Transport Allocation */}
-                <td className="py-3 px-4">
+                <td className="py-3 px-4" onClick={(e) => {
+                  if (onAssignTransport) {
+                    e.stopPropagation();
+                    onAssignTransport(student);
+                  }
+                }}>
                   {student.pickupStopName ? (
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-1 font-semibold text-slate-800">
+                    <div className="space-y-0.5 hover:opacity-85 transition-opacity">
+                      <div className="flex items-center gap-1.5 font-semibold text-slate-800">
                         <MapPin className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                         <span className="truncate max-w-[140px]">{student.pickupStopName}</span>
                       </div>
-                      {student.assignedRouteName && (
-                        <span className="text-[10px] text-slate-500 font-mono block">
-                          Route: {student.assignedRouteCode || student.assignedRouteName}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {student.assignedBusNumber ? (
+                          <span className="text-[10px] font-mono font-bold text-sky-700 bg-sky-50 px-1.5 py-0.2 rounded border border-sky-200">
+                            {student.assignedBusNumber}
+                          </span>
+                        ) : null}
+                        {student.pickupScheduledTime && (
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {student.pickupScheduledTime} AM
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-slate-500 bg-slate-100 border border-slate-200">
-                      Unassigned
-                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onAssignTransport) onAssignTransport(student);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] text-slate-600 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded border border-slate-300 transition-colors font-medium"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Assign Bus
+                    </button>
                   )}
                 </td>
 
@@ -203,6 +226,16 @@ export function StudentListTable({
                 {/* 7. Actions */}
                 <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onAssignTransport && onAssignTransport(student)}
+                      title="Assign or Update Bus and Pickup Stop"
+                      className="inline-flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-sky-600 hover:bg-sky-50 rounded border border-slate-200 hover:border-sky-300 text-xs font-semibold transition-colors"
+                    >
+                      <Bus className="w-3.5 h-3.5" />
+                      Transport
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => onManageParent && onManageParent(student)}

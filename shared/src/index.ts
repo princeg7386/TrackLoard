@@ -555,14 +555,47 @@ export const UpsertParentGuardianRequestSchema = z.object({
 });
 export type UpsertParentGuardianRequest = z.infer<typeof UpsertParentGuardianRequestSchema>;
 
+export const AssignStudentTransportPayloadSchema = z.object({
+  pickupStopId: z.string().uuid('Valid pickup stop UUID required').nullable().optional().or(z.literal('')),
+  dropStopId: z.string().uuid('Valid drop stop UUID required').nullable().optional().or(z.literal('')),
+});
+export type AssignStudentTransportPayload = z.infer<typeof AssignStudentTransportPayloadSchema>;
+
+export interface StopOptionItem {
+  id: string;
+  stopName: string;
+  sequenceOrder: number;
+  scheduledTime: string;
+  latitude: number;
+  longitude: number;
+  geofenceRadiusMeters?: number;
+}
+
+export interface RouteWithStopsOption {
+  id: string;
+  name: string;
+  code: string;
+  routeType: string;
+  busId?: string | null;
+  busNumber?: string | null;
+  busRegistrationNumber?: string | null;
+  stops: StopOptionItem[];
+}
+
 export interface StudentWithDetails extends Student {
   pickupStopId?: string | null;
   pickupStopName?: string | null;
+  pickupScheduledTime?: string | null;
   dropStopId?: string | null;
   dropStopName?: string | null;
+  dropScheduledTime?: string | null;
   assignedRouteId?: string | null;
   assignedRouteName?: string | null;
   assignedRouteCode?: string | null;
+  assignedBusId?: string | null;
+  assignedBusNumber?: string | null;
+  assignedBusRegistrationNumber?: string | null;
+  transportStatus?: 'ASSIGNED' | 'UNASSIGNED';
   parentName?: string | null;
   parentPhone?: string | null;
   parentRelationship?: string | null;

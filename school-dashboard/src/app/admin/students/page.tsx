@@ -17,6 +17,7 @@ import { fetchStudents } from '../../../services/studentApi';
 import { StudentListTable } from '../../../components/student/StudentListTable';
 import { CreateStudentModal } from '../../../components/student/CreateStudentModal';
 import { ManageParentModal } from '../../../components/student/ManageParentModal';
+import { AssignTransportModal } from '../../../components/student/AssignTransportModal';
 
 export default function StudentsDirectoryPage() {
   const { user } = useAuth();
@@ -31,6 +32,7 @@ export default function StudentsDirectoryPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedStudentForParent, setSelectedStudentForParent] = useState<StudentWithDetails | null>(null);
+  const [selectedStudentForTransport, setSelectedStudentForTransport] = useState<StudentWithDetails | null>(null);
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -89,6 +91,13 @@ export default function StudentsDirectoryPage() {
     setSelectedStudentForParent(null);
   };
 
+  const handleTransportUpdated = (updatedStudent: StudentWithDetails) => {
+    setStudents((prev) =>
+      prev.map((s) => (s.id === updatedStudent.id ? updatedStudent : s))
+    );
+    setSelectedStudentForTransport(null);
+  };
+
   // Distinct classes for quick filter
   const distinctClasses = useMemo(() => {
     const set = new Set<string>();
@@ -106,7 +115,8 @@ export default function StudentsDirectoryPage() {
         (s.rollNumber && s.rollNumber.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (s.emergencyContactPhone && s.emergencyContactPhone.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (s.parentPhone && s.parentPhone.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (s.pickupStopName && s.pickupStopName.toLowerCase().includes(searchTerm.toLowerCase()));
+        (s.pickupStopName && s.pickupStopName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (s.assignedBusNumber && s.assignedBusNumber.toLowerCase().includes(searchTerm.toLowerCase()));
 
       const matchesClass =
         selectedClassFilter === 'ALL' || s.classGrade.toLowerCase() === selectedClassFilter.toLowerCase();
@@ -190,7 +200,7 @@ export default function StudentsDirectoryPage() {
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by student name, ID, roll no, stop..."
+                placeholder="Search by student name, ID, roll no, stop, bus..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
@@ -228,6 +238,7 @@ export default function StudentsDirectoryPage() {
           isLoading={isLoading}
           onAddStudent={() => setIsCreateModalOpen(true)}
           onManageParent={(student) => setSelectedStudentForParent(student)}
+          onAssignTransport={(student) => setSelectedStudentForTransport(student)}
           onViewDetail={(student) => {
             // Prepared for subsequent micro-phases
           }}
@@ -250,6 +261,16 @@ export default function StudentsDirectoryPage() {
         onClose={() => setSelectedStudentForParent(null)}
         onSuccess={handleParentUpdated}
       />
+
+      {/* Assign Transport Modal */}
+      <AssignTransportModal
+        schoolId={schoolId}
+        student={selectedStudentForTransport}
+        isOpen={Boolean(selectedStudentForTransport)}
+        onClose={() => setSelectedStudentForTransport(null)}
+        onSuccess={handleTransportUpdated}
+      />
     </div>
   );
 }
+

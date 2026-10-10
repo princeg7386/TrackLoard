@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   CreateStudentRequestSchema,
   UpsertParentGuardianRequestSchema,
+  AssignStudentTransportPayloadSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -25,7 +26,16 @@ studentRouter.post(
   StudentController.createStudent
 );
 
-// 2. List Students
+// 2. Transport Options for Assignment (routes & stops)
+// Note: Placed before /:schoolId/students/:studentId to avoid param collision
+studentRouter.get(
+  '/:schoolId/students/transport-options',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  StudentController.getTransportOptions
+);
+
+// 3. List Students
 studentRouter.get(
   '/:schoolId/students',
   authenticateToken,
@@ -33,7 +43,7 @@ studentRouter.get(
   StudentController.listStudents
 );
 
-// 3. Get Single Student Details
+// 4. Get Single Student Details
 studentRouter.get(
   '/:schoolId/students/:studentId',
   authenticateToken,
@@ -41,7 +51,21 @@ studentRouter.get(
   StudentController.getStudent
 );
 
-// 4. Get Parents / Guardians for a Student
+// 5. Assign / Unassign Transport (Bus & Stops)
+studentRouter.put(
+  '/:schoolId/students/:studentId/transport',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(AssignStudentTransportPayloadSchema),
+  StudentController.assignTransport
+);
+
+// 6. Get Parents / Guardians for a Student
 studentRouter.get(
   '/:schoolId/students/:studentId/parents',
   authenticateToken,
@@ -49,7 +73,7 @@ studentRouter.get(
   StudentController.getParents
 );
 
-// 5. Add or Update Parent / Guardian (and Emergency Contact)
+// 7. Add or Update Parent / Guardian (and Emergency Contact)
 studentRouter.post(
   '/:schoolId/students/:studentId/parents',
   authenticateToken,
@@ -63,7 +87,7 @@ studentRouter.post(
   StudentController.upsertParent
 );
 
-// 6. Remove Parent / Guardian Link
+// 8. Remove Parent / Guardian Link
 studentRouter.delete(
   '/:schoolId/students/:studentId/parents/:parentId',
   authenticateToken,
@@ -77,3 +101,4 @@ studentRouter.delete(
 );
 
 export default studentRouter;
+

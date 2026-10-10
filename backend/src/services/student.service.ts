@@ -3,7 +3,9 @@ import {
   CreateStudentRequest,
   UpdateStudentRequest,
   UpsertParentGuardianRequest,
+  AssignStudentTransportPayload,
   ParentGuardianRecord,
+  RouteWithStopsOption,
   StudentWithDetails,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -145,7 +147,7 @@ export class StudentService {
   }
 
   /**
-   * Retrieves all students belonging to a school tenant with route and parent associations
+   * Retrieves all students belonging to a school tenant with route, stop, bus, and parent associations
    */
   public static async getStudents(
     schoolId: string,
@@ -169,11 +171,20 @@ export class StudentService {
         s.updated_at,
         ssa.pickup_stop_id,
         pl_pickup.stop_name AS pickup_stop_name,
+        pl_pickup.scheduled_time::text AS pickup_scheduled_time,
         ssa.drop_stop_id,
         pl_drop.stop_name AS drop_stop_name,
+        pl_drop.scheduled_time::text AS drop_scheduled_time,
         r.id AS assigned_route_id,
         r.name AS assigned_route_name,
         r.code AS assigned_route_code,
+        b.id AS assigned_bus_id,
+        b.bus_number AS assigned_bus_number,
+        b.registration_number AS assigned_bus_registration_number,
+        CASE 
+          WHEN ssa.pickup_stop_id IS NOT NULL THEN 'ASSIGNED' 
+          ELSE 'UNASSIGNED' 
+        END AS transport_status,
         (
           SELECT json_build_object(
             'id', p.id,
@@ -201,6 +212,8 @@ export class StudentService {
         ON pl_drop.id = ssa.drop_stop_id
       LEFT JOIN routes r 
         ON r.id = pl_pickup.route_id
+      LEFT JOIN buses b 
+        ON b.id = r.default_bus_id AND b.deleted_at IS NULL
       WHERE s.school_id = $1 AND s.deleted_at IS NULL
     `;
 
@@ -250,11 +263,17 @@ export class StudentService {
         updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
         pickupStopId: r.pickup_stop_id,
         pickupStopName: r.pickup_stop_name,
+        pickupScheduledTime: r.pickup_scheduled_time,
         dropStopId: r.drop_stop_id,
         dropStopName: r.drop_stop_name,
+        dropScheduledTime: r.drop_scheduled_time,
         assignedRouteId: r.assigned_route_id,
         assignedRouteName: r.assigned_route_name,
         assignedRouteCode: r.assigned_route_code,
+        assignedBusId: r.assigned_bus_id,
+        assignedBusNumber: r.assigned_bus_number,
+        assignedBusRegistrationNumber: r.assigned_bus_registration_number,
+        transportStatus: r.transport_status,
         parentName: parent?.fullName || null,
         parentPhone: parent?.phone || null,
         parentRelationship: parent?.relationship || null,
@@ -265,7 +284,7 @@ export class StudentService {
   }
 
   /**
-   * Retrieves single student details by ID including parent list
+   * Retrieves single student details by ID including parent list, assigned bus & stop times
    */
   public static async getStudentById(schoolId: string, studentId: string): Promise<StudentWithDetails> {
     const sql = `
@@ -282,11 +301,20 @@ export class StudentService {
         s.updated_at,
         ssa.pickup_stop_id,
         pl_pickup.stop_name AS pickup_stop_name,
+        pl_pickup.scheduled_time::text AS pickup_scheduled_time,
         ssa.drop_stop_id,
         pl_drop.stop_name AS drop_stop_name,
+        pl_drop.scheduled_time::text AS drop_scheduled_time,
         r.id AS assigned_route_id,
         r.name AS assigned_route_name,
         r.code AS assigned_route_code,
+        b.id AS assigned_bus_id,
+        b.bus_number AS assigned_bus_number,
+        b.registration_number AS assigned_bus_registration_number,
+        CASE 
+          WHEN ssa.pickup_stop_id IS NOT NULL THEN 'ASSIGNED' 
+          ELSE 'UNASSIGNED' 
+        END AS transport_status,
         (
           SELECT json_build_object(
             'id', p.id,
@@ -314,6 +342,8 @@ export class StudentService {
         ON pl_drop.id = ssa.drop_stop_id
       LEFT JOIN routes r 
         ON r.id = pl_pickup.route_id
+      LEFT JOIN buses b 
+        ON b.id = r.default_bus_id AND b.deleted_at IS NULL
       WHERE s.id = $1 AND s.school_id = $2 AND s.deleted_at IS NULL
     `;
 
@@ -342,11 +372,17 @@ export class StudentService {
       updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
       pickupStopId: r.pickup_stop_id,
       pickupStopName: r.pickup_stop_name,
+      pickupScheduledTime: r.pickup_scheduled_time,
       dropStopId: r.drop_stop_id,
       dropStopName: r.drop_stop_name,
+      dropScheduledTime: r.drop_scheduled_time,
       assignedRouteId: r.assigned_route_id,
       assignedRouteName: r.assigned_route_name,
       assignedRouteCode: r.assigned_route_code,
+      assignedBusId: r.assigned_bus_id,
+      assignedBusNumber: r.assigned_bus_number,
+      assignedBusRegistrationNumber: r.assigned_bus_registration_number,
+      transportStatus: r.transport_status,
       parentName: parent?.fullName || null,
       parentPhone: parent?.phone || null,
       parentRelationship: parent?.relationship || null,
@@ -567,5 +603,186 @@ export class StudentService {
       parentId,
       schoolId,
     });
+  }
+
+  /**
+   * Assigns or unassigns bus pickup/drop stops for a student
+   */
+  public static async assignTransport(
+    schoolId: string,
+    studentId: string,
+    payload: AssignStudentTransportPayload,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<StudentWithDetails> {
+    // 1. Verify student exists in this school
+    const studentCheck = await query<{ id: string; full_name: string }>(
+      `SELECT id, full_name FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [studentId, schoolId]
+    );
+    if (studentCheck.length === 0) {
+      throw new NotFoundError('Student record not found or does not belong to your school.');
+    }
+    const student = studentCheck[0];
+
+    const pickupStopId = payload.pickupStopId && payload.pickupStopId.trim() ? payload.pickupStopId.trim() : null;
+    const dropStopId = payload.dropStopId && payload.dropStopId.trim() ? payload.dropStopId.trim() : null;
+
+    if (pickupStopId) {
+      // 2. Verify pickup stop belongs to this school
+      const stopCheck = await query<{ id: string; stop_name: string; route_id: string }>(
+        `SELECT id, stop_name, route_id FROM pickup_locations WHERE id = $1 AND school_id = $2`,
+        [pickupStopId, schoolId]
+      );
+      if (stopCheck.length === 0) {
+        throw new BadRequestError('Selected pickup stop does not exist or belongs to another school.');
+      }
+
+      if (dropStopId) {
+        const dropCheck = await query<{ id: string; stop_name: string }>(
+          `SELECT id, stop_name FROM pickup_locations WHERE id = $1 AND school_id = $2`,
+          [dropStopId, schoolId]
+        );
+        if (dropCheck.length === 0) {
+          throw new BadRequestError('Selected drop stop does not exist or belongs to another school.');
+        }
+      }
+
+      // Upsert into student_stop_assignments
+      await DbService.withTransaction(async (client) => {
+        const upsertSql = `
+          INSERT INTO student_stop_assignments (
+            school_id,
+            student_id,
+            pickup_stop_id,
+            drop_stop_id
+          )
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (school_id, student_id)
+          DO UPDATE SET
+            pickup_stop_id = EXCLUDED.pickup_stop_id,
+            drop_stop_id = EXCLUDED.drop_stop_id,
+            updated_at = NOW()
+        `;
+        await client.query(upsertSql, [schoolId, studentId, pickupStopId, dropStopId]);
+      });
+
+      // Audit Log
+      await AuditService.log({
+        schoolId,
+        userId: userId || null,
+        userRole: 'SCHOOL_ADMIN',
+        action: 'STUDENT_TRANSPORT_ASSIGNED',
+        entityType: 'STUDENT',
+        entityId: studentId,
+        diffJson: {
+          studentName: student.full_name,
+          pickupStopId,
+          pickupStopName: stopCheck[0].stop_name,
+          dropStopId,
+        },
+        ipAddress,
+      });
+
+      logger.info('Student transport assigned successfully', {
+        studentId,
+        schoolId,
+        pickupStopId,
+        dropStopId,
+      });
+    } else {
+      // Unassign transport
+      await DbService.withTransaction(async (client) => {
+        await client.query(
+          `DELETE FROM student_stop_assignments WHERE school_id = $1 AND student_id = $2`,
+          [schoolId, studentId]
+        );
+      });
+
+      // Audit Log
+      await AuditService.log({
+        schoolId,
+        userId: userId || null,
+        userRole: 'SCHOOL_ADMIN',
+        action: 'STUDENT_TRANSPORT_UNASSIGNED',
+        entityType: 'STUDENT',
+        entityId: studentId,
+        diffJson: {
+          studentName: student.full_name,
+        },
+        ipAddress,
+      });
+
+      logger.info('Student transport unassigned successfully', {
+        studentId,
+        schoolId,
+      });
+    }
+
+    return await this.getStudentById(schoolId, studentId);
+  }
+
+  /**
+   * Retrieves all available routes and stops with linked fleet buses for a school
+   */
+  public static async getTransportOptions(schoolId: string): Promise<RouteWithStopsOption[]> {
+    const routesSql = `
+      SELECT 
+        r.id,
+        r.name,
+        r.code,
+        r.route_type,
+        b.id AS bus_id,
+        b.bus_number,
+        b.registration_number AS bus_registration_number
+      FROM routes r
+      LEFT JOIN buses b ON b.id = r.default_bus_id AND b.deleted_at IS NULL
+      WHERE r.school_id = $1 AND r.deleted_at IS NULL
+      ORDER BY r.name ASC
+    `;
+    const routeRows = await query<any>(routesSql, [schoolId]);
+
+    const stopsSql = `
+      SELECT 
+        id,
+        route_id,
+        stop_name,
+        sequence_order,
+        scheduled_time::text AS scheduled_time,
+        latitude,
+        longitude,
+        geofence_radius_meters
+      FROM pickup_locations
+      WHERE school_id = $1
+      ORDER BY route_id, sequence_order ASC
+    `;
+    const stopRows = await query<any>(stopsSql, [schoolId]);
+
+    const stopsByRoute = new Map<string, any[]>();
+    for (const stop of stopRows) {
+      if (!stopsByRoute.has(stop.route_id)) {
+        stopsByRoute.set(stop.route_id, []);
+      }
+      stopsByRoute.get(stop.route_id)!.push({
+        id: stop.id,
+        stopName: stop.stop_name,
+        sequenceOrder: stop.sequence_order,
+        scheduledTime: stop.scheduled_time,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        geofenceRadiusMeters: stop.geofence_radius_meters,
+      });
+    }
+
+    return routeRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      code: r.code,
+      routeType: r.route_type,
+      busId: r.bus_id || null,
+      busNumber: r.bus_number || null,
+      busRegistrationNumber: r.bus_registration_number || null,
+      stops: stopsByRoute.get(r.id) || [],
+    }));
   }
 }
