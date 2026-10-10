@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'core/theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/permissions_screen.dart';
 import 'screens/splash_screen.dart';
 
 void main() async {
@@ -34,6 +35,7 @@ class DriverTelemetryApp extends StatelessWidget {
       routes: {
         '/splash': (context) => const SplashScreen(),
         '/login': (context) => const LoginScreen(),
+        '/permissions': (context) => const PermissionsScreen(),
         '/home': (context) => const HomeScreen(),
       },
     );

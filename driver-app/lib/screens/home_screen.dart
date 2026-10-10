@@ -3,10 +3,13 @@ import '../core/theme/app_theme.dart';
 import '../core/utils/app_formatters.dart';
 import '../models/assigned_trip.dart';
 import '../models/driver_profile.dart';
+import '../models/permission_status_model.dart';
 import '../services/auth_service.dart';
+import '../services/permission_service.dart';
 import 'login_screen.dart';
+import 'permissions_screen.dart';
 
-/// Driver Home Screen displaying Today's Bus, Today's Route, and Telemetry Status
+/// Driver Home Screen displaying Today's Bus, Today's Route, Permission Health, and Telemetry Status
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -14,8 +17,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final AuthService _authService = AuthService();
+  final PermissionService _permissionService = PermissionService();
 
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -24,11 +28,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
   DriverProfileData? _profileData;
   Map<String, String?> _storedDriver = {};
+  AppPermissionsState? _permissionsState;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadInitialData();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Automatically refresh permission health on return to foreground
+      _checkPermissionsStatus();
+    }
+  }
+
+  Future<void> _checkPermissionsStatus() async {
+    final perms = await _permissionService.checkPermissions();
+    if (!mounted) return;
+    setState(() {
+      _permissionsState = perms;
+    });
   }
 
   Future<void> _loadInitialData() async {
@@ -39,7 +67,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _errorMessage = null;
     });
 
-    await _fetchProfile();
+    await Future.wait([
+      _fetchProfile(),
+      _checkPermissionsStatus(),
+    ]);
   }
 
   Future<void> _fetchProfile() async {
@@ -68,7 +99,10 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _isRefreshing = true;
     });
-    await _fetchProfile();
+    await Future.wait([
+      _fetchProfile(),
+      _checkPermissionsStatus(),
+    ]);
   }
 
   void _handleUnauthorized() async {
@@ -77,6 +111,13 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
     );
+  }
+
+  void _openPermissionsFlow() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PermissionsScreen()),
+    );
+    _checkPermissionsStatus();
   }
 
   void _confirmLogout() {
@@ -147,6 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final driverName = _profileData?.driver.fullName ?? _storedDriver['fullName'] ?? 'Driver';
     final driverPhone = _profileData?.driver.phone ?? _storedDriver['phone'] ?? '';
     final assignedBus = _profileData?.assignedBus;
+    final isPermIncomplete = _permissionsState != null && !_permissionsState!.isFullTelemetryReady;
 
     return Scaffold(
       backgroundColor: AppTheme.surfaceLight,
@@ -186,7 +228,13 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Offline or Error Banner
+              // 1. Permission Warning Banner (if missing permissions)
+              if (isPermIncomplete) ...[
+                _buildPermissionWarningBanner(),
+                const SizedBox(height: 12),
+              ],
+
+              // 2. Offline or Error Banner
               if (_isOffline) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -273,7 +321,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 20),
 
-                // SECTION 4: BACKGROUND TELEMETRY STATUS (Foundation for Phase 10.2)
+                // SECTION 4: BACKGROUND TELEMETRY STATUS & PERMISSIONS
                 _buildTelemetryStatusCard(),
 
                 const SizedBox(height: 24),
@@ -281,6 +329,76 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPermissionWarningBanner() {
+    final isGpsOff = !(_permissionsState?.isGpsServiceEnabled ?? true);
+    final isBgMissing = !(_permissionsState?.isBackgroundLocationGranted ?? true);
+
+    String message;
+    if (isGpsOff) {
+      message = 'Device GPS hardware is turned OFF. Bus coordinates cannot be broadcast.';
+    } else if (isBgMissing) {
+      message = 'Background Location ("Allow all the time") is required for tracking when phone is locked.';
+    } else {
+      message = 'Important permissions are missing for full GPS telemetry.';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: isGpsOff ? AppTheme.statusEmergencyLight : AppTheme.statusWarningLight,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: (isGpsOff ? AppTheme.statusEmergency : AppTheme.statusWarning).withOpacity(0.4),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(
+            isGpsOff ? Icons.gps_off_rounded : Icons.warning_amber_rounded,
+            size: 22,
+            color: isGpsOff ? AppTheme.statusEmergency : AppTheme.statusWarning,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isGpsOff ? 'GPS Disabled' : 'Permissions Incomplete',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: isGpsOff ? AppTheme.statusEmergency : AppTheme.statusWarning,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  message,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isGpsOff ? AppTheme.statusEmergency : AppTheme.statusWarning,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _openPermissionsFlow,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isGpsOff ? AppTheme.statusEmergency : AppTheme.statusWarning,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              visualDensity: VisualDensity.compact,
+            ),
+            child: const Text('Fix', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }
@@ -630,60 +748,98 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildTelemetryStatusCard() {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppTheme.borderSubtle),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppTheme.primaryNavy.withOpacity(0.06),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.gps_fixed_rounded, size: 18, color: AppTheme.primaryNavy),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'GPS Telemetry Service',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textPrimary,
-                  ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'Background location engine active and ready',
-                  style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: AppTheme.statusSuccessLight,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Text(
-              'READY',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.statusSuccess,
+    final isGpsOff = !(_permissionsState?.isGpsServiceEnabled ?? true);
+    final isFullReady = _permissionsState?.isFullTelemetryReady ?? false;
+    final isEssential = _permissionsState?.isEssentialReady ?? false;
+
+    String statusText;
+    Color statusColor;
+    Color statusBgColor;
+
+    if (isGpsOff) {
+      statusText = 'GPS DISABLED';
+      statusColor = AppTheme.statusEmergency;
+      statusBgColor = AppTheme.statusEmergencyLight;
+    } else if (isFullReady) {
+      statusText = 'OPTIMAL READY';
+      statusColor = AppTheme.statusSuccess;
+      statusBgColor = AppTheme.statusSuccessLight;
+    } else if (isEssential) {
+      statusText = 'BASIC ACTIVE';
+      statusColor = AppTheme.statusWarning;
+      statusBgColor = AppTheme.statusWarningLight;
+    } else {
+      statusText = 'PERMISSIONS NEEDED';
+      statusColor = AppTheme.statusEmergency;
+      statusBgColor = AppTheme.statusEmergencyLight;
+    }
+
+    return InkWell(
+      onTap: _openPermissionsFlow,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.borderSubtle),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: statusColor.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isGpsOff ? Icons.gps_off_rounded : Icons.gps_fixed_rounded,
+                size: 18,
+                color: statusColor,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'GPS Telemetry Service',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    isFullReady
+                        ? 'Background GPS service running optimal'
+                        : (isGpsOff
+                            ? 'Tap to enable device GPS hardware'
+                            : 'Tap to configure location permissions'),
+                    style: TextStyle(fontSize: 11, color: isFullReady ? AppTheme.textMuted : statusColor),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: statusBgColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                statusText,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: statusColor,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
