@@ -1,23 +1,38 @@
 'use client';
 
 import React from 'react';
-import { Bus, User, Cpu, MapPin, Smartphone, UserCheck, Settings2, Plus } from 'lucide-react';
+import {
+  Bus,
+  Cpu,
+  MapPin,
+  Smartphone,
+  Settings2,
+  Plus,
+  Eye,
+  Edit2,
+  Trash2,
+} from 'lucide-react';
 import { BusWithDriver } from '@school-bus/shared';
 import { EmptyState } from '../ui/EmptyState';
-import { StatusBadge } from '../ui/StatusBadge';
 
 interface BusListTableProps {
   buses: BusWithDriver[];
   isLoading: boolean;
   onAddBus: () => void;
+  onSelectBus: (bus: BusWithDriver) => void;
   onManageAssignments: (bus: BusWithDriver) => void;
+  onEditBus: (bus: BusWithDriver) => void;
+  onDeleteBus: (bus: BusWithDriver) => void;
 }
 
 export function BusListTable({
   buses,
   isLoading,
   onAddBus,
+  onSelectBus,
   onManageAssignments,
+  onEditBus,
+  onDeleteBus,
 }: BusListTableProps) {
   if (isLoading) {
     return (
@@ -59,14 +74,18 @@ export function BusListTable({
         </thead>
         <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
           {buses.map((bus) => (
-            <tr key={bus.id} className="hover:bg-slate-50/60 transition-colors">
+            <tr
+              key={bus.id}
+              onClick={() => onSelectBus(bus)}
+              className="hover:bg-slate-50/80 cursor-pointer transition-colors group"
+            >
               {/* Bus Internal Name */}
               <td className="py-3.5 px-4 font-semibold text-slate-900">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-md bg-sky-50 border border-sky-200 flex items-center justify-center text-sky-700 shrink-0 font-bold text-xs">
+                  <div className="w-7 h-7 rounded-md bg-sky-50 group-hover:bg-sky-100 border border-sky-200 flex items-center justify-center text-sky-700 shrink-0 font-bold text-xs transition-colors">
                     <Bus className="w-3.5 h-3.5" />
                   </div>
-                  <span>{bus.busNumber}</span>
+                  <span className="group-hover:text-sky-700 transition-colors">{bus.busNumber}</span>
                 </div>
               </td>
 
@@ -83,7 +102,7 @@ export function BusListTable({
               </td>
 
               {/* Primary Driver */}
-              <td className="py-3.5 px-4">
+              <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                 {bus.driverName ? (
                   <div className="flex items-center gap-1.5 text-slate-800">
                     <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
@@ -105,7 +124,7 @@ export function BusListTable({
               </td>
 
               {/* Route Assignment */}
-              <td className="py-3.5 px-4">
+              <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                 {bus.assignedRouteName ? (
                   <div className="inline-flex items-center gap-1 text-sky-700 font-medium">
                     <MapPin className="w-3 h-3 text-sky-500 shrink-0" />
@@ -142,16 +161,41 @@ export function BusListTable({
               </td>
 
               {/* Actions */}
-              <td className="py-3.5 px-4 text-right">
-                <button
-                  type="button"
-                  onClick={() => onManageAssignments(bus)}
-                  title="Manage Driver and Route Assignments"
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 rounded-md shadow-2xs transition-colors"
-                >
-                  <Settings2 className="w-3.5 h-3.5 text-slate-500" />
-                  Pair
-                </button>
+              <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                <div className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onSelectBus(bus)}
+                    title="View Telemetry & Details"
+                    className="p-1 text-slate-500 hover:text-sky-700 hover:bg-sky-50 rounded transition-colors"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onManageAssignments(bus)}
+                    title="Pair Driver & Route"
+                    className="p-1 text-slate-500 hover:text-sky-700 hover:bg-sky-50 rounded transition-colors"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onEditBus(bus)}
+                    title="Edit Vehicle"
+                    className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteBus(bus)}
+                    title="Remove Vehicle"
+                    className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

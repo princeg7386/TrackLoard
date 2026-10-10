@@ -43,17 +43,66 @@ export class BusController {
   }
 
   /**
-   * Retrieves single bus details
+   * Retrieves single bus detailed view (with GPS location & current trip)
    * GET /api/v1/schools/:schoolId/buses/:busId
    */
   public static async getBus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
-      const bus = await BusService.getBusById(schoolId, busId);
+      const bus = await BusService.getBusDetail(schoolId, busId);
 
       res.status(200).json({
         success: true,
         data: bus,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Updates an existing vehicle's specifications & profile
+   * PUT /api/v1/schools/:schoolId/buses/:busId
+   */
+  public static async updateBus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const updatedBus = await BusService.updateBus(
+        schoolId,
+        busId,
+        req.body,
+        userId,
+        ipAddress
+      );
+
+      res.status(200).json({
+        success: true,
+        data: updatedBus,
+        message: 'Vehicle specifications updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Soft-deletes a vehicle from the fleet
+   * DELETE /api/v1/schools/:schoolId/buses/:busId
+   */
+  public static async deleteBus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const result = await BusService.deleteBus(schoolId, busId, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
       });
     } catch (error) {
       next(error);

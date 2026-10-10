@@ -270,6 +270,33 @@ export interface BusWithDriver extends Bus {
   assignedRouteType?: string | null;
 }
 
+export interface BusCurrentLocation {
+  latitude: number;
+  longitude: number;
+  speedKmh: number;
+  bearingDegrees?: number | null;
+  accuracyMeters?: number | null;
+  recordedAt: string;
+}
+
+export interface BusCurrentTrip {
+  id: string;
+  routeId: string;
+  routeName: string;
+  routeCode: string;
+  routeType: string;
+  status: string;
+  scheduledStartTime: string;
+  actualStartTime?: string | null;
+  currentStopSequence: number;
+  delayMinutes: number;
+}
+
+export interface BusDetailView extends BusWithDriver {
+  currentLocation?: BusCurrentLocation | null;
+  currentTrip?: BusCurrentTrip | null;
+}
+
 // 5. Student
 export const StudentSchema = z.object({
   id: z.string().uuid().optional(),

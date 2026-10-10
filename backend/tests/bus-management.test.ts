@@ -215,7 +215,7 @@ describe('Bus & Fleet Management (Micro-phase 6.1: Create Bus)', () => {
       const token = AuthService.generateToken(adminUserA);
 
       const spy = vi
-        .spyOn(BusService, 'getBusById')
+        .spyOn(BusService, 'getBusDetail')
         .mockResolvedValueOnce(mockCreatedBus);
 
       const res = await request(app)
@@ -233,7 +233,7 @@ describe('Bus & Fleet Management (Micro-phase 6.1: Create Bus)', () => {
       const token = AuthService.generateToken(adminUserA);
 
       const spy = vi
-        .spyOn(BusService, 'getBusById')
+        .spyOn(BusService, 'getBusDetail')
         .mockRejectedValueOnce(new NotFoundError('Vehicle not found'));
 
       const res = await request(app)

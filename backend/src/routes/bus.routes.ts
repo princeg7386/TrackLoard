@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   CreateBusRequestSchema,
+  UpdateBusRequestSchema,
   AssignBusPayloadSchema,
   UserRole,
 } from '@school-bus/shared';
@@ -33,7 +34,7 @@ busRouter.get(
   BusController.listBuses
 );
 
-// 3. Get Bus Details
+// 3. Get Bus Details (Includes live GPS location and current active trip)
 busRouter.get(
   '/:schoolId/buses/:busId',
   authenticateToken,
@@ -41,7 +42,30 @@ busRouter.get(
   BusController.getBus
 );
 
-// 4. Update Driver and Route Assignments
+// 4. Update Bus Specifications
+busRouter.put(
+  '/:schoolId/buses/:busId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateBusRequestSchema),
+  BusController.updateBus
+);
+
+// 5. Remove / Soft-Delete Bus
+busRouter.delete(
+  '/:schoolId/buses/:busId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.SUPER_ADMIN),
+  BusController.deleteBus
+);
+
+// 6. Update Driver and Route Assignments
 busRouter.put(
   '/:schoolId/buses/:busId/assignments',
   authenticateToken,
@@ -55,7 +79,7 @@ busRouter.put(
   BusController.updateAssignments
 );
 
-// 5. Driver directory listing for dropdowns
+// 7. Driver directory listing for dropdowns
 busRouter.get(
   '/:schoolId/drivers',
   authenticateToken,
@@ -63,7 +87,7 @@ busRouter.get(
   BusController.listDrivers
 );
 
-// 6. Route directory listing for dropdowns
+// 8. Route directory listing for dropdowns
 busRouter.get(
   '/:schoolId/routes',
   authenticateToken,

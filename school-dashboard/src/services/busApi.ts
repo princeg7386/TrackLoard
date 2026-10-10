@@ -1,6 +1,8 @@
 import {
   BusWithDriver,
+  BusDetailView,
   CreateBusRequest,
+  UpdateBusRequest,
   AssignBusPayload,
   Driver,
   Route,
@@ -42,6 +44,27 @@ export async function fetchBuses(schoolId: string): Promise<BusWithDriver[]> {
 }
 
 /**
+ * Fetches detailed bus view including live GPS location and current active trip
+ */
+export async function fetchBusDetail(schoolId: string, busId: string): Promise<BusDetailView> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/buses/${busId}`, {
+    method: 'GET',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to fetch bus details (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
+/**
  * Registers a new vehicle in the school fleet
  */
 export async function createBus(
@@ -74,6 +97,64 @@ export async function createBus(
   }
 
   return json.data;
+}
+
+/**
+ * Updates vehicle specifications and details
+ */
+export async function updateBus(
+  schoolId: string,
+  busId: string,
+  payload: UpdateBusRequest
+): Promise<BusWithDriver> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/buses/${busId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 409) {
+      throw new Error(json.error?.message || 'A vehicle with this registration or bus number already exists.');
+    }
+    if (res.status === 422) {
+      const details = json.error?.details;
+      if (Array.isArray(details) && details.length > 0) {
+        throw new Error(details[0].message || 'Validation error');
+      }
+      throw new Error(json.error?.message || 'Invalid vehicle details provided.');
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to update vehicle (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
+/**
+ * Soft-deletes a vehicle from the fleet
+ */
+export async function deleteBus(schoolId: string, busId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/buses/${busId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 400) {
+      throw new Error(json.error?.message || 'Cannot remove vehicle while an active trip is in progress.');
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to remove vehicle (HTTP ${res.status})`);
+  }
 }
 
 /**

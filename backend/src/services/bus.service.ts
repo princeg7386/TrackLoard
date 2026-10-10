@@ -1,8 +1,12 @@
 import { query } from '../config/database.js';
 import {
   CreateBusRequest,
+  UpdateBusRequest,
   AssignBusPayload,
   BusWithDriver,
+  BusDetailView,
+  BusCurrentLocation,
+  BusCurrentTrip,
   Driver,
   Route,
   normalizeIndianRegistrationNumber,
@@ -153,6 +157,314 @@ export class BusService {
     });
 
     return createdBus;
+  }
+
+  /**
+   * Updates an existing bus profile and specifications
+   */
+  public static async updateBus(
+    schoolId: string,
+    busId: string,
+    payload: UpdateBusRequest,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<BusWithDriver> {
+    const currentBus = await this.getBusById(schoolId, busId);
+
+    const formattedReg = payload.registrationNumber
+      ? normalizeIndianRegistrationNumber(payload.registrationNumber)
+      : currentBus.registrationNumber;
+
+    const formattedBusNumber = payload.busNumber
+      ? payload.busNumber.trim()
+      : currentBus.busNumber;
+
+    // 1. Check duplicate registration number (excluding self)
+    if (payload.registrationNumber) {
+      const regDup = await query<{ id: string }>(
+        `SELECT id FROM buses 
+         WHERE school_id = $1 AND UPPER(registration_number) = UPPER($2) AND id != $3 AND deleted_at IS NULL`,
+        [schoolId, formattedReg, busId]
+      );
+      if (regDup.length > 0) {
+        throw new ConflictError(
+          `Vehicle registration number "${formattedReg}" is already registered to another bus.`
+        );
+      }
+    }
+
+    // 2. Check duplicate bus number (excluding self)
+    if (payload.busNumber) {
+      const busDup = await query<{ id: string }>(
+        `SELECT id FROM buses 
+         WHERE school_id = $1 AND UPPER(bus_number) = UPPER($2) AND id != $3 AND deleted_at IS NULL`,
+        [schoolId, formattedBusNumber, busId]
+      );
+      if (busDup.length > 0) {
+        throw new ConflictError(
+          `Bus internal identifier "${formattedBusNumber}" is already in use by another vehicle.`
+        );
+      }
+    }
+
+    // 3. Verify driver if updated
+    if (payload.defaultDriverId !== undefined && payload.defaultDriverId !== null && payload.defaultDriverId !== '') {
+      const driverRows = await query<{ id: string }>(
+        `SELECT id FROM drivers WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+        [payload.defaultDriverId, schoolId]
+      );
+      if (driverRows.length === 0) {
+        throw new BadRequestError('Assigned driver does not exist or belongs to another school.');
+      }
+    }
+
+    const cleanMakeModel =
+      payload.makeModel !== undefined ? payload.makeModel?.trim() || null : currentBus.makeModel;
+    const cleanDeviceIdentifier =
+      payload.deviceIdentifier !== undefined
+        ? payload.deviceIdentifier?.trim() || null
+        : currentBus.deviceIdentifier;
+    const cleanDriverId =
+      payload.defaultDriverId !== undefined
+        ? payload.defaultDriverId || null
+        : currentBus.defaultDriverId;
+
+    const updateSql = `
+      UPDATE buses
+      SET
+        registration_number = $1,
+        bus_number = $2,
+        make_model = $3,
+        device_identifier = $4,
+        default_driver_id = $5,
+        updated_at = NOW()
+      WHERE id = $6 AND school_id = $7 AND deleted_at IS NULL
+    `;
+
+    await query(updateSql, [
+      formattedReg,
+      formattedBusNumber,
+      cleanMakeModel,
+      cleanDeviceIdentifier,
+      cleanDriverId,
+      busId,
+      schoolId,
+    ]);
+
+    const updatedBus = await this.getBusById(schoolId, busId);
+
+    // 4. Audit logging
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'BUS_UPDATED',
+      entityType: 'BUS',
+      entityId: busId,
+      diffJson: {
+        before: {
+          busNumber: currentBus.busNumber,
+          registrationNumber: currentBus.registrationNumber,
+          makeModel: currentBus.makeModel,
+          deviceIdentifier: currentBus.deviceIdentifier,
+          defaultDriverId: currentBus.defaultDriverId,
+        },
+        after: {
+          busNumber: updatedBus.busNumber,
+          registrationNumber: updatedBus.registrationNumber,
+          makeModel: updatedBus.makeModel,
+          deviceIdentifier: updatedBus.deviceIdentifier,
+          defaultDriverId: updatedBus.defaultDriverId,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Vehicle specifications updated successfully', {
+      schoolId,
+      busId,
+      busNumber: updatedBus.busNumber,
+      updatedBy: userId,
+    });
+
+    return updatedBus;
+  }
+
+  /**
+   * Soft-deletes a bus with in-progress trip safety checks and unbinds routes
+   */
+  public static async deleteBus(
+    schoolId: string,
+    busId: string,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<{ success: boolean; message: string }> {
+    const bus = await this.getBusById(schoolId, busId);
+
+    // 1. Safety Check: Verify no trip is currently IN_PROGRESS
+    const activeTrips = await query<{ id: string }>(
+      `SELECT id FROM trips 
+       WHERE bus_id = $1 AND school_id = $2 AND status = 'IN_PROGRESS' AND deleted_at IS NULL`,
+      [busId, schoolId]
+    );
+
+    if (activeTrips.length > 0) {
+      throw new BadRequestError(
+        'Cannot remove vehicle while an active trip is currently in progress. Please complete or abort the trip before removing this bus.'
+      );
+    }
+
+    // 2. Transaction: Unbind routes and soft-delete bus
+    await DbService.withTransaction(async (client) => {
+      // Unbind route defaults
+      await client.query(
+        `UPDATE routes 
+         SET default_bus_id = NULL, updated_at = NOW() 
+         WHERE school_id = $1 AND default_bus_id = $2 AND deleted_at IS NULL`,
+        [schoolId, busId]
+      );
+
+      // Soft delete bus
+      await client.query(
+        `UPDATE buses 
+         SET deleted_at = NOW(), updated_at = NOW() 
+         WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+        [busId, schoolId]
+      );
+    });
+
+    // 3. Audit log
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'BUS_REMOVED',
+      entityType: 'BUS',
+      entityId: busId,
+      diffJson: {
+        before: {
+          busNumber: bus.busNumber,
+          registrationNumber: bus.registrationNumber,
+          driverName: bus.driverName,
+          assignedRouteName: bus.assignedRouteName,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Vehicle removed from fleet successfully', {
+      schoolId,
+      busId,
+      busNumber: bus.busNumber,
+      removedBy: userId,
+    });
+
+    return {
+      success: true,
+      message: `Vehicle ${bus.busNumber} (${bus.registrationNumber}) was removed from your fleet.`,
+    };
+  }
+
+  /**
+   * Retrieves single bus detail view with live GPS location and current active trip
+   */
+  public static async getBusDetail(schoolId: string, busId: string): Promise<BusDetailView> {
+    const bus = await this.getBusById(schoolId, busId);
+
+    // 1. Fetch latest GPS location from PostGIS telemetry stream
+    const locSql = `
+      SELECT 
+        latitude,
+        longitude,
+        speed_kmh AS "speedKmh",
+        bearing_degrees AS "bearingDegrees",
+        accuracy_meters AS "accuracyMeters",
+        recorded_at AS "recordedAt"
+      FROM gps_locations
+      WHERE bus_id = $1
+      ORDER BY recorded_at DESC
+      LIMIT 1
+    `;
+    const locRows = await query<{
+      latitude: number;
+      longitude: number;
+      speedKmh: number | string;
+      bearingDegrees: number | string | null;
+      accuracyMeters: number | string | null;
+      recordedAt: string;
+    }>(locSql, [busId]);
+
+    let currentLocation: BusCurrentLocation | null = null;
+    if (locRows.length > 0) {
+      const loc = locRows[0];
+      currentLocation = {
+        latitude: Number(loc.latitude),
+        longitude: Number(loc.longitude),
+        speedKmh: Number(loc.speedKmh) || 0,
+        bearingDegrees: loc.bearingDegrees !== null ? Number(loc.bearingDegrees) : null,
+        accuracyMeters: loc.accuracyMeters !== null ? Number(loc.accuracyMeters) : null,
+        recordedAt: new Date(loc.recordedAt).toISOString(),
+      };
+    }
+
+    // 2. Fetch current trip (in-progress or scheduled for today)
+    const tripSql = `
+      SELECT
+        t.id,
+        t.route_id AS "routeId",
+        r.name AS "routeName",
+        r.code AS "routeCode",
+        r.route_type AS "routeType",
+        t.status,
+        t.scheduled_start_time AS "scheduledStartTime",
+        t.actual_start_time AS "actualStartTime",
+        t.current_stop_sequence AS "currentStopSequence",
+        t.delay_minutes AS "delayMinutes"
+      FROM trips t
+      JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+      WHERE t.bus_id = $1 
+        AND t.school_id = $2 
+        AND t.scheduled_date = CURRENT_DATE
+        AND t.status IN ('IN_PROGRESS', 'SCHEDULED')
+        AND t.deleted_at IS NULL
+      ORDER BY (CASE WHEN t.status = 'IN_PROGRESS' THEN 1 ELSE 2 END), t.scheduled_start_time ASC
+      LIMIT 1
+    `;
+    const tripRows = await query<{
+      id: string;
+      routeId: string;
+      routeName: string;
+      routeCode: string;
+      routeType: string;
+      status: string;
+      scheduledStartTime: string;
+      actualStartTime: string | null;
+      currentStopSequence: number;
+      delayMinutes: number;
+    }>(tripSql, [busId, schoolId]);
+
+    let currentTrip: BusCurrentTrip | null = null;
+    if (tripRows.length > 0) {
+      const tr = tripRows[0];
+      currentTrip = {
+        id: tr.id,
+        routeId: tr.routeId,
+        routeName: tr.routeName,
+        routeCode: tr.routeCode,
+        routeType: tr.routeType,
+        status: tr.status,
+        scheduledStartTime: new Date(tr.scheduledStartTime).toISOString(),
+        actualStartTime: tr.actualStartTime ? new Date(tr.actualStartTime).toISOString() : null,
+        currentStopSequence: Number(tr.currentStopSequence) || 0,
+        delayMinutes: Number(tr.delayMinutes) || 0,
+      };
+    }
+
+    return {
+      ...bus,
+      currentLocation,
+      currentTrip,
+    };
   }
 
   /**

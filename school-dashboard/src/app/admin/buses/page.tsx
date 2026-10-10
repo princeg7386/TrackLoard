@@ -8,6 +8,9 @@ import { fetchBuses } from '../../../services/busApi';
 import { BusListTable } from '../../../components/bus/BusListTable';
 import { CreateBusModal } from '../../../components/bus/CreateBusModal';
 import { AssignBusModal } from '../../../components/bus/AssignBusModal';
+import { BusDetailModal } from '../../../components/bus/BusDetailModal';
+import { EditBusModal } from '../../../components/bus/EditBusModal';
+import { DeleteBusDialog } from '../../../components/bus/DeleteBusDialog';
 
 export default function FleetBusesPage() {
   const { user } = useAuth();
@@ -19,9 +22,14 @@ export default function FleetBusesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [selectedBusForAssign, setSelectedBusForAssign] = useState<BusWithDriver | null>(null);
   const [isOffline, setIsOffline] = useState(false);
+
+  // Modal State Management
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedBusForDetail, setSelectedBusForDetail] = useState<string | null>(null);
+  const [selectedBusForAssign, setSelectedBusForAssign] = useState<BusWithDriver | null>(null);
+  const [selectedBusForEdit, setSelectedBusForEdit] = useState<BusWithDriver | null>(null);
+  const [selectedBusForDelete, setSelectedBusForDelete] = useState<BusWithDriver | null>(null);
 
   useEffect(() => {
     if (user?.schoolId) {
@@ -76,6 +84,13 @@ export default function FleetBusesPage() {
     setBuses((prev) => prev.map((b) => (b.id === updatedBus.id ? updatedBus : b)));
   };
 
+  const handleBusDeleted = (deletedBusId: string) => {
+    setBuses((prev) => prev.filter((b) => b.id !== deletedBusId));
+    if (selectedBusForDetail === deletedBusId) {
+      setSelectedBusForDetail(null);
+    }
+  };
+
   const filteredBuses = buses.filter(
     (b) =>
       b.busNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -108,7 +123,7 @@ export default function FleetBusesPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Fleet & Buses</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Register and manage school transport vehicles, registration numbers, and assigned primary drivers.
+            Register and manage school transport vehicles, registration numbers, live GPS telemetry, and driver pairings.
           </p>
         </div>
         <div className="flex items-center gap-2.5">
@@ -173,11 +188,14 @@ export default function FleetBusesPage() {
           buses={filteredBuses}
           isLoading={isLoading}
           onAddBus={() => setIsCreateModalOpen(true)}
+          onSelectBus={(bus) => setSelectedBusForDetail(bus.id!)}
           onManageAssignments={(bus) => setSelectedBusForAssign(bus)}
+          onEditBus={(bus) => setSelectedBusForEdit(bus)}
+          onDeleteBus={(bus) => setSelectedBusForDelete(bus)}
         />
       </div>
 
-      {/* Create Bus Modal */}
+      {/* 1. Create Bus Modal */}
       <CreateBusModal
         schoolId={schoolId}
         isOpen={isCreateModalOpen}
@@ -185,13 +203,51 @@ export default function FleetBusesPage() {
         onSuccess={handleBusCreated}
       />
 
-      {/* Assign Driver & Route Modal */}
+      {/* 2. Bus Details & Telemetry Modal */}
+      <BusDetailModal
+        schoolId={schoolId}
+        busId={selectedBusForDetail}
+        isOpen={!!selectedBusForDetail}
+        onClose={() => setSelectedBusForDetail(null)}
+        onEdit={(bus) => {
+          setSelectedBusForDetail(null);
+          setSelectedBusForEdit(bus);
+        }}
+        onManageAssignments={(bus) => {
+          setSelectedBusForDetail(null);
+          setSelectedBusForAssign(bus);
+        }}
+        onDelete={(bus) => {
+          setSelectedBusForDetail(null);
+          setSelectedBusForDelete(bus);
+        }}
+      />
+
+      {/* 3. Assign Driver & Route Modal */}
       <AssignBusModal
         schoolId={schoolId}
         bus={selectedBusForAssign}
         isOpen={!!selectedBusForAssign}
         onClose={() => setSelectedBusForAssign(null)}
         onSuccess={handleBusUpdated}
+      />
+
+      {/* 4. Edit Bus Modal */}
+      <EditBusModal
+        schoolId={schoolId}
+        bus={selectedBusForEdit}
+        isOpen={!!selectedBusForEdit}
+        onClose={() => setSelectedBusForEdit(null)}
+        onSuccess={handleBusUpdated}
+      />
+
+      {/* 5. Delete Bus Dialog */}
+      <DeleteBusDialog
+        schoolId={schoolId}
+        bus={selectedBusForDelete}
+        isOpen={!!selectedBusForDelete}
+        onClose={() => setSelectedBusForDelete(null)}
+        onSuccess={handleBusDeleted}
       />
     </div>
   );
