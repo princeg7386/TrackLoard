@@ -7,6 +7,7 @@ import dashboardRouter from './dashboard.routes.js';
 import busRouter from './bus.routes.js';
 import driverRouter from './driver.routes.js';
 import studentRouter from './student.routes.js';
+import telemetryRouter from './telemetry.routes.js';
 
 const apiRouter = Router();
 
@@ -14,6 +15,7 @@ const apiRouter = Router();
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/driver/auth', driverAuthRouter);
 apiRouter.use('/parent', parentRouter);
+apiRouter.use('/telemetry', telemetryRouter);
 apiRouter.use('/schools', schoolProfileRouter);
 apiRouter.use('/schools', dashboardRouter);
 apiRouter.use('/schools', busRouter);

@@ -942,9 +942,17 @@ export const TelemetryIngestSchema = z.object({
   speedKmh: z.number().min(0).max(180).default(0),
   bearingDegrees: z.number().min(0).max(360).optional(),
   accuracyMeters: z.number().min(0).optional(),
+  batteryPercentage: z.number().min(0).max(100).optional(),
+  isCharging: z.boolean().optional(),
+  networkType: z.enum(['CELLULAR', 'WIFI', 'OFFLINE', 'UNKNOWN']).optional(),
   recordedAt: z.string().datetime(),
 });
 export type TelemetryIngestPayload = z.infer<typeof TelemetryIngestSchema>;
+
+export const TelemetryBatchIngestSchema = z.object({
+  locations: z.array(TelemetryIngestSchema).min(1).max(500),
+});
+export type TelemetryBatchIngestPayload = z.infer<typeof TelemetryBatchIngestSchema>;
 
 export const GpsLocationRecordSchema = TelemetryIngestSchema.extend({
   id: z.number().optional(),
