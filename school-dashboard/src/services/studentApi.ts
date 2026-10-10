@@ -7,6 +7,7 @@ import {
   RouteWithStopsOption,
   AssignStudentTransportPayload,
   StudentTransportHistoryResponse,
+  ParentRecordWithStudent,
 } from '@school-bus/shared';
 
 
@@ -308,5 +309,43 @@ export async function fetchStudentTransportHistory(
     return null;
   }
 }
+
+/**
+ * Fetches all registered parents for a school with linked student and WhatsApp tracking status
+ */
+export async function fetchSchoolParents(
+  schoolId: string,
+  filters?: {
+    search?: string;
+    relationship?: string;
+    whatsAppStatus?: string;
+  }
+): Promise<ParentRecordWithStudent[]> {
+  try {
+    const url = new URL(`${API_BASE_URL}/schools/${schoolId}/parents`);
+    if (filters?.search) url.searchParams.append('search', filters.search);
+    if (filters?.relationship) url.searchParams.append('relationship', filters.relationship);
+    if (filters?.whatsAppStatus) url.searchParams.append('whatsAppStatus', filters.whatsAppStatus);
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      throw new Error(`API Error: ${res.status}`);
+    }
+
+    const json = await res.json();
+    return json.data || [];
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return [];
+  }
+}
+
 
 

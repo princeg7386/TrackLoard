@@ -10,11 +10,14 @@ import {
   WifiOff,
   Filter,
   Users,
+  MessageSquare,
+  Phone,
 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
-import { StudentWithDetails } from '@school-bus/shared';
-import { fetchStudents } from '../../../services/studentApi';
+import { StudentWithDetails, ParentRecordWithStudent } from '@school-bus/shared';
+import { fetchStudents, fetchSchoolParents } from '../../../services/studentApi';
 import { StudentListTable } from '../../../components/student/StudentListTable';
+import { ParentListTable } from '../../../components/student/ParentListTable';
 import { CreateStudentModal } from '../../../components/student/CreateStudentModal';
 import { ManageParentModal } from '../../../components/student/ManageParentModal';
 import { AssignTransportModal } from '../../../components/student/AssignTransportModal';
@@ -34,6 +37,16 @@ export default function StudentsDirectoryPage() {
   const [selectedClassFilter, setSelectedClassFilter] = useState('ALL');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Tab switcher state
+  const [activeTab, setActiveTab] = useState<'students' | 'parents'>('students');
+
+  // Parents Directory State
+  const [parents, setParents] = useState<ParentRecordWithStudent[]>([]);
+  const [isParentsLoading, setIsParentsLoading] = useState(false);
+  const [parentSearchTerm, setParentSearchTerm] = useState('');
+  const [parentRelationshipFilter, setParentRelationshipFilter] = useState('ALL');
+  const [parentStatusFilter, setParentStatusFilter] = useState('ALL');
 
   // Modal active targets
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -87,12 +100,26 @@ export default function StudentsDirectoryPage() {
     }
   }, [schoolId]);
 
+  const loadParents = useCallback(async () => {
+    setIsParentsLoading(true);
+    try {
+      const data = await fetchSchoolParents(schoolId);
+      setParents(data);
+    } catch (err: any) {
+      // Non-blocking error for tab
+    } finally {
+      setIsParentsLoading(false);
+    }
+  }, [schoolId]);
+
   useEffect(() => {
     loadStudents();
-  }, [loadStudents]);
+    loadParents();
+  }, [loadStudents, loadParents]);
 
   const handleStudentCreated = (newStudent: StudentWithDetails) => {
     setStudents((prev) => [newStudent, ...prev]);
+    loadParents();
   };
 
   const handleParentUpdated = (updatedStudent: StudentWithDetails) => {
@@ -100,6 +127,7 @@ export default function StudentsDirectoryPage() {
       prev.map((s) => (s.id === updatedStudent.id ? updatedStudent : s))
     );
     setSelectedStudentForParent(null);
+    loadParents();
   };
 
   const handleTransportUpdated = (updatedStudent: StudentWithDetails) => {
@@ -107,6 +135,7 @@ export default function StudentsDirectoryPage() {
       prev.map((s) => (s.id === updatedStudent.id ? updatedStudent : s))
     );
     setSelectedStudentForTransport(null);
+    loadParents();
   };
 
   const handleStudentEdited = (updatedStudent: StudentWithDetails) => {
@@ -117,6 +146,7 @@ export default function StudentsDirectoryPage() {
     if (selectedStudentForDetail?.id === updatedStudent.id) {
       setSelectedStudentForDetail(updatedStudent);
     }
+    loadParents();
   };
 
   const handleStudentDeleted = (deletedId: string) => {
@@ -125,6 +155,7 @@ export default function StudentsDirectoryPage() {
     if (selectedStudentForDetail?.id === deletedId) {
       setSelectedStudentForDetail(null);
     }
+    loadParents();
   };
 
   // Distinct classes for quick filter
@@ -153,6 +184,62 @@ export default function StudentsDirectoryPage() {
       return matchesSearch && matchesClass;
     });
   }, [students, searchTerm, selectedClassFilter]);
+
+  const filteredParents = useMemo(() => {
+    return parents.filter((p) => {
+      const matchesSearch =
+        !parentSearchTerm.trim() ||
+        p.fullName.toLowerCase().includes(parentSearchTerm.toLowerCase()) ||
+        p.phone.toLowerCase().includes(parentSearchTerm.toLowerCase()) ||
+        (p.email && p.email.toLowerCase().includes(parentSearchTerm.toLowerCase())) ||
+        p.student.fullName.toLowerCase().includes(parentSearchTerm.toLowerCase()) ||
+        p.student.admissionNumber.toLowerCase().includes(parentSearchTerm.toLowerCase()) ||
+        (p.student.pickupStopName && p.student.pickupStopName.toLowerCase().includes(parentSearchTerm.toLowerCase())) ||
+        (p.student.assignedBusNumber && p.student.assignedBusNumber.toLowerCase().includes(parentSearchTerm.toLowerCase()));
+
+      const matchesRel =
+        parentRelationshipFilter === 'ALL' ||
+        p.relationship.toUpperCase() === parentRelationshipFilter.toUpperCase();
+
+      const matchesStatus =
+        parentStatusFilter === 'ALL' ||
+        p.whatsAppStatus === parentStatusFilter;
+
+      return matchesSearch && matchesRel && matchesStatus;
+    });
+  }, [parents, parentSearchTerm, parentRelationshipFilter, parentStatusFilter]);
+
+  const handleParentRowManage = (parent: ParentRecordWithStudent) => {
+    const studentMatch = students.find((s) => s.id === parent.studentId);
+    if (studentMatch) {
+      setSelectedStudentForParent(studentMatch);
+    } else {
+      // Fallback object with minimal properties
+      setSelectedStudentForParent({
+        id: parent.studentId,
+        schoolId: parent.schoolId,
+        fullName: parent.student.fullName,
+        admissionNumber: parent.student.admissionNumber,
+        classGrade: parent.student.classGrade,
+        section: parent.student.section,
+        rollNumber: parent.student.rollNumber || null,
+        emergencyContactPhone: parent.student.emergencyContactPhone || null,
+        parentName: parent.fullName,
+        parentPhone: parent.phone,
+        parentRelationship: parent.relationship,
+        parentCount: 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  };
+
+  const handleStudentViewFromParent = (studentId: string) => {
+    const studentMatch = students.find((s) => s.id === studentId);
+    if (studentMatch) {
+      setSelectedStudentForDetail(studentMatch);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -219,57 +306,165 @@ export default function StudentsDirectoryPage() {
         </div>
       )}
 
-      {/* Student Table Card */}
+      {/* Navigation Tabs */}
+      <div className="flex items-center gap-6 border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveTab('students')}
+          className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'students'
+              ? 'border-sky-600 text-sky-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <GraduationCap className="w-4 h-4" />
+          <span>Students Roster</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-xs font-mono ${
+              activeTab === 'students' ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
+            {students.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('parents')}
+          className={`flex items-center gap-2 pb-3 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'parents'
+              ? 'border-sky-600 text-sky-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <MessageSquare className="w-4 h-4" />
+          <span>Parents & WhatsApp Directory</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-xs font-mono ${
+              activeTab === 'parents' ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'
+            }`}
+          >
+            {parents.length}
+          </span>
+        </button>
+      </div>
+
+      {/* Directory Table Card */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
-        {/* Search and Filter Bar */}
-        <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
-            {/* Search input */}
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by student name, ID, roll no, stop, bus..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
-              />
+        {activeTab === 'students' ? (
+          <>
+            {/* Students Search and Filter Bar */}
+            <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+                {/* Search input */}
+                <div className="relative w-full sm:w-80">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by student name, ID, roll no, stop, bus..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
+
+                {/* Class filter dropdown */}
+                {distinctClasses.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <select
+                      value={selectedClassFilter}
+                      onChange={(e) => setSelectedClassFilter(e.target.value)}
+                      className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500 text-slate-700"
+                    >
+                      <option value="ALL">All Classes ({students.length})</option>
+                      {distinctClasses.map((cls) => (
+                        <option key={cls} value={cls}>
+                          {cls}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="text-xs text-slate-500 font-mono">
+                {filteredStudents.length} of {students.length} students
+              </div>
             </div>
 
-            {/* Class filter dropdown */}
-            {distinctClasses.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <select
-                  value={selectedClassFilter}
-                  onChange={(e) => setSelectedClassFilter(e.target.value)}
-                  className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500 text-slate-700"
-                >
-                  <option value="ALL">All Classes ({students.length})</option>
-                  {distinctClasses.map((cls) => (
-                    <option key={cls} value={cls}>
-                      {cls}
-                    </option>
-                  ))}
-                </select>
+            {/* Student Table View */}
+            <StudentListTable
+              students={filteredStudents}
+              isLoading={isLoading}
+              onAddStudent={() => setIsCreateModalOpen(true)}
+              onManageParent={(student) => setSelectedStudentForParent(student)}
+              onAssignTransport={(student) => setSelectedStudentForTransport(student)}
+              onViewDetail={(student) => setSelectedStudentForDetail(student)}
+            />
+          </>
+        ) : (
+          <>
+            {/* Parents Search and Filter Bar */}
+            <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 flex-1">
+                {/* Search input */}
+                <div className="relative w-full sm:w-80">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by parent name, mobile, student, stop..."
+                    value={parentSearchTerm}
+                    onChange={(e) => setParentSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
+                  />
+                </div>
+
+                {/* Relationship filter */}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={parentRelationshipFilter}
+                    onChange={(e) => setParentRelationshipFilter(e.target.value)}
+                    className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500 text-slate-700"
+                  >
+                    <option value="ALL">All Relationships</option>
+                    <option value="MOTHER">Mother</option>
+                    <option value="FATHER">Father</option>
+                    <option value="GUARDIAN">Guardian</option>
+                    <option value="PARENT">Parent</option>
+                  </select>
+                </div>
+
+                {/* WhatsApp Status filter */}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={parentStatusFilter}
+                    onChange={(e) => setParentStatusFilter(e.target.value)}
+                    className="px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500 text-slate-700"
+                  >
+                    <option value="ALL">All WhatsApp Statuses</option>
+                    <option value="ACTIVE_TOKEN">Live Tracking Active</option>
+                    <option value="LINKED">WhatsApp Linked</option>
+                    <option value="NOT_LINKED">No Mobile Linked</option>
+                  </select>
+                </div>
               </div>
-            )}
-          </div>
 
-          <div className="text-xs text-slate-500 font-mono">
-            {filteredStudents.length} of {students.length} students
-          </div>
-        </div>
+              <div className="text-xs text-slate-500 font-mono">
+                {filteredParents.length} of {parents.length} parents
+              </div>
+            </div>
 
-        {/* Student Table View */}
-        <StudentListTable
-          students={filteredStudents}
-          isLoading={isLoading}
-          onAddStudent={() => setIsCreateModalOpen(true)}
-          onManageParent={(student) => setSelectedStudentForParent(student)}
-          onAssignTransport={(student) => setSelectedStudentForTransport(student)}
-          onViewDetail={(student) => setSelectedStudentForDetail(student)}
-        />
+            {/* Parent Table View */}
+            <ParentListTable
+              parents={filteredParents}
+              isLoading={isParentsLoading}
+              onRefresh={loadParents}
+              onManageParent={handleParentRowManage}
+              onViewStudent={handleStudentViewFromParent}
+            />
+          </>
+        )}
       </div>
 
       {/* Create Student Modal */}

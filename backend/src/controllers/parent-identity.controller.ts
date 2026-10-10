@@ -120,4 +120,31 @@ export class ParentIdentityController {
       'Live tracking session verified successfully'
     );
   }
+
+  /**
+   * List all parents for a school with linked student context & WhatsApp tracking status
+   */
+  public static async listSchoolParents(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const schoolId = req.params.schoolId;
+    const { relationship, search, whatsAppStatus } = req.query as {
+      relationship?: string;
+      search?: string;
+      whatsAppStatus?: string;
+    };
+
+    const parents = await ParentIdentityService.getSchoolParents(schoolId, {
+      relationship,
+      search,
+      whatsAppStatus,
+    });
+
+    sendSuccess(
+      res,
+      parents,
+      'School parents retrieved successfully'
+    );
+  }
 }

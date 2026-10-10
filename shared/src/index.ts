@@ -646,6 +646,36 @@ export const ParentSchema = z.object({
 });
 export type Parent = z.infer<typeof ParentSchema>;
 
+export interface ParentRecordWithStudent {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  fullName: string;
+  relationship: 'MOTHER' | 'FATHER' | 'GUARDIAN' | 'PARENT' | string;
+  phone: string;
+  email?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  whatsAppStatus: 'ACTIVE_TOKEN' | 'LINKED' | 'NOT_LINKED';
+  activeTokenCount: number;
+  lastTokenCreatedAt?: string | null;
+  lastTokenExpiresAt?: string | null;
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string;
+    classGrade: string;
+    section: string;
+    rollNumber?: string | null;
+    emergencyContactPhone?: string | null;
+    pickupStopName?: string | null;
+    pickupScheduledTime?: string | null;
+    assignedBusNumber?: string | null;
+    assignedRouteCode?: string | null;
+  };
+}
+
+
 /**
  * -----------------------------------------------------------------------------
  * Transport Entity Schemas & Types

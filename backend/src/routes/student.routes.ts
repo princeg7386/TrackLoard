@@ -10,6 +10,7 @@ import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { StudentController } from '../controllers/student.controller.js';
+import { ParentIdentityController } from '../controllers/parent-identity.controller.js';
 
 const studentRouter = Router({ mergeParams: true });
 
@@ -42,6 +43,19 @@ studentRouter.get(
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
   StudentController.listStudents
+);
+
+// 3b. List School Parents (with WhatsApp status & student context)
+studentRouter.get(
+  '/:schoolId/parents',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  ParentIdentityController.listSchoolParents
 );
 
 // 4. Get Student Transport Attendance History

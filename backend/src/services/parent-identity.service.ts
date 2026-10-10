@@ -5,6 +5,7 @@ import {
   ParentIdentityRecord,
   ParentTrackingTokenData,
   ParentLiveTrackingSession,
+  ParentRecordWithStudent,
   normalizeIndianPhoneNumber,
   TripStatus,
   RouteType,
@@ -562,4 +563,137 @@ export class ParentIdentityService {
 
     return rows.length;
   }
+
+  /**
+   * Retrieves all parents registered in a school with linked student details and WhatsApp tracking status
+   */
+  public static async getSchoolParents(
+    schoolId: string,
+    filters?: {
+      search?: string;
+      relationship?: string;
+      whatsAppStatus?: string;
+    }
+  ): Promise<ParentRecordWithStudent[]> {
+    let sql = `
+      SELECT 
+        p.id AS parent_id,
+        p.school_id,
+        p.student_id,
+        p.full_name AS parent_name,
+        p.relationship,
+        p.phone AS parent_phone,
+        p.email AS parent_email,
+        p.created_at AS parent_created_at,
+        p.updated_at AS parent_updated_at,
+        s.id AS student_id,
+        s.full_name AS student_name,
+        s.admission_number,
+        s.class_grade,
+        s.section,
+        s.roll_number,
+        s.emergency_contact_phone,
+        pl.stop_name AS pickup_stop_name,
+        pl.scheduled_time::text AS pickup_scheduled_time,
+        b.bus_number AS assigned_bus_number,
+        r.code AS assigned_route_code,
+        COALESCE(tok.active_token_count, 0)::int AS active_token_count,
+        tok.last_token_created_at,
+        tok.last_token_expires_at
+      FROM parents p
+      JOIN students s ON s.id = p.student_id AND s.deleted_at IS NULL
+      LEFT JOIN student_stop_assignments ssa ON ssa.student_id = s.id
+      LEFT JOIN pickup_locations pl ON pl.id = ssa.pickup_stop_id
+      LEFT JOIN routes r ON r.id = pl.route_id
+      LEFT JOIN buses b ON b.id = r.default_bus_id AND b.deleted_at IS NULL
+      LEFT JOIN (
+        SELECT 
+          parent_id,
+          COUNT(*)::int AS active_token_count,
+          MAX(created_at) AS last_token_created_at,
+          MAX(expires_at) AS last_token_expires_at
+        FROM parent_tracking_tokens
+        WHERE school_id = $1 
+          AND revoked_at IS NULL 
+          AND expires_at > NOW() 
+          AND deleted_at IS NULL
+        GROUP BY parent_id
+      ) tok ON tok.parent_id = p.id
+      WHERE p.school_id = $1 AND p.deleted_at IS NULL
+    `;
+
+    const params: any[] = [schoolId];
+    let paramIndex = 2;
+
+    if (filters?.relationship && filters.relationship.trim()) {
+      sql += ` AND UPPER(p.relationship) = UPPER($${paramIndex})`;
+      params.push(filters.relationship.trim());
+      paramIndex++;
+    }
+
+    if (filters?.search && filters.search.trim()) {
+      const searchPattern = `%${filters.search.trim().toLowerCase()}%`;
+      sql += ` AND (
+        LOWER(p.full_name) LIKE $${paramIndex} OR
+        LOWER(p.phone) LIKE $${paramIndex} OR
+        LOWER(COALESCE(p.email, '')) LIKE $${paramIndex} OR
+        LOWER(s.full_name) LIKE $${paramIndex} OR
+        LOWER(s.admission_number) LIKE $${paramIndex}
+      )`;
+      params.push(searchPattern);
+      paramIndex++;
+    }
+
+    sql += ` ORDER BY p.full_name ASC, s.full_name ASC`;
+
+    const rows = await query<any>(sql, params);
+
+    const records: ParentRecordWithStudent[] = rows.map((r) => {
+      const activeCount = Number(r.active_token_count) || 0;
+      let whatsAppStatus: 'ACTIVE_TOKEN' | 'LINKED' | 'NOT_LINKED' = 'NOT_LINKED';
+
+      if (activeCount > 0) {
+        whatsAppStatus = 'ACTIVE_TOKEN';
+      } else if (r.parent_phone && r.parent_phone.trim()) {
+        whatsAppStatus = 'LINKED';
+      }
+
+      return {
+        id: r.parent_id,
+        schoolId: r.school_id,
+        studentId: r.student_id,
+        fullName: r.parent_name,
+        relationship: r.relationship,
+        phone: r.parent_phone,
+        email: r.parent_email || null,
+        createdAt: r.parent_created_at ? new Date(r.parent_created_at).toISOString() : undefined,
+        updatedAt: r.parent_updated_at ? new Date(r.parent_updated_at).toISOString() : undefined,
+        whatsAppStatus,
+        activeTokenCount: activeCount,
+        lastTokenCreatedAt: r.last_token_created_at ? new Date(r.last_token_created_at).toISOString() : null,
+        lastTokenExpiresAt: r.last_token_expires_at ? new Date(r.last_token_expires_at).toISOString() : null,
+        student: {
+          id: r.student_id,
+          fullName: r.student_name,
+          admissionNumber: r.admission_number,
+          classGrade: r.class_grade,
+          section: r.section,
+          rollNumber: r.roll_number,
+          emergencyContactPhone: r.emergency_contact_phone,
+          pickupStopName: r.pickup_stop_name || null,
+          pickupScheduledTime: r.pickup_scheduled_time || null,
+          assignedBusNumber: r.assigned_bus_number || null,
+          assignedRouteCode: r.assigned_route_code || null,
+        },
+      };
+    });
+
+    if (filters?.whatsAppStatus && filters.whatsAppStatus.trim()) {
+      const targetStatus = filters.whatsAppStatus.trim().toUpperCase();
+      return records.filter((r) => r.whatsAppStatus === targetStatus);
+    }
+
+    return records;
+  }
 }
+
