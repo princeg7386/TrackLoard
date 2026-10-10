@@ -1,6 +1,7 @@
 import {
   DriverWithBus,
   CreateDriverRequest,
+  AssignDriverBusPayload,
   BusWithDriver,
 } from '@school-bus/shared';
 
@@ -101,6 +102,32 @@ export async function createDriver(
 }
 
 /**
+ * Updates bus assignment for a driver (assign or unassign)
+ */
+export async function updateDriverBusAssignment(
+  schoolId: string,
+  driverId: string,
+  payload: AssignDriverBusPayload
+): Promise<DriverWithBus> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers/${driverId}/assignments`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to update bus assignment (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
+/**
  * Fetches available fleet buses for vehicle pairing dropdown
  */
 export async function fetchAvailableBuses(schoolId: string): Promise<BusWithDriver[]> {
@@ -120,3 +147,4 @@ export async function fetchAvailableBuses(schoolId: string): Promise<BusWithDriv
     return [];
   }
 }
+

@@ -59,4 +59,27 @@ export class DriverController {
       next(error);
     }
   }
+
+  /**
+   * Assigns or unassigns a bus for a driver
+   * PUT /api/v1/schools/:schoolId/drivers/:driverId/assignments
+   */
+  public static async assignBus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, driverId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const updatedDriver = await DriverService.assignBus(schoolId, driverId, req.body, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        data: updatedDriver,
+        message: 'Driver bus assignment updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

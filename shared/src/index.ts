@@ -228,6 +228,11 @@ export type CreateDriverRequest = z.infer<typeof CreateDriverRequestSchema>;
 export const UpdateDriverRequestSchema = CreateDriverRequestSchema.partial();
 export type UpdateDriverRequest = z.infer<typeof UpdateDriverRequestSchema>;
 
+export const AssignDriverBusPayloadSchema = z.object({
+  busId: z.string().uuid('Valid vehicle UUID required').nullable().optional(),
+});
+export type AssignDriverBusPayload = z.infer<typeof AssignDriverBusPayloadSchema>;
+
 export interface DriverWithBus extends Driver {
   assignedBusId?: string | null;
   assignedBusNumber?: string | null;

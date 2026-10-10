@@ -214,4 +214,98 @@ describe('Driver Management (Micro-phase 7.1: Create Driver)', () => {
       expect(res.body.error.code).toBe('ForbiddenError');
     });
   });
+
+  describe('4. PUT /api/v1/schools/:schoolId/drivers/:driverId/assignments (Assign / Unassign Bus)', () => {
+    it('successfully pairs a bus to a driver', async () => {
+      const token = AuthService.generateToken(adminUserA);
+
+      const spy = vi.spyOn(DriverService, 'assignBus').mockResolvedValueOnce(mockDriver);
+
+      const res = await request(app)
+        .put(`/api/v1/schools/${schoolIdA}/drivers/${driverIdA}/assignments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ busId: busIdA });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Driver bus assignment updated successfully');
+      expect(res.body.data.assignedBusId).toBe(busIdA);
+      expect(res.body.data.assignedBusNumber).toBe('Bus-01');
+
+      spy.mockRestore();
+    });
+
+    it('successfully unassigns a bus from a driver (busId: null)', async () => {
+      const token = AuthService.generateToken(adminUserA);
+
+      const unassignedDriver: DriverWithBus = {
+        ...mockDriver,
+        assignedBusId: null,
+        assignedBusNumber: null,
+        assignedRegistrationNumber: null,
+        assignedRouteId: null,
+        assignedRouteName: null,
+        assignedRouteCode: null,
+      };
+
+      const spy = vi.spyOn(DriverService, 'assignBus').mockResolvedValueOnce(unassignedDriver);
+
+      const res = await request(app)
+        .put(`/api/v1/schools/${schoolIdA}/drivers/${driverIdA}/assignments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ busId: null });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.assignedBusId).toBeNull();
+      expect(res.body.data.assignedBusNumber).toBeNull();
+
+      spy.mockRestore();
+    });
+
+    it('rejects invalid bus UUID with 422 Unprocessable Entity', async () => {
+      const token = AuthService.generateToken(adminUserA);
+
+      const res = await request(app)
+        .put(`/api/v1/schools/${schoolIdA}/drivers/${driverIdA}/assignments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ busId: 'not-a-valid-uuid' });
+
+      expect(res.status).toBe(422);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('rejects non-existent bus with 400 Bad Request', async () => {
+      const token = AuthService.generateToken(adminUserA);
+
+      const spy = vi.spyOn(DriverService, 'assignBus').mockRejectedValueOnce(
+        new BadRequestError('Selected fleet vehicle does not exist or belongs to another school.')
+      );
+
+      const res = await request(app)
+        .put(`/api/v1/schools/${schoolIdA}/drivers/${driverIdA}/assignments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ busId: '33333333-e89b-12d3-a456-426614174001' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('BadRequestError');
+
+      spy.mockRestore();
+    });
+
+    it('rejects cross-tenant driver assignment with 403 Forbidden', async () => {
+      const token = AuthService.generateToken(adminUserA);
+
+      const res = await request(app)
+        .put(`/api/v1/schools/${schoolIdB}/drivers/${driverIdA}/assignments`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ busId: busIdA });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error.code).toBe('ForbiddenError');
+    });
+  });
 });
+

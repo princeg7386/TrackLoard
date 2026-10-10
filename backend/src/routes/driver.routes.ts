@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { CreateDriverRequestSchema, UserRole } from '@school-bus/shared';
+import { AssignDriverBusPayloadSchema, CreateDriverRequestSchema, UserRole } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -37,4 +37,19 @@ driverRouter.get(
   DriverController.getDriver
 );
 
+// 4. Assign / Reassign / Unassign Bus for Driver
+driverRouter.put(
+  '/:schoolId/drivers/:driverId/assignments',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(AssignDriverBusPayloadSchema),
+  DriverController.assignBus
+);
+
 export default driverRouter;
+

@@ -210,4 +210,83 @@ export class DriverService {
 
     return rows[0];
   }
+
+  /**
+   * Updates Driver bus assignment atomically
+   */
+  public static async assignBus(
+    schoolId: string,
+    driverId: string,
+    busId: string | null | undefined,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<DriverWithBus> {
+    const currentDriver = await this.getDriverById(schoolId, driverId);
+
+    // 1. If busId is provided, verify bus exists in this school tenant
+    if (busId) {
+      const busRows = await query<{ id: string; bus_number: string; registration_number: string }>(
+        `SELECT id, bus_number, registration_number FROM buses 
+         WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+        [busId, schoolId]
+      );
+      if (busRows.length === 0) {
+        throw new BadRequestError('Selected fleet vehicle does not exist or belongs to another school.');
+      }
+    }
+
+    // 2. Transaction execution: unbind and bind
+    await DbService.withTransaction(async (client) => {
+      // Unbind any other bus where this driver was previously assigned
+      await client.query(
+        `UPDATE buses 
+         SET default_driver_id = NULL, updated_at = NOW() 
+         WHERE school_id = $1 AND default_driver_id = $2 AND ($3::uuid IS NULL OR id != $3) AND deleted_at IS NULL`,
+        [schoolId, driverId, busId || null]
+      );
+
+      // If busId is specified, assign driver to new bus
+      if (busId) {
+        await client.query(
+          `UPDATE buses 
+           SET default_driver_id = $1, updated_at = NOW() 
+           WHERE id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+          [driverId, busId, schoolId]
+        );
+      }
+    });
+
+    const updatedDriver = await this.getDriverById(schoolId, driverId);
+
+    // 3. Audit logging
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'DRIVER_BUS_ASSIGNED',
+      entityType: 'DRIVER',
+      entityId: driverId,
+      diffJson: {
+        before: {
+          assignedBusId: currentDriver.assignedBusId,
+          assignedBusNumber: currentDriver.assignedBusNumber,
+        },
+        after: {
+          assignedBusId: updatedDriver.assignedBusId,
+          assignedBusNumber: updatedDriver.assignedBusNumber,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Driver bus assignment updated', {
+      schoolId,
+      driverId,
+      assignedBusId: updatedDriver.assignedBusId,
+      assignedBusNumber: updatedDriver.assignedBusNumber,
+      updatedBy: userId,
+    });
+
+    return updatedDriver;
+  }
 }

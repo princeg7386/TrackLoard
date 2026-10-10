@@ -7,6 +7,7 @@ import { DriverWithBus } from '@school-bus/shared';
 import { fetchDrivers } from '../../../services/driverApi';
 import { DriverListTable } from '../../../components/driver/DriverListTable';
 import { CreateDriverModal } from '../../../components/driver/CreateDriverModal';
+import { AssignDriverModal } from '../../../components/driver/AssignDriverModal';
 
 export default function DriversDirectoryPage() {
   const { user } = useAuth();
@@ -19,6 +20,7 @@ export default function DriversDirectoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedDriverForAssign, setSelectedDriverForAssign] = useState<DriverWithBus | null>(null);
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -68,6 +70,13 @@ export default function DriversDirectoryPage() {
 
   const handleDriverCreated = (newDriver: DriverWithBus) => {
     setDrivers((prev) => [newDriver, ...prev]);
+  };
+
+  const handleAssignmentUpdated = (updatedDriver: DriverWithBus) => {
+    setDrivers((prev) =>
+      prev.map((d) => (d.id === updatedDriver.id ? updatedDriver : d))
+    );
+    setSelectedDriverForAssign(null);
   };
 
   const filteredDrivers = drivers.filter(
@@ -167,6 +176,7 @@ export default function DriversDirectoryPage() {
           drivers={filteredDrivers}
           isLoading={isLoading}
           onAddDriver={() => setIsCreateModalOpen(true)}
+          onManageAssignment={(driver) => setSelectedDriverForAssign(driver)}
         />
       </div>
 
@@ -177,6 +187,16 @@ export default function DriversDirectoryPage() {
         onClose={() => setIsCreateModalOpen(false)}
         onSuccess={handleDriverCreated}
       />
+
+      {/* Assign / Reassign Bus Modal */}
+      <AssignDriverModal
+        schoolId={schoolId}
+        isOpen={Boolean(selectedDriverForAssign)}
+        driver={selectedDriverForAssign}
+        onClose={() => setSelectedDriverForAssign(null)}
+        onSuccess={handleAssignmentUpdated}
+      />
     </div>
   );
 }
+
