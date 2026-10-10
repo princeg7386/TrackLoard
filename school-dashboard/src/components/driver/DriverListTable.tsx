@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   Plus,
+  History,
 } from 'lucide-react';
 import { DriverWithBus } from '@school-bus/shared';
 import { EmptyState } from '../ui/EmptyState';
@@ -19,13 +20,16 @@ interface DriverListTableProps {
   isLoading: boolean;
   onAddDriver: () => void;
   onManageAssignment?: (driver: DriverWithBus) => void;
+  onViewHistory?: (driver: DriverWithBus) => void;
 }
+
 
 export function DriverListTable({
   drivers,
   isLoading,
   onAddDriver,
   onManageAssignment,
+  onViewHistory,
 }: DriverListTableProps) {
   if (isLoading) {
     return (
@@ -172,14 +176,27 @@ export function DriverListTable({
 
               {/* Actions */}
               <td className="py-3.5 px-4 text-right">
-                <button
-                  type="button"
-                  onClick={() => onManageAssignment?.(driver)}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition-colors"
-                >
-                  <Bus className="w-3 h-3 text-slate-500" />
-                  <span>{driver.assignedBusId ? 'Reassign' : 'Pair Bus'}</span>
-                </button>
+                <div className="inline-flex items-center gap-2 justify-end">
+                  <button
+                    type="button"
+                    onClick={() => onViewHistory?.(driver)}
+                    title="View Trips, Attendance & Incident Logs"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition-colors"
+                  >
+                    <History className="w-3.5 h-3.5 text-slate-500" />
+                    <span>History</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onManageAssignment?.(driver)}
+                    title="Pair or change vehicle"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-50 border border-slate-300 rounded shadow-2xs transition-colors"
+                  >
+                    <Bus className="w-3.5 h-3.5 text-slate-500" />
+                    <span>{driver.assignedBusId ? 'Reassign' : 'Pair Bus'}</span>
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -188,4 +205,5 @@ export function DriverListTable({
     </div>
   );
 }
+
 

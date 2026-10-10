@@ -81,5 +81,25 @@ export class DriverController {
       next(error);
     }
   }
+
+  /**
+   * Retrieves full operational history for a driver (Trips, Incidents, Attendance)
+   * GET /api/v1/schools/:schoolId/drivers/:driverId/history
+   */
+  public static async getDriverHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, driverId } = req.params;
+      const history = await DriverService.getDriverFullHistory(schoolId, driverId);
+
+      res.status(200).json({
+        success: true,
+        data: history,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
+
 

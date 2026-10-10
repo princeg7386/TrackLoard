@@ -410,6 +410,92 @@ export interface BusFullHistoryResponse {
   attendance: BusAttendanceHistoryResponse;
 }
 
+export interface DriverTripHistoryItem {
+  id: string;
+  schoolId: string;
+  routeId: string;
+  routeName: string;
+  routeCode: string;
+  routeType: string;
+  busId: string;
+  busNumber: string;
+  busRegistrationNumber: string;
+  status: string;
+  scheduledDate: string;
+  scheduledStartTime: string;
+  actualStartTime?: string | null;
+  actualEndTime?: string | null;
+  currentStopSequence: number;
+  delayMinutes: number;
+  totalBoarded?: number;
+  totalExpected?: number;
+}
+
+export interface DriverIncidentHistoryItem {
+  id: string;
+  schoolId: string;
+  tripId?: string | null;
+  category: 'INCIDENT' | 'SOS';
+  type: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  status: string;
+  description: string;
+  busNumber?: string | null;
+  busRegistrationNumber?: string | null;
+  routeName?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  reportedBy?: string | null;
+  acknowledgedAt?: string | null;
+  resolvedAt?: string | null;
+  resolutionNotes?: string | null;
+  createdAt: string;
+}
+
+export interface DriverAttendanceSummaryItem {
+  tripId: string;
+  scheduledDate: string;
+  routeName: string;
+  routeCode: string;
+  shiftType: string;
+  busNumber: string;
+  busRegistrationNumber: string;
+  totalBoarded: number;
+  totalAbsent: number;
+  totalDeboarded: number;
+  totalEvents: number;
+}
+
+export interface DriverAttendanceRecordItem {
+  id: string;
+  tripId: string;
+  scheduledDate: string;
+  studentId: string;
+  studentName: string;
+  admissionNumber: string;
+  classGrade: string;
+  section: string;
+  stopName: string;
+  busNumber: string;
+  eventType: 'BOARDING' | 'DROP';
+  status: string;
+  markedBy: string;
+  recordedAt: string;
+}
+
+export interface DriverAttendanceHistoryResponse {
+  summaries: DriverAttendanceSummaryItem[];
+  recentRecords: DriverAttendanceRecordItem[];
+}
+
+export interface DriverFullHistoryResponse {
+  driver: DriverWithBus;
+  trips: DriverTripHistoryItem[];
+  incidents: DriverIncidentHistoryItem[];
+  attendance: DriverAttendanceHistoryResponse;
+}
+
+
 // 5. Student
 export const StudentSchema = z.object({
   id: z.string().uuid().optional(),

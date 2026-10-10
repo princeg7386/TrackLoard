@@ -3,6 +3,7 @@ import {
   CreateDriverRequest,
   AssignDriverBusPayload,
   BusWithDriver,
+  DriverFullHistoryResponse,
 } from '@school-bus/shared';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
@@ -147,4 +148,29 @@ export async function fetchAvailableBuses(schoolId: string): Promise<BusWithDriv
     return [];
   }
 }
+
+/**
+ * Fetches consolidated operational history for a driver (Trips, Incidents, Boarding Attendance)
+ */
+export async function fetchDriverFullHistory(
+  schoolId: string,
+  driverId: string
+): Promise<DriverFullHistoryResponse> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers/${driverId}/history`, {
+    method: 'GET',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to fetch driver history logs (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
 

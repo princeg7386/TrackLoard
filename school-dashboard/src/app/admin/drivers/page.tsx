@@ -8,6 +8,7 @@ import { fetchDrivers } from '../../../services/driverApi';
 import { DriverListTable } from '../../../components/driver/DriverListTable';
 import { CreateDriverModal } from '../../../components/driver/CreateDriverModal';
 import { AssignDriverModal } from '../../../components/driver/AssignDriverModal';
+import { DriverHistoryModal } from '../../../components/driver/DriverHistoryModal';
 
 export default function DriversDirectoryPage() {
   const { user } = useAuth();
@@ -21,7 +22,9 @@ export default function DriversDirectoryPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedDriverForAssign, setSelectedDriverForAssign] = useState<DriverWithBus | null>(null);
+  const [selectedDriverForHistory, setSelectedDriverForHistory] = useState<DriverWithBus | null>(null);
   const [isOffline, setIsOffline] = useState(false);
+
 
   useEffect(() => {
     if (user?.schoolId) {
@@ -177,6 +180,7 @@ export default function DriversDirectoryPage() {
           isLoading={isLoading}
           onAddDriver={() => setIsCreateModalOpen(true)}
           onManageAssignment={(driver) => setSelectedDriverForAssign(driver)}
+          onViewHistory={(driver) => setSelectedDriverForHistory(driver)}
         />
       </div>
 
@@ -196,7 +200,16 @@ export default function DriversDirectoryPage() {
         onClose={() => setSelectedDriverForAssign(null)}
         onSuccess={handleAssignmentUpdated}
       />
+
+      {/* Driver Operational History & Audit Modal */}
+      <DriverHistoryModal
+        schoolId={schoolId}
+        isOpen={Boolean(selectedDriverForHistory)}
+        driver={selectedDriverForHistory}
+        onClose={() => setSelectedDriverForHistory(null)}
+      />
     </div>
   );
 }
+
 

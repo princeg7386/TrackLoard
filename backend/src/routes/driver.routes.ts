@@ -51,5 +51,14 @@ driverRouter.put(
   DriverController.assignBus
 );
 
+// 5. Driver Full History (Trips, Incidents, Attendance)
+driverRouter.get(
+  '/:schoolId/drivers/:driverId/history',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  DriverController.getDriverHistory
+);
+
 export default driverRouter;
+
 
