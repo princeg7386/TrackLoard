@@ -524,11 +524,36 @@ export const CreateStudentRequestSchema = z.object({
   section: z.string().min(1, 'Section is required (e.g. A, B)').max(10),
   rollNumber: z.string().max(50).optional().nullable().or(z.literal('')),
   emergencyContactPhone: z.string().optional().nullable().or(z.literal('')),
+  guardianName: z.string().max(100).optional().nullable().or(z.literal('')),
+  guardianPhone: z.string().optional().nullable().or(z.literal('')),
+  guardianRelationship: z.enum(['MOTHER', 'FATHER', 'GUARDIAN', 'PARENT']).optional().nullable(),
+  guardianEmail: z.string().email('Invalid guardian email').optional().nullable().or(z.literal('')),
 });
 export type CreateStudentRequest = z.infer<typeof CreateStudentRequestSchema>;
 
 export const UpdateStudentRequestSchema = CreateStudentRequestSchema.partial();
 export type UpdateStudentRequest = z.infer<typeof UpdateStudentRequestSchema>;
+
+export interface ParentGuardianRecord {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  fullName: string;
+  relationship: 'MOTHER' | 'FATHER' | 'GUARDIAN' | 'PARENT';
+  phone: string;
+  email?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const UpsertParentGuardianRequestSchema = z.object({
+  fullName: z.string().min(2, 'Guardian full name must be at least 2 characters').max(100),
+  relationship: z.enum(['MOTHER', 'FATHER', 'GUARDIAN', 'PARENT']).default('PARENT'),
+  phone: z.string().min(10, 'Valid 10-digit WhatsApp mobile phone number required'),
+  email: z.string().email('Please enter a valid email address').optional().nullable().or(z.literal('')),
+  emergencyContactPhone: z.string().optional().nullable().or(z.literal('')),
+});
+export type UpsertParentGuardianRequest = z.infer<typeof UpsertParentGuardianRequestSchema>;
 
 export interface StudentWithDetails extends Student {
   pickupStopId?: string | null;
@@ -541,7 +566,9 @@ export interface StudentWithDetails extends Student {
   parentName?: string | null;
   parentPhone?: string | null;
   parentRelationship?: string | null;
+  parentEmail?: string | null;
   parentCount?: number;
+  parents?: ParentGuardianRecord[];
 }
 
 // 6. Parent (1:1 Direct Child Context)

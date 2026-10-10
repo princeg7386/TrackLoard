@@ -64,6 +64,11 @@ export function CreateStudentModal({
   const [isCustomSection, setIsCustomSection] = useState(false);
   const [rollNumber, setRollNumber] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
+  const [showGuardianSection, setShowGuardianSection] = useState(false);
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianPhone, setGuardianPhone] = useState('');
+  const [guardianRelationship, setGuardianRelationship] = useState<'MOTHER' | 'FATHER' | 'GUARDIAN' | 'PARENT'>('FATHER');
+  const [guardianEmail, setGuardianEmail] = useState('');
 
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
@@ -83,6 +88,11 @@ export function CreateStudentModal({
     setIsCustomSection(false);
     setRollNumber('');
     setEmergencyPhone('');
+    setShowGuardianSection(false);
+    setGuardianName('');
+    setGuardianPhone('');
+    setGuardianRelationship('FATHER');
+    setGuardianEmail('');
     setFieldErrors({});
     setServerError(null);
     setIsSuccess(false);
@@ -109,6 +119,14 @@ export function CreateStudentModal({
     }
   };
 
+  const handleGuardianPhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/[^\d+]/g, '');
+    setGuardianPhone(raw);
+    if (fieldErrors.guardianPhone) {
+      setFieldErrors((prev) => ({ ...prev, guardianPhone: '' }));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setServerError(null);
@@ -117,6 +135,7 @@ export function CreateStudentModal({
     const effectiveClass = isCustomClass ? customClassGrade.trim() : classGrade.trim();
     const effectiveSection = isCustomSection ? customSection.trim().toUpperCase() : section.trim().toUpperCase();
     const formattedPhone = emergencyPhone.trim() ? normalizeIndianPhoneNumber(emergencyPhone.trim()) : undefined;
+    const formattedGuardianPhone = guardianPhone.trim() ? normalizeIndianPhoneNumber(guardianPhone.trim()) : undefined;
 
     const payload = {
       fullName: fullName.trim(),
@@ -125,6 +144,10 @@ export function CreateStudentModal({
       section: effectiveSection,
       rollNumber: rollNumber.trim() || undefined,
       emergencyContactPhone: formattedPhone,
+      guardianName: guardianName.trim() || undefined,
+      guardianPhone: formattedGuardianPhone,
+      guardianRelationship: guardianName.trim() && formattedGuardianPhone ? guardianRelationship : undefined,
+      guardianEmail: guardianEmail.trim() || undefined,
     };
 
     // Client-side schema validation
@@ -414,8 +437,105 @@ export function CreateStudentModal({
             </div>
           </div>
 
+          {/* Row 4: Optional Guardian / Parent Contact Section */}
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-slate-800">
+                  Parent / Guardian WhatsApp Contact
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">(Optional)</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGuardianSection(!showGuardianSection)}
+                className="text-xs text-sky-600 font-semibold hover:underline"
+              >
+                {showGuardianSection ? 'Hide Details' : '+ Add Guardian Info'}
+              </button>
+            </div>
+
+            {showGuardianSection && (
+              <div className="space-y-3 pt-2 border-t border-slate-200 animate-in fade-in">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Guardian Name */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Guardian Name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Vikram Sharma"
+                      value={guardianName}
+                      onChange={(e) => setGuardianName(e.target.value)}
+                      disabled={isSubmitting}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
+                    />
+                  </div>
+
+                  {/* Relationship */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Relationship
+                    </label>
+                    <select
+                      value={guardianRelationship}
+                      onChange={(e) => setGuardianRelationship(e.target.value as any)}
+                      disabled={isSubmitting}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500 text-slate-800"
+                    >
+                      <option value="FATHER">Father</option>
+                      <option value="MOTHER">Mother</option>
+                      <option value="GUARDIAN">Guardian</option>
+                      <option value="PARENT">Other / Parent</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Guardian WhatsApp Phone */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Guardian WhatsApp Phone
+                    </label>
+                    <input
+                      type="tel"
+                      placeholder="e.g. 9876543210"
+                      value={guardianPhone}
+                      onChange={handleGuardianPhoneChange}
+                      disabled={isSubmitting}
+                      className={`w-full px-3 py-1.5 text-xs font-mono bg-white border rounded-md focus:outline-hidden focus:ring-1 ${
+                        fieldErrors.guardianPhone
+                          ? 'border-rose-300 focus:ring-rose-500 bg-rose-50/20'
+                          : 'border-slate-300 focus:ring-sky-500'
+                      }`}
+                    />
+                    {fieldErrors.guardianPhone && (
+                      <p className="text-[10px] text-rose-600 mt-1">{fieldErrors.guardianPhone}</p>
+                    )}
+                  </div>
+
+                  {/* Guardian Email */}
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Guardian Email (Optional)
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="e.g. parent@example.com"
+                      value={guardianEmail}
+                      onChange={(e) => setGuardianEmail(e.target.value)}
+                      disabled={isSubmitting}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           <p className="text-[11px] text-slate-500 bg-slate-50 p-2.5 rounded border border-slate-200">
-            Note: After registration, you can allocate the student to a bus pickup/drop stop and link parent WhatsApp contacts.
+            Note: Guardian contact receives instant WhatsApp trip notifications and 1:1 secure live tracking web access.
           </p>
 
           {/* Modal Footer Actions */}

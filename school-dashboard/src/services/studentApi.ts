@@ -2,6 +2,8 @@ import {
   StudentWithDetails,
   CreateStudentRequest,
   UpdateStudentRequest,
+  UpsertParentGuardianRequest,
+  ParentGuardianRecord,
 } from '@school-bus/shared';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
@@ -100,4 +102,77 @@ export async function createStudent(
   }
 
   return json.data;
+}
+
+/**
+ * Retrieves parent/guardian records linked to a student
+ */
+export async function fetchStudentParents(
+  schoolId: string,
+  studentId: string
+): Promise<ParentGuardianRecord[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}/parents`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      return [];
+    }
+
+    const json = await res.json();
+    return json.data || [];
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return [];
+  }
+}
+
+/**
+ * Adds or updates parent/guardian details and emergency contact for a student
+ */
+export async function upsertStudentParent(
+  schoolId: string,
+  studentId: string,
+  payload: UpsertParentGuardianRequest
+): Promise<StudentWithDetails> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}/parents`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok || !json.success) {
+    const errorMsg = json.error?.message || json.message || 'Failed to update parent details.';
+    throw new Error(errorMsg);
+  }
+
+  return json.data;
+}
+
+/**
+ * Removes a parent/guardian record from a student
+ */
+export async function deleteStudentParent(
+  schoolId: string,
+  studentId: string,
+  parentId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}/parents/${parentId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok || !json.success) {
+    const errorMsg = json.error?.message || json.message || 'Failed to remove parent record.';
+    throw new Error(errorMsg);
+  }
 }

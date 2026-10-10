@@ -16,6 +16,7 @@ import { StudentWithDetails } from '@school-bus/shared';
 import { fetchStudents } from '../../../services/studentApi';
 import { StudentListTable } from '../../../components/student/StudentListTable';
 import { CreateStudentModal } from '../../../components/student/CreateStudentModal';
+import { ManageParentModal } from '../../../components/student/ManageParentModal';
 
 export default function StudentsDirectoryPage() {
   const { user } = useAuth();
@@ -29,6 +30,7 @@ export default function StudentsDirectoryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedStudentForParent, setSelectedStudentForParent] = useState<StudentWithDetails | null>(null);
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -78,6 +80,13 @@ export default function StudentsDirectoryPage() {
 
   const handleStudentCreated = (newStudent: StudentWithDetails) => {
     setStudents((prev) => [newStudent, ...prev]);
+  };
+
+  const handleParentUpdated = (updatedStudent: StudentWithDetails) => {
+    setStudents((prev) =>
+      prev.map((s) => (s.id === updatedStudent.id ? updatedStudent : s))
+    );
+    setSelectedStudentForParent(null);
   };
 
   // Distinct classes for quick filter
@@ -218,6 +227,7 @@ export default function StudentsDirectoryPage() {
           students={filteredStudents}
           isLoading={isLoading}
           onAddStudent={() => setIsCreateModalOpen(true)}
+          onManageParent={(student) => setSelectedStudentForParent(student)}
           onViewDetail={(student) => {
             // Prepared for subsequent micro-phases
           }}
@@ -230,6 +240,15 @@ export default function StudentsDirectoryPage() {
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onSuccess={handleStudentCreated}
+      />
+
+      {/* Manage Parent / Guardian Modal */}
+      <ManageParentModal
+        schoolId={schoolId}
+        student={selectedStudentForParent}
+        isOpen={Boolean(selectedStudentForParent)}
+        onClose={() => setSelectedStudentForParent(null)}
+        onSuccess={handleParentUpdated}
       />
     </div>
   );

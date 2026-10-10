@@ -21,6 +21,7 @@ interface StudentListTableProps {
   isLoading: boolean;
   onAddStudent: () => void;
   onViewDetail?: (student: StudentWithDetails) => void;
+  onManageParent?: (student: StudentWithDetails) => void;
 }
 
 export function StudentListTable({
@@ -28,6 +29,7 @@ export function StudentListTable({
   isLoading,
   onAddStudent,
   onViewDetail,
+  onManageParent,
 }: StudentListTableProps) {
   if (isLoading) {
     return (
@@ -160,34 +162,66 @@ export function StudentListTable({
                 </td>
 
                 {/* 6. Parent WhatsApp */}
-                <td className="py-3 px-4">
+                <td className="py-3 px-4" onClick={(e) => {
+                  if (onManageParent) {
+                    e.stopPropagation();
+                    onManageParent(student);
+                  }
+                }}>
                   {student.parentPhone ? (
-                    <div className="space-y-0.5">
-                      <span className="font-semibold text-slate-800 block">
-                        {student.parentName || 'Parent'}
-                      </span>
+                    <div className="space-y-0.5 hover:opacity-80 transition-opacity">
+                      <div className="flex items-center gap-1">
+                        <span className="font-semibold text-slate-800">
+                          {student.parentName || 'Parent'}
+                        </span>
+                        {student.parentRelationship && (
+                          <span className="text-[10px] text-slate-500 font-normal">
+                            ({student.parentRelationship.toLowerCase()})
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[11px] font-mono text-emerald-700 flex items-center gap-1">
                         <Phone className="w-3 h-3 text-emerald-600" />
                         {student.parentPhone}
                       </span>
                     </div>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                      No Parent Linked
-                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onManageParent) onManageParent(student);
+                      }}
+                      className="inline-flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-200 transition-colors font-medium"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Link Parent
+                    </button>
                   )}
                 </td>
 
                 {/* 7. Actions */}
                 <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    type="button"
-                    onClick={() => onViewDetail && onViewDetail(student)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-600 hover:text-sky-600 hover:bg-sky-50 rounded border border-slate-200 hover:border-sky-300 text-xs font-semibold transition-colors"
-                  >
-                    Details
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onManageParent && onManageParent(student)}
+                      title="Manage Parent WhatsApp & Emergency Contacts"
+                      className="inline-flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded border border-slate-200 hover:border-indigo-300 text-xs font-semibold transition-colors"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      Parent
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onViewDetail && onViewDetail(student)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-sky-600 hover:bg-sky-50 rounded border border-slate-200 hover:border-sky-300 text-xs font-semibold transition-colors"
+                    >
+                      Details
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             );

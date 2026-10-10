@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   CreateStudentRequestSchema,
+  UpsertParentGuardianRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -38,6 +39,41 @@ studentRouter.get(
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
   StudentController.getStudent
+);
+
+// 4. Get Parents / Guardians for a Student
+studentRouter.get(
+  '/:schoolId/students/:studentId/parents',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  StudentController.getParents
+);
+
+// 5. Add or Update Parent / Guardian (and Emergency Contact)
+studentRouter.post(
+  '/:schoolId/students/:studentId/parents',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpsertParentGuardianRequestSchema),
+  StudentController.upsertParent
+);
+
+// 6. Remove Parent / Guardian Link
+studentRouter.delete(
+  '/:schoolId/students/:studentId/parents/:parentId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  StudentController.deleteParent
 );
 
 export default studentRouter;

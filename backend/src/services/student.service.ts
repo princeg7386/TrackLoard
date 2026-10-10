@@ -2,6 +2,8 @@ import { query } from '../config/database.js';
 import {
   CreateStudentRequest,
   UpdateStudentRequest,
+  UpsertParentGuardianRequest,
+  ParentGuardianRecord,
   StudentWithDetails,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -10,12 +12,13 @@ import {
   BadRequestError,
   NotFoundError,
 } from '../middlewares/error.middleware.js';
+import { DbService } from './db.service.js';
 import { AuditService } from './audit.service.js';
 import { logger } from './logger.service.js';
 
 export class StudentService {
   /**
-   * Registers a new student in the school directory
+   * Registers a new student in the school directory, with optional initial guardian linkage
    */
   public static async createStudent(
     schoolId: string,
@@ -31,6 +34,14 @@ export class StudentService {
     const cleanEmergencyPhone = payload.emergencyContactPhone && payload.emergencyContactPhone.trim()
       ? normalizeIndianPhoneNumber(payload.emergencyContactPhone.trim())
       : null;
+
+    // Optional guardian details
+    const guardianName = payload.guardianName?.trim() || null;
+    const guardianPhone = payload.guardianPhone && payload.guardianPhone.trim()
+      ? normalizeIndianPhoneNumber(payload.guardianPhone.trim())
+      : null;
+    const guardianRelationship = payload.guardianRelationship || 'PARENT';
+    const guardianEmail = payload.guardianEmail?.trim() || null;
 
     // 1. Check for duplicate admission number in this school tenant
     const duplicateSql = `
@@ -49,42 +60,58 @@ export class StudentService {
       );
     }
 
-    // 2. Insert student record
-    const insertSql = `
-      INSERT INTO students (
-        school_id,
-        full_name,
-        admission_number,
-        class_grade,
-        section,
-        roll_number,
-        emergency_contact_phone
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING
-        id,
-        school_id,
-        full_name,
-        admission_number,
-        class_grade,
-        section,
-        roll_number,
-        emergency_contact_phone,
-        created_at,
-        updated_at
-    `;
+    let createdStudentId: string;
 
-    const insertedRows = await query<any>(insertSql, [
-      schoolId,
-      trimmedName,
-      cleanAdmissionNumber,
-      cleanClass,
-      cleanSection,
-      cleanRollNumber,
-      cleanEmergencyPhone,
-    ]);
+    // 2. Transaction: Insert student record and optional parent linkage
+    await DbService.withTransaction(async (client) => {
+      const insertSql = `
+        INSERT INTO students (
+          school_id,
+          full_name,
+          admission_number,
+          class_grade,
+          section,
+          roll_number,
+          emergency_contact_phone
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+      `;
 
-    const createdStudent = insertedRows[0];
+      const insertRes = await client.query<{ id: string }>(insertSql, [
+        schoolId,
+        trimmedName,
+        cleanAdmissionNumber,
+        cleanClass,
+        cleanSection,
+        cleanRollNumber,
+        cleanEmergencyPhone,
+      ]);
+
+      createdStudentId = insertRes.rows[0].id;
+
+      if (guardianName && guardianPhone) {
+        const insertParentSql = `
+          INSERT INTO parents (
+            school_id,
+            student_id,
+            full_name,
+            relationship,
+            phone,
+            email
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `;
+        await client.query(insertParentSql, [
+          schoolId,
+          createdStudentId,
+          guardianName,
+          guardianRelationship,
+          guardianPhone,
+          guardianEmail,
+        ]);
+      }
+    });
 
     // 3. Security Audit Logging
     await AuditService.log({
@@ -93,7 +120,7 @@ export class StudentService {
       userRole: 'SCHOOL_ADMIN',
       action: 'STUDENT_CREATED',
       entityType: 'STUDENT',
-      entityId: createdStudent.id,
+      entityId: createdStudentId!,
       diffJson: {
         fullName: trimmedName,
         admissionNumber: cleanAdmissionNumber,
@@ -101,31 +128,20 @@ export class StudentService {
         section: cleanSection,
         rollNumber: cleanRollNumber,
         emergencyContactPhone: cleanEmergencyPhone,
+        hasInitialGuardian: Boolean(guardianName && guardianPhone),
       },
       ipAddress,
     });
 
     logger.info('Student created successfully', {
-      studentId: createdStudent.id,
+      studentId: createdStudentId!,
       schoolId,
       admissionNumber: cleanAdmissionNumber,
       classGrade: cleanClass,
       section: cleanSection,
     });
 
-    return {
-      id: createdStudent.id,
-      schoolId: createdStudent.school_id,
-      fullName: createdStudent.full_name,
-      admissionNumber: createdStudent.admission_number,
-      classGrade: createdStudent.class_grade,
-      section: createdStudent.section,
-      rollNumber: createdStudent.roll_number,
-      emergencyContactPhone: createdStudent.emergency_contact_phone,
-      createdAt: createdStudent.created_at ? new Date(createdStudent.created_at).toISOString() : undefined,
-      updatedAt: createdStudent.updated_at ? new Date(createdStudent.updated_at).toISOString() : undefined,
-      parentCount: 0,
-    };
+    return await this.getStudentById(schoolId, createdStudentId!);
   }
 
   /**
@@ -160,9 +176,11 @@ export class StudentService {
         r.code AS assigned_route_code,
         (
           SELECT json_build_object(
+            'id', p.id,
             'fullName', p.full_name,
             'phone', p.phone,
-            'relationship', p.relationship
+            'relationship', p.relationship,
+            'email', p.email
           )
           FROM parents p
           WHERE p.student_id = s.id AND p.deleted_at IS NULL
@@ -240,13 +258,14 @@ export class StudentService {
         parentName: parent?.fullName || null,
         parentPhone: parent?.phone || null,
         parentRelationship: parent?.relationship || null,
+        parentEmail: parent?.email || null,
         parentCount: r.parent_count || 0,
       };
     });
   }
 
   /**
-   * Retrieves single student details by ID
+   * Retrieves single student details by ID including parent list
    */
   public static async getStudentById(schoolId: string, studentId: string): Promise<StudentWithDetails> {
     const sql = `
@@ -270,9 +289,11 @@ export class StudentService {
         r.code AS assigned_route_code,
         (
           SELECT json_build_object(
+            'id', p.id,
             'fullName', p.full_name,
             'phone', p.phone,
-            'relationship', p.relationship
+            'relationship', p.relationship,
+            'email', p.email
           )
           FROM parents p
           WHERE p.student_id = s.id AND p.deleted_at IS NULL
@@ -305,6 +326,9 @@ export class StudentService {
     const r = rows[0];
     const parent = r.primary_parent;
 
+    // Fetch full parents array
+    const parentsList = await this.getParentsByStudentId(schoolId, studentId);
+
     return {
       id: r.id,
       schoolId: r.school_id,
@@ -326,7 +350,222 @@ export class StudentService {
       parentName: parent?.fullName || null,
       parentPhone: parent?.phone || null,
       parentRelationship: parent?.relationship || null,
-      parentCount: r.parent_count || 0,
+      parentEmail: parent?.email || null,
+      parentCount: parentsList.length,
+      parents: parentsList,
     };
+  }
+
+  /**
+   * Retrieves all parents/guardians linked to a student
+   */
+  public static async getParentsByStudentId(
+    schoolId: string,
+    studentId: string
+  ): Promise<ParentGuardianRecord[]> {
+    // 1. Verify student exists in this school
+    const studentCheck = await query<{ id: string }>(
+      `SELECT id FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [studentId, schoolId]
+    );
+    if (studentCheck.length === 0) {
+      throw new NotFoundError('Student record not found or does not belong to your school.');
+    }
+
+    // 2. Query parents
+    const sql = `
+      SELECT 
+        id,
+        school_id,
+        student_id,
+        full_name,
+        relationship,
+        phone,
+        email,
+        created_at,
+        updated_at
+      FROM parents
+      WHERE student_id = $1 AND school_id = $2 AND deleted_at IS NULL
+      ORDER BY created_at ASC
+    `;
+
+    const rows = await query<any>(sql, [studentId, schoolId]);
+
+    return rows.map((r) => ({
+      id: r.id,
+      schoolId: r.school_id,
+      studentId: r.student_id,
+      fullName: r.full_name,
+      relationship: r.relationship,
+      phone: r.phone,
+      email: r.email || null,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : undefined,
+      updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    }));
+  }
+
+  /**
+   * Adds or updates parent/guardian details and emergency contact for a student
+   */
+  public static async upsertParentGuardian(
+    schoolId: string,
+    studentId: string,
+    payload: UpsertParentGuardianRequest,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<StudentWithDetails> {
+    const trimmedName = payload.fullName.trim();
+    const cleanRelationship = payload.relationship || 'PARENT';
+    const normalizedPhone = normalizeIndianPhoneNumber(payload.phone.trim());
+    const cleanEmail = payload.email?.trim() || null;
+    const cleanEmergencyPhone = payload.emergencyContactPhone && payload.emergencyContactPhone.trim()
+      ? normalizeIndianPhoneNumber(payload.emergencyContactPhone.trim())
+      : null;
+
+    // 1. Verify student exists in school
+    const studentCheck = await query<{ id: string; emergency_contact_phone: string | null }>(
+      `SELECT id, emergency_contact_phone FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [studentId, schoolId]
+    );
+
+    if (studentCheck.length === 0) {
+      throw new NotFoundError('Student record not found or does not belong to your school.');
+    }
+
+    // 2. Transaction: Update emergency phone on student & upsert parent record
+    await DbService.withTransaction(async (client) => {
+      if (cleanEmergencyPhone !== null) {
+        await client.query(
+          `UPDATE students SET emergency_contact_phone = $1, updated_at = NOW() WHERE id = $2 AND school_id = $3`,
+          [cleanEmergencyPhone, studentId, schoolId]
+        );
+      }
+
+      // Check if this parent already exists for student (by phone or first existing parent)
+      const existingParentRes = await client.query<{ id: string }>(
+        `SELECT id FROM parents WHERE student_id = $1 AND school_id = $2 AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+        [studentId, schoolId]
+      );
+
+      if (existingParentRes.rows.length > 0) {
+        const parentId = existingParentRes.rows[0].id;
+        const updateSql = `
+          UPDATE parents
+          SET
+            full_name = $1,
+            relationship = $2,
+            phone = $3,
+            email = $4,
+            updated_at = NOW()
+          WHERE id = $5 AND school_id = $6
+        `;
+        await client.query(updateSql, [
+          trimmedName,
+          cleanRelationship,
+          normalizedPhone,
+          cleanEmail,
+          parentId,
+          schoolId,
+        ]);
+      } else {
+        const insertSql = `
+          INSERT INTO parents (
+            school_id,
+            student_id,
+            full_name,
+            relationship,
+            phone,
+            email
+          )
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `;
+        await client.query(insertSql, [
+          schoolId,
+          studentId,
+          trimmedName,
+          cleanRelationship,
+          normalizedPhone,
+          cleanEmail,
+        ]);
+      }
+    });
+
+    // 3. Security Audit Log
+    await AuditService.log({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'STUDENT_PARENT_UPDATED',
+      entityType: 'STUDENT',
+      entityId: studentId,
+      diffJson: {
+        guardianName: trimmedName,
+        relationship: cleanRelationship,
+        guardianPhone: normalizedPhone,
+        guardianEmail: cleanEmail,
+        emergencyContactPhone: cleanEmergencyPhone,
+      },
+      ipAddress,
+    });
+
+    logger.info('Student parent/guardian updated successfully', {
+      studentId,
+      schoolId,
+      guardianName: trimmedName,
+      guardianPhone: normalizedPhone,
+    });
+
+    return await this.getStudentById(schoolId, studentId);
+  }
+
+  /**
+   * Removes (soft-deletes) a parent/guardian link from a student
+   */
+  public static async deleteParent(
+    schoolId: string,
+    studentId: string,
+    parentId: string,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<void> {
+    // 1. Verify parent exists and belongs to student & school
+    const parentRows = await query<{ id: string; full_name: string; phone: string }>(
+      `SELECT id, full_name, phone FROM parents WHERE id = $1 AND student_id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+      [parentId, studentId, schoolId]
+    );
+
+    if (parentRows.length === 0) {
+      throw new NotFoundError('Parent record not found or does not belong to this student.');
+    }
+
+    const parent = parentRows[0];
+
+    // 2. Soft-delete parent
+    await query(
+      `UPDATE parents SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND student_id = $2 AND school_id = $3`,
+      [parentId, studentId, schoolId]
+    );
+
+    // 3. Security Audit Log
+    await AuditService.log({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'STUDENT_PARENT_REMOVED',
+      entityType: 'STUDENT',
+      entityId: studentId,
+      diffJson: {
+        deletedParentId: parentId,
+        parentName: parent.full_name,
+        parentPhone: parent.phone,
+      },
+      ipAddress,
+    });
+
+    logger.info('Parent record removed for student', {
+      studentId,
+      parentId,
+      schoolId,
+    });
   }
 }
