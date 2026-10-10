@@ -13,6 +13,8 @@ import {
   AlertCircle,
   Clock,
   KeyRound,
+  Radio,
+  BellOff,
 } from 'lucide-react';
 import { ParentRecordWithStudent } from '@school-bus/shared';
 import { EmptyState } from '../ui/EmptyState';
@@ -24,6 +26,7 @@ interface ParentListTableProps {
   onManageParent?: (parent: ParentRecordWithStudent) => void;
   onViewStudent?: (studentId: string) => void;
   onViewAssignment?: (parent: ParentRecordWithStudent) => void;
+  onViewNotificationStatus?: (parent: ParentRecordWithStudent) => void;
 }
 
 export function ParentListTable({
@@ -33,6 +36,7 @@ export function ParentListTable({
   onManageParent,
   onViewStudent,
   onViewAssignment,
+  onViewNotificationStatus,
 }: ParentListTableProps) {
   if (isLoading) {
     return (
@@ -96,15 +100,29 @@ export function ParentListTable({
     }
   };
 
-  const getWhatsAppStatusBadge = (status: 'ACTIVE_TOKEN' | 'LINKED' | 'NOT_LINKED', activeCount: number) => {
+  const getWhatsAppStatusBadge = (
+    status: 'ACTIVE_TOKEN' | 'LINKED' | 'NOT_LINKED',
+    activeCount: number,
+    notificationsEnabled?: boolean
+  ) => {
+    const isPaused = notificationsEnabled === false;
+
     switch (status) {
       case 'ACTIVE_TOKEN':
         return (
           <div className="flex flex-col gap-0.5">
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 w-fit">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-              Live Tracking Active
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 w-fit">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                Live Tracking Active
+              </span>
+              {isPaused && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200" title="Notifications Paused">
+                  <BellOff className="w-2.5 h-2.5 text-amber-600" />
+                  Paused
+                </span>
+              )}
+            </div>
             <span className="text-[10px] text-emerald-700 font-mono">
               {activeCount} active token link{activeCount > 1 ? 's' : ''}
             </span>
@@ -113,10 +131,18 @@ export function ParentListTable({
       case 'LINKED':
         return (
           <div className="flex flex-col gap-0.5">
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-100 text-sky-800 border border-sky-200 w-fit">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-              WhatsApp Linked
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-100 text-sky-800 border border-sky-200 w-fit">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                WhatsApp Linked
+              </span>
+              {isPaused && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-200" title="Notifications Paused">
+                  <BellOff className="w-2.5 h-2.5 text-amber-600" />
+                  Paused
+                </span>
+              )}
+            </div>
             <span className="text-[10px] text-slate-400">Ready for trip dispatch</span>
           </div>
         );
@@ -210,7 +236,7 @@ export function ParentListTable({
 
                 {/* 3. WhatsApp Tracking Status */}
                 <td className="py-3 px-4">
-                  {getWhatsAppStatusBadge(parent.whatsAppStatus, parent.activeTokenCount)}
+                  {getWhatsAppStatusBadge(parent.whatsAppStatus, parent.activeTokenCount, parent.notificationsEnabled)}
                 </td>
 
                 {/* 4. Linked Student (1:1 Direct Context) */}
@@ -268,6 +294,17 @@ export function ParentListTable({
                 {/* 6. Quick Actions */}
                 <td className="py-3 px-4 text-right">
                   <div className="flex items-center justify-end gap-1.5">
+                    {onViewNotificationStatus && (
+                      <button
+                        type="button"
+                        onClick={() => onViewNotificationStatus(parent)}
+                        className="px-2 py-1 text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded shadow-2xs transition-colors flex items-center gap-1"
+                        title="View Notification Delivery Health & Link Activity"
+                      >
+                        <Radio className="w-3 h-3 text-sky-600" />
+                        <span>Delivery</span>
+                      </button>
+                    )}
                     {onViewAssignment && (
                       <button
                         type="button"

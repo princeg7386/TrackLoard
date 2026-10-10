@@ -6,6 +6,8 @@ import {
   AssignStudentTransportPayloadSchema,
   RelinkParentStudentRequestSchema,
   SendParentNoticeRequestSchema,
+  UpdateParentNotificationPreferencesSchema,
+  UpdateNotificationStatusRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -125,6 +127,42 @@ studentRouter.post(
     UserRole.SUPER_ADMIN
   ),
   ParentIdentityController.sendOnboardInvite
+);
+
+// 3h. Get Parent Notification Delivery Health & Link Activity
+studentRouter.get(
+  '/:schoolId/parents/:parentId/notification-status',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  ParentIdentityController.getNotificationStatus
+);
+
+// 3i. Update Parent Notification Preferences (Opt-Out / Opt-In)
+studentRouter.patch(
+  '/:schoolId/parents/:parentId/notification-preferences',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateParentNotificationPreferencesSchema),
+  ParentIdentityController.updateNotificationPreferences
+);
+
+// 3j. Update Outbound Notification Delivery Status (Delivery / Read Receipts / Webhooks)
+studentRouter.post(
+  '/:schoolId/notifications/:notificationId/status',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateNotificationStatusRequestSchema),
+  ParentIdentityController.updateNotificationStatus
 );
 
 // 4. Get Student Transport Attendance History

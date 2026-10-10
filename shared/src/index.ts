@@ -660,6 +660,9 @@ export interface ParentRecordWithStudent {
   activeTokenCount: number;
   lastTokenCreatedAt?: string | null;
   lastTokenExpiresAt?: string | null;
+  notificationsEnabled?: boolean;
+  optedOutAt?: string | null;
+  optOutReason?: string | null;
   student: {
     id: string;
     fullName: string;
@@ -787,6 +790,75 @@ export interface ParentOnboardConfirmResponse {
   activatedAt: string;
   session: ParentLiveTrackingSession;
 }
+
+export interface TokenAccessLogItem {
+  id: string;
+  tokenId: string;
+  accessedAt: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+export interface ParentNotificationHistoryItem {
+  id: string;
+  channel: string;
+  templateName?: string | null;
+  messageBody: string;
+  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED';
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  failureReason?: string | null;
+  createdAt: string;
+}
+
+export interface ParentDeliverySummary {
+  totalDispatches: number;
+  sentCount: number;
+  deliveredCount: number;
+  readCount: number;
+  failedCount: number;
+  deliverySuccessRatePercent: number;
+}
+
+export interface ParentNotificationStatusResponse {
+  parent: {
+    id: string;
+    fullName: string;
+    phone: string;
+    relationship: string;
+    notificationsEnabled: boolean;
+    optedOutAt?: string | null;
+    optOutReason?: string | null;
+  };
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string;
+    classGrade: string;
+    section: string;
+  };
+  deliverySummary: ParentDeliverySummary;
+  linkActivity: {
+    totalTokensIssued: number;
+    activeTokenCount: number;
+    totalAccessCount: number;
+    lastAccessedAt?: string | null;
+    recentAccesses: TokenAccessLogItem[];
+  };
+  recentNotifications: ParentNotificationHistoryItem[];
+}
+
+export const UpdateParentNotificationPreferencesSchema = z.object({
+  notificationsEnabled: z.boolean(),
+  optOutReason: z.string().max(255).optional().nullable(),
+});
+export type UpdateParentNotificationPreferences = z.infer<typeof UpdateParentNotificationPreferencesSchema>;
+
+export const UpdateNotificationStatusRequestSchema = z.object({
+  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED']),
+  failureReason: z.string().max(255).optional().nullable(),
+});
+export type UpdateNotificationStatusRequest = z.infer<typeof UpdateNotificationStatusRequestSchema>;
 
 
 

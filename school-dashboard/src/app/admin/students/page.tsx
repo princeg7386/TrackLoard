@@ -19,6 +19,7 @@ import { fetchStudents, fetchSchoolParents } from '../../../services/studentApi'
 import { StudentListTable } from '../../../components/student/StudentListTable';
 import { ParentListTable } from '../../../components/student/ParentListTable';
 import { ParentAssignmentModal } from '../../../components/student/ParentAssignmentModal';
+import { ParentNotificationStatusModal } from '../../../components/student/ParentNotificationStatusModal';
 import { CreateStudentModal } from '../../../components/student/CreateStudentModal';
 import { ManageParentModal } from '../../../components/student/ManageParentModal';
 import { AssignTransportModal } from '../../../components/student/AssignTransportModal';
@@ -58,6 +59,7 @@ export default function StudentsDirectoryPage() {
   const [selectedStudentForDelete, setSelectedStudentForDelete] = useState<StudentWithDetails | null>(null);
   const [selectedStudentForHistory, setSelectedStudentForHistory] = useState<StudentWithDetails | null>(null);
   const [selectedParentForAssignment, setSelectedParentForAssignment] = useState<ParentRecordWithStudent | null>(null);
+  const [selectedParentForStatus, setSelectedParentForStatus] = useState<ParentRecordWithStudent | null>(null);
 
   const [isOffline, setIsOffline] = useState(false);
 
@@ -465,6 +467,7 @@ export default function StudentsDirectoryPage() {
               onManageParent={handleParentRowManage}
               onViewStudent={handleStudentViewFromParent}
               onViewAssignment={(parent) => setSelectedParentForAssignment(parent)}
+              onViewNotificationStatus={(parent) => setSelectedParentForStatus(parent)}
             />
           </>
         )}
@@ -546,6 +549,16 @@ export default function StudentsDirectoryPage() {
         }}
         onViewStudentDetail={(studentId) => {
           handleStudentViewFromParent(studentId);
+        }}
+      />
+
+      {/* Parent Notification Health & Link Activity Modal */}
+      <ParentNotificationStatusModal
+        parent={selectedParentForStatus}
+        isOpen={Boolean(selectedParentForStatus)}
+        onClose={() => setSelectedParentForStatus(null)}
+        onPreferencesUpdated={() => {
+          loadParents();
         }}
       />
     </div>

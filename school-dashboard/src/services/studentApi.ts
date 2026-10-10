@@ -14,6 +14,10 @@ import {
   ParentOnboardInviteResponse,
   ParentOnboardVerificationResponse,
   ParentOnboardConfirmResponse,
+  ParentNotificationStatusResponse,
+  UpdateParentNotificationPreferences,
+  UpdateNotificationStatusRequest,
+  ParentNotificationHistoryItem,
 } from '@school-bus/shared';
 
 
@@ -552,6 +556,96 @@ export async function confirmOnboardActivation(payload: {
   if (!res.ok) {
     const errJson = await res.json().catch(() => ({}));
     throw new Error(errJson.message || `Activation failed (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Fetches parent notification delivery summary, link activity logs, and opt-out preferences
+ */
+export async function fetchParentNotificationStatus(
+  schoolId: string,
+  parentId: string
+): Promise<ParentNotificationStatusResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/notification-status`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Failed to fetch notification status (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Updates parent notification preferences (opt-in / opt-out)
+ */
+export async function updateParentNotificationPreferences(
+  schoolId: string,
+  parentId: string,
+  payload: UpdateParentNotificationPreferences
+): Promise<{
+  parentId: string;
+  notificationsEnabled: boolean;
+  optedOutAt: string | null;
+  optOutReason: string | null;
+}> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/notification-preferences`,
+    {
+      method: 'PATCH',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Failed to update notification preferences (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Updates delivery status for an outbound notification (e.g. simulated receipt / webhook)
+ */
+export async function updateNotificationDeliveryStatus(
+  schoolId: string,
+  notificationId: string,
+  payload: UpdateNotificationStatusRequest
+): Promise<ParentNotificationHistoryItem> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/notifications/${notificationId}/status`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Failed to update delivery status (${res.status})`);
   }
 
   const json = await res.json();

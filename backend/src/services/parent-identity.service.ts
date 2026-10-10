@@ -12,6 +12,11 @@ import {
   ParentOnboardInviteResponse,
   ParentOnboardVerificationResponse,
   ParentOnboardConfirmResponse,
+  ParentNotificationStatusResponse,
+  UpdateParentNotificationPreferences,
+  UpdateNotificationStatusRequest,
+  ParentNotificationHistoryItem,
+  TokenAccessLogItem,
   normalizeIndianPhoneNumber,
   TripStatus,
   RouteType,
@@ -285,20 +290,13 @@ export class ParentIdentityService {
       throw new UnauthorizedError('This live tracking link has expired');
     }
 
-    // Asynchronously update last_accessed_at and increment access count
-    query(
-      `
-      UPDATE parent_tracking_tokens 
-      SET last_accessed_at = NOW(), access_count = access_count + 1 
-      WHERE id = $1
-      `,
-      [token.token_id]
-    ).catch((err) => {
-      logger.error('Failed to update tracking token access count', {
-        tokenId: token.token_id,
-        error: err.message,
-      });
-    });
+    // Asynchronously log access activity and increment access count
+    this.recordTokenAccess(
+      token.token_id,
+      token.parent_id,
+      token.student_id,
+      token.school_id
+    ).catch(() => {});
 
     // Query parent, student, school, stop, and active trip metadata
     const detailsSql = `
@@ -571,6 +569,21 @@ export class ParentIdentityService {
     return rows.length;
   }
 
+  public static revokeAllStudentTokens = (
+    studentId: string,
+    schoolId: string,
+    reason?: string
+  ) => ParentIdentityService.revokeAllTokensForStudent(studentId, schoolId, reason);
+
+  public static listParentsForSchool = (
+    schoolId: string,
+    filters?: {
+      search?: string;
+      relationship?: string;
+      whatsAppStatus?: string;
+    }
+  ) => ParentIdentityService.getSchoolParents(schoolId, filters);
+
   /**
    * Retrieves all parents registered in a school with linked student details and WhatsApp tracking status
    */
@@ -593,6 +606,9 @@ export class ParentIdentityService {
         p.email AS parent_email,
         p.created_at AS parent_created_at,
         p.updated_at AS parent_updated_at,
+        COALESCE(p.notifications_enabled, TRUE) AS notifications_enabled,
+        p.opted_out_at,
+        p.opt_out_reason,
         s.id AS student_id,
         s.full_name AS student_name,
         s.admission_number,
@@ -679,6 +695,9 @@ export class ParentIdentityService {
         activeTokenCount: activeCount,
         lastTokenCreatedAt: r.last_token_created_at ? new Date(r.last_token_created_at).toISOString() : null,
         lastTokenExpiresAt: r.last_token_expires_at ? new Date(r.last_token_expires_at).toISOString() : null,
+        notificationsEnabled: r.notifications_enabled !== undefined ? !!r.notifications_enabled : true,
+        optedOutAt: r.opted_out_at ? new Date(r.opted_out_at).toISOString() : null,
+        optOutReason: r.opt_out_reason || null,
         student: {
           id: r.student_id,
           fullName: r.student_name,
@@ -1054,7 +1073,8 @@ export class ParentIdentityService {
     payload: SendParentNoticeRequest
   ): Promise<ParentCommunicationItem> {
     const parentRows = await query<any>(
-      `SELECT id, student_id, phone, full_name FROM parents WHERE id = $1 AND school_id = $2`,
+      `SELECT id, student_id, phone, full_name, COALESCE(notifications_enabled, TRUE) AS notifications_enabled 
+       FROM parents WHERE id = $1 AND school_id = $2`,
       [parentId, schoolId]
     );
 
@@ -1065,6 +1085,10 @@ export class ParentIdentityService {
     const parent = parentRows[0];
     if (!parent.phone || !parent.phone.trim()) {
       throw new ValidationError('Cannot dispatch notification: parent has no registered mobile number');
+    }
+
+    if (parent.notifications_enabled === false) {
+      throw new ValidationError('Cannot dispatch notification: parent has opted out of notifications');
     }
 
     const channel = payload.channel || 'WHATSAPP';
@@ -1081,8 +1105,10 @@ export class ParentIdentityService {
         message_body,
         status,
         provider_message_id,
+        parent_id,
+        student_id,
         created_at
-      ) VALUES ($1, $2, 'PARENT', $3, $4, $5, 'SENT', $6, NOW())
+      ) VALUES ($1, $2, 'PARENT', $3, $4, $5, 'SENT', $6, $7, $8, NOW())
       RETURNING id, created_at, status
     `;
 
@@ -1094,6 +1120,8 @@ export class ParentIdentityService {
       templateName,
       messageBody,
       mockProviderId,
+      parentId,
+      parent.student_id,
     ]);
 
     const row = inserted[0];
@@ -1137,6 +1165,7 @@ export class ParentIdentityService {
         p.full_name AS parent_name,
         p.phone AS parent_phone,
         p.relationship,
+        COALESCE(p.notifications_enabled, TRUE) AS notifications_enabled,
         s.id AS student_id,
         s.full_name AS student_name,
         s.admission_number,
@@ -1164,6 +1193,10 @@ export class ParentIdentityService {
 
     if (!row.parent_phone || !row.parent_phone.trim()) {
       throw new ValidationError('Cannot dispatch onboarding invite: parent does not have a registered mobile number');
+    }
+
+    if (row.notifications_enabled === false) {
+      throw new ValidationError('Cannot dispatch onboarding invite: parent has opted out of notifications');
     }
 
     const ttlHours = options?.ttlHours && options.ttlHours > 0 ? options.ttlHours : 72;
@@ -1204,8 +1237,10 @@ ${inviteUrl}
         message_body,
         status,
         provider_message_id,
+        parent_id,
+        student_id,
         created_at
-      ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', 'WELCOME_ONBOARDING', $3, 'SENT', $4, NOW())
+      ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', 'WELCOME_ONBOARDING', $3, 'SENT', $4, $5, $6, NOW())
       RETURNING id
     `;
 
@@ -1214,6 +1249,8 @@ ${inviteUrl}
       row.parent_phone,
       messageBody,
       mockProviderId,
+      row.parent_id,
+      row.student_id,
     ]);
 
     const notificationId = notifRows[0].id;
@@ -1392,6 +1429,319 @@ ${inviteUrl}
       confirmed: true,
       activatedAt: new Date().toISOString(),
       session,
+    };
+  }
+
+  /**
+   * Logs a tracking link access event and increments token access metrics
+   */
+  public static async recordTokenAccess(
+    tokenId: string,
+    parentId: string,
+    studentId: string,
+    schoolId: string,
+    clientInfo?: { ipAddress?: string; userAgent?: string }
+  ): Promise<void> {
+    try {
+      await query(
+        `UPDATE parent_tracking_tokens
+         SET last_accessed_at = NOW(), access_count = access_count + 1
+         WHERE id = $1`,
+        [tokenId]
+      );
+
+      await query(
+        `INSERT INTO parent_token_access_logs (
+           token_id, parent_id, student_id, school_id, ip_address, user_agent, accessed_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+        [
+          tokenId,
+          parentId,
+          studentId,
+          schoolId,
+          clientInfo?.ipAddress || null,
+          clientInfo?.userAgent || null,
+        ]
+      );
+    } catch (err: any) {
+      logger.error('Failed to log token access activity', {
+        tokenId,
+        parentId,
+        error: err.message,
+      });
+    }
+  }
+
+  /**
+   * Aggregates notification delivery summary, link activity metrics, and dispatch logs for a parent
+   */
+  public static async getParentNotificationStatus(
+    schoolId: string,
+    parentId: string
+  ): Promise<ParentNotificationStatusResponse> {
+    const parentSql = `
+      SELECT 
+        p.id AS parent_id,
+        p.full_name AS parent_name,
+        p.relationship,
+        p.phone AS parent_phone,
+        COALESCE(p.notifications_enabled, TRUE) AS notifications_enabled,
+        p.opted_out_at,
+        p.opt_out_reason,
+        s.id AS student_id,
+        s.full_name AS student_name,
+        s.admission_number,
+        s.class_grade,
+        s.section
+      FROM parents p
+      JOIN students s ON p.student_id = s.id AND s.deleted_at IS NULL
+      WHERE p.id = $1 AND p.school_id = $2
+    `;
+
+    const parentRows = await query<any>(parentSql, [parentId, schoolId]);
+    if (parentRows.length === 0) {
+      throw new NotFoundError('Parent record not found');
+    }
+    const parent = parentRows[0];
+
+    // Query notifications by parent_id OR recipient_phone
+    const notifSql = `
+      SELECT 
+        id,
+        channel,
+        template_name,
+        message_body,
+        status,
+        delivered_at,
+        read_at,
+        failure_reason,
+        created_at
+      FROM notifications
+      WHERE school_id = $1 AND (parent_id = $2 OR recipient_phone = $3)
+      ORDER BY created_at DESC
+      LIMIT 50
+    `;
+    const notifRows = await query<any>(notifSql, [schoolId, parentId, parent.parent_phone]);
+
+    const totalDispatches = notifRows.length;
+    let sentCount = 0;
+    let deliveredCount = 0;
+    let readCount = 0;
+    let failedCount = 0;
+
+    for (const n of notifRows) {
+      if (n.status === 'SENT') sentCount++;
+      else if (n.status === 'DELIVERED') deliveredCount++;
+      else if (n.status === 'READ') readCount++;
+      else if (n.status === 'FAILED') failedCount++;
+    }
+
+    const deliverySuccessRatePercent = totalDispatches > 0
+      ? Math.round(((totalDispatches - failedCount) / totalDispatches) * 100)
+      : 100;
+
+    // Query tracking tokens and access summary
+    const tokenStatsSql = `
+      SELECT 
+        COUNT(*)::int AS total_tokens,
+        COUNT(CASE WHEN revoked_at IS NULL AND expires_at > NOW() AND deleted_at IS NULL THEN 1 END)::int AS active_tokens,
+        COALESCE(SUM(access_count), 0)::int AS total_access_count,
+        MAX(last_accessed_at) AS last_accessed_at
+      FROM parent_tracking_tokens
+      WHERE parent_id = $1 AND school_id = $2
+    `;
+    const tokenStatsRows = await query<any>(tokenStatsSql, [parentId, schoolId]);
+    const tokenStats = tokenStatsRows[0] || {
+      total_tokens: 0,
+      active_tokens: 0,
+      total_access_count: 0,
+      last_accessed_at: null,
+    };
+
+    // Query recent access logs
+    const accessLogsSql = `
+      SELECT 
+        id,
+        token_id,
+        ip_address,
+        user_agent,
+        accessed_at
+      FROM parent_token_access_logs
+      WHERE parent_id = $1 AND school_id = $2
+      ORDER BY accessed_at DESC
+      LIMIT 10
+    `;
+    const accessRows = await query<any>(accessLogsSql, [parentId, schoolId]).catch(() => []);
+
+    return {
+      parent: {
+        id: parent.parent_id,
+        fullName: parent.parent_name,
+        phone: parent.parent_phone,
+        relationship: parent.relationship,
+        notificationsEnabled: !!parent.notifications_enabled,
+        optedOutAt: parent.opted_out_at ? new Date(parent.opted_out_at).toISOString() : null,
+        optOutReason: parent.opt_out_reason || null,
+      },
+      student: {
+        id: parent.student_id,
+        fullName: parent.student_name,
+        admissionNumber: parent.admission_number,
+        classGrade: parent.class_grade,
+        section: parent.section,
+      },
+      deliverySummary: {
+        totalDispatches,
+        sentCount,
+        deliveredCount,
+        readCount,
+        failedCount,
+        deliverySuccessRatePercent,
+      },
+      linkActivity: {
+        totalTokensIssued: Number(tokenStats.total_tokens || 0),
+        activeTokenCount: Number(tokenStats.active_tokens || 0),
+        totalAccessCount: Number(tokenStats.total_access_count || 0),
+        lastAccessedAt: tokenStats.last_accessed_at ? new Date(tokenStats.last_accessed_at).toISOString() : null,
+        recentAccesses: accessRows.map((a: any) => ({
+          id: a.id,
+          tokenId: a.token_id,
+          accessedAt: new Date(a.accessed_at).toISOString(),
+          ipAddress: a.ip_address || null,
+          userAgent: a.user_agent || null,
+        })),
+      },
+      recentNotifications: notifRows.map((n: any) => ({
+        id: n.id,
+        channel: n.channel,
+        templateName: n.template_name,
+        messageBody: n.message_body,
+        status: n.status,
+        deliveredAt: n.delivered_at ? new Date(n.delivered_at).toISOString() : null,
+        readAt: n.read_at ? new Date(n.read_at).toISOString() : null,
+        failureReason: n.failure_reason || null,
+        createdAt: new Date(n.created_at).toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * Updates notification preferences (opt-in / opt-out) for a parent
+   */
+  public static async updateParentNotificationPreferences(
+    schoolId: string,
+    parentId: string,
+    dto: UpdateParentNotificationPreferences,
+    actorUserId?: string | null
+  ): Promise<{
+    parentId: string;
+    notificationsEnabled: boolean;
+    optedOutAt: string | null;
+    optOutReason: string | null;
+  }> {
+    const parentRows = await query<any>(
+      `SELECT id, notifications_enabled FROM parents WHERE id = $1 AND school_id = $2`,
+      [parentId, schoolId]
+    );
+
+    if (parentRows.length === 0) {
+      throw new NotFoundError('Parent record not found');
+    }
+
+    const current = parentRows[0];
+    const newEnabled = !!dto.notificationsEnabled;
+    const optedOutAt = newEnabled ? null : new Date().toISOString();
+    const optOutReason = newEnabled ? null : (dto.optOutReason || 'Parent opted out of transport alerts');
+
+    await query(
+      `UPDATE parents
+       SET notifications_enabled = $1, opted_out_at = $2, opt_out_reason = $3, updated_at = NOW()
+       WHERE id = $4 AND school_id = $5`,
+      [newEnabled, optedOutAt, optOutReason, parentId, schoolId]
+    );
+
+    // Audit log
+    await AuditService.logAction({
+      schoolId,
+      userId: actorUserId || null,
+      action: 'PARENT_NOTIFICATION_PREFERENCES_UPDATED',
+      entityType: 'PARENT',
+      entityId: parentId,
+      diffJson: {
+        previousEnabled: current.notifications_enabled,
+        newEnabled,
+        optOutReason,
+      },
+    });
+
+    logger.info('Parent notification preferences updated', {
+      schoolId,
+      parentId,
+      notificationsEnabled: newEnabled,
+      optOutReason,
+    });
+
+    return {
+      parentId,
+      notificationsEnabled: newEnabled,
+      optedOutAt,
+      optOutReason,
+    };
+  }
+
+  /**
+   * Updates delivery status for an outbound notification (e.g. webhook or simulated delivery)
+   */
+  public static async updateNotificationDeliveryStatus(
+    schoolId: string,
+    notificationId: string,
+    dto: UpdateNotificationStatusRequest
+  ): Promise<ParentNotificationHistoryItem> {
+    const rows = await query<any>(
+      `SELECT id, school_id, status FROM notifications WHERE id = $1 AND school_id = $2`,
+      [notificationId, schoolId]
+    );
+
+    if (rows.length === 0) {
+      throw new NotFoundError('Notification record not found');
+    }
+
+    const updateSql = `
+      UPDATE notifications
+      SET 
+        status = $1,
+        failure_reason = CASE WHEN $1 = 'FAILED' THEN $2 ELSE failure_reason END,
+        delivered_at = CASE WHEN $1 IN ('DELIVERED', 'READ') AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
+        read_at = CASE WHEN $1 = 'READ' AND read_at IS NULL THEN NOW() ELSE read_at END
+      WHERE id = $3 AND school_id = $4
+      RETURNING id, channel, template_name, message_body, status, delivered_at, read_at, failure_reason, created_at
+    `;
+
+    const updatedRows = await query<any>(updateSql, [
+      dto.status,
+      dto.failureReason || null,
+      notificationId,
+      schoolId,
+    ]);
+
+    const n = updatedRows[0];
+
+    logger.info('Notification delivery status updated', {
+      schoolId,
+      notificationId,
+      status: dto.status,
+    });
+
+    return {
+      id: n.id,
+      channel: n.channel,
+      templateName: n.template_name,
+      messageBody: n.message_body,
+      status: n.status,
+      deliveredAt: n.delivered_at ? new Date(n.delivered_at).toISOString() : null,
+      readAt: n.read_at ? new Date(n.read_at).toISOString() : null,
+      failureReason: n.failure_reason || null,
+      createdAt: new Date(n.created_at).toISOString(),
     };
   }
 }
