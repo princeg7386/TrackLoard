@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   CreateStudentRequestSchema,
+  UpdateStudentRequestSchema,
   UpsertParentGuardianRequestSchema,
   AssignStudentTransportPayloadSchema,
   UserRole,
@@ -43,7 +44,15 @@ studentRouter.get(
   StudentController.listStudents
 );
 
-// 4. Get Single Student Details
+// 4. Get Student Transport Attendance History
+studentRouter.get(
+  '/:schoolId/students/:studentId/transport-history',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  StudentController.getTransportHistory
+);
+
+// 5. Get Single Student Details
 studentRouter.get(
   '/:schoolId/students/:studentId',
   authenticateToken,
@@ -51,7 +60,33 @@ studentRouter.get(
   StudentController.getStudent
 );
 
-// 5. Assign / Unassign Transport (Bus & Stops)
+// 6. Update Student Profile
+studentRouter.put(
+  '/:schoolId/students/:studentId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateStudentRequestSchema),
+  StudentController.updateStudent
+);
+
+// 7. Remove / Soft Delete Student
+studentRouter.delete(
+  '/:schoolId/students/:studentId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.SUPER_ADMIN
+  ),
+  StudentController.deleteStudent
+);
+
+// 8. Assign / Unassign Transport (Bus & Stops)
 studentRouter.put(
   '/:schoolId/students/:studentId/transport',
   authenticateToken,
@@ -64,6 +99,7 @@ studentRouter.put(
   validateBody(AssignStudentTransportPayloadSchema),
   StudentController.assignTransport
 );
+
 
 // 6. Get Parents / Guardians for a Student
 studentRouter.get(

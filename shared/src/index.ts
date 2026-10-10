@@ -604,6 +604,34 @@ export interface StudentWithDetails extends Student {
   parents?: ParentGuardianRecord[];
 }
 
+export interface StudentTransportHistoryItem {
+  id: string;
+  tripId: string;
+  eventType: 'BOARDED' | 'ABSENT' | 'DEBOARDED';
+  status: string;
+  markedBy: string;
+  recordedAt: string;
+  stopName: string;
+  stopSequence?: number | null;
+  busNumber?: string | null;
+  busRegistrationNumber?: string | null;
+  routeName?: string | null;
+  routeCode?: string | null;
+  scheduledDate?: string | null;
+}
+
+export interface StudentTransportHistoryResponse {
+  studentId: string;
+  summary: {
+    totalBoarded: number;
+    totalAbsent: number;
+    totalDeboarded: number;
+    lastRodeAt?: string | null;
+  };
+  history: StudentTransportHistoryItem[];
+}
+
+
 // 6. Parent (1:1 Direct Child Context)
 export const ParentSchema = z.object({
   id: z.string().uuid().optional(),

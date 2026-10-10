@@ -6,7 +6,9 @@ import {
   ParentGuardianRecord,
   RouteWithStopsOption,
   AssignStudentTransportPayload,
+  StudentTransportHistoryResponse,
 } from '@school-bus/shared';
+
 
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
@@ -230,4 +232,81 @@ export async function assignStudentTransport(
 
   return json.data;
 }
+
+/**
+ * Updates student demographic and academic profile
+ */
+export async function updateStudent(
+  schoolId: string,
+  studentId: string,
+  payload: UpdateStudentRequest
+): Promise<StudentWithDetails> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok || !json.success) {
+    const errorMsg = json.error?.message || json.message || 'Failed to update student.';
+    throw new Error(errorMsg);
+  }
+
+  return json.data;
+}
+
+/**
+ * Removes / soft-deletes a student from the directory
+ */
+export async function deleteStudent(
+  schoolId: string,
+  studentId: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok || !json.success) {
+    const errorMsg = json.error?.message || json.message || 'Failed to remove student.';
+    throw new Error(errorMsg);
+  }
+}
+
+/**
+ * Fetches student boarding and drop-off transport attendance history
+ */
+export async function fetchStudentTransportHistory(
+  schoolId: string,
+  studentId: string,
+  limit = 50
+): Promise<StudentTransportHistoryResponse | null> {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/schools/${schoolId}/students/${studentId}/transport-history?limit=${limit}`,
+      {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      }
+    );
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      return null;
+    }
+
+    const json = await res.json();
+    return json.data || null;
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return null;
+  }
+}
+
 

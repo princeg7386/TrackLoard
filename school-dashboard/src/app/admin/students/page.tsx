@@ -18,6 +18,10 @@ import { StudentListTable } from '../../../components/student/StudentListTable';
 import { CreateStudentModal } from '../../../components/student/CreateStudentModal';
 import { ManageParentModal } from '../../../components/student/ManageParentModal';
 import { AssignTransportModal } from '../../../components/student/AssignTransportModal';
+import { StudentDetailModal } from '../../../components/student/StudentDetailModal';
+import { EditStudentModal } from '../../../components/student/EditStudentModal';
+import { DeleteStudentDialog } from '../../../components/student/DeleteStudentDialog';
+import { StudentTransportHistoryModal } from '../../../components/student/StudentTransportHistoryModal';
 
 export default function StudentsDirectoryPage() {
   const { user } = useAuth();
@@ -30,9 +34,16 @@ export default function StudentsDirectoryPage() {
   const [selectedClassFilter, setSelectedClassFilter] = useState('ALL');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Modal active targets
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedStudentForParent, setSelectedStudentForParent] = useState<StudentWithDetails | null>(null);
   const [selectedStudentForTransport, setSelectedStudentForTransport] = useState<StudentWithDetails | null>(null);
+  const [selectedStudentForDetail, setSelectedStudentForDetail] = useState<StudentWithDetails | null>(null);
+  const [selectedStudentForEdit, setSelectedStudentForEdit] = useState<StudentWithDetails | null>(null);
+  const [selectedStudentForDelete, setSelectedStudentForDelete] = useState<StudentWithDetails | null>(null);
+  const [selectedStudentForHistory, setSelectedStudentForHistory] = useState<StudentWithDetails | null>(null);
+
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -96,6 +107,24 @@ export default function StudentsDirectoryPage() {
       prev.map((s) => (s.id === updatedStudent.id ? updatedStudent : s))
     );
     setSelectedStudentForTransport(null);
+  };
+
+  const handleStudentEdited = (updatedStudent: StudentWithDetails) => {
+    setStudents((prev) =>
+      prev.map((s) => (s.id === updatedStudent.id ? updatedStudent : s))
+    );
+    setSelectedStudentForEdit(null);
+    if (selectedStudentForDetail?.id === updatedStudent.id) {
+      setSelectedStudentForDetail(updatedStudent);
+    }
+  };
+
+  const handleStudentDeleted = (deletedId: string) => {
+    setStudents((prev) => prev.filter((s) => s.id !== deletedId));
+    setSelectedStudentForDelete(null);
+    if (selectedStudentForDetail?.id === deletedId) {
+      setSelectedStudentForDetail(null);
+    }
   };
 
   // Distinct classes for quick filter
@@ -239,9 +268,7 @@ export default function StudentsDirectoryPage() {
           onAddStudent={() => setIsCreateModalOpen(true)}
           onManageParent={(student) => setSelectedStudentForParent(student)}
           onAssignTransport={(student) => setSelectedStudentForTransport(student)}
-          onViewDetail={(student) => {
-            // Prepared for subsequent micro-phases
-          }}
+          onViewDetail={(student) => setSelectedStudentForDetail(student)}
         />
       </div>
 
@@ -270,7 +297,46 @@ export default function StudentsDirectoryPage() {
         onClose={() => setSelectedStudentForTransport(null)}
         onSuccess={handleTransportUpdated}
       />
+
+      {/* Student Comprehensive Detail Modal */}
+      <StudentDetailModal
+        student={selectedStudentForDetail}
+        isOpen={Boolean(selectedStudentForDetail)}
+        onClose={() => setSelectedStudentForDetail(null)}
+        onEdit={(student) => setSelectedStudentForEdit(student)}
+        onAssignTransport={(student) => setSelectedStudentForTransport(student)}
+        onManageParent={(student) => setSelectedStudentForParent(student)}
+        onViewHistory={(student) => setSelectedStudentForHistory(student)}
+        onDelete={(student) => setSelectedStudentForDelete(student)}
+      />
+
+      {/* Edit Student Modal */}
+      <EditStudentModal
+        schoolId={schoolId}
+        student={selectedStudentForEdit}
+        isOpen={Boolean(selectedStudentForEdit)}
+        onClose={() => setSelectedStudentForEdit(null)}
+        onSuccess={handleStudentEdited}
+      />
+
+      {/* Delete Student Dialog */}
+      <DeleteStudentDialog
+        schoolId={schoolId}
+        student={selectedStudentForDelete}
+        isOpen={Boolean(selectedStudentForDelete)}
+        onClose={() => setSelectedStudentForDelete(null)}
+        onSuccess={handleStudentDeleted}
+      />
+
+      {/* Student Transport History Modal */}
+      <StudentTransportHistoryModal
+        schoolId={schoolId}
+        student={selectedStudentForHistory}
+        isOpen={Boolean(selectedStudentForHistory)}
+        onClose={() => setSelectedStudentForHistory(null)}
+      />
     </div>
   );
 }
+
 

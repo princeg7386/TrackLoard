@@ -178,5 +178,75 @@ export class StudentController {
       next(error);
     }
   }
+
+  /**
+   * Updates student demographic and academic profile
+   * PUT /api/v1/schools/:schoolId/students/:studentId
+   */
+  public static async updateStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, studentId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const student = await StudentService.updateStudent(
+        schoolId,
+        studentId,
+        req.body,
+        userId,
+        ipAddress
+      );
+
+      res.status(200).json({
+        success: true,
+        data: student,
+        message: 'Student details updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Soft-deletes a student from the directory
+   * DELETE /api/v1/schools/:schoolId/students/:studentId
+   */
+  public static async deleteStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, studentId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      await StudentService.deleteStudent(schoolId, studentId, userId, ipAddress);
+
+      res.status(200).json({
+        success: true,
+        message: 'Student removed successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Retrieves transport attendance history (boarding/drop-off events) for a student
+   * GET /api/v1/schools/:schoolId/students/:studentId/transport-history
+   */
+  public static async getTransportHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, studentId } = req.params;
+      const limit = req.query.limit ? Number(req.query.limit) : 50;
+
+      const history = await StudentService.getStudentTransportHistory(schoolId, studentId, limit);
+
+      res.status(200).json({
+        success: true,
+        data: history,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
 

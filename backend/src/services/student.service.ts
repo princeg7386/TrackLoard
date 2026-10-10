@@ -7,6 +7,8 @@ import {
   ParentGuardianRecord,
   RouteWithStopsOption,
   StudentWithDetails,
+  StudentTransportHistoryResponse,
+  StudentTransportHistoryItem,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
 import {
@@ -785,4 +787,268 @@ export class StudentService {
       stops: stopsByRoute.get(r.id) || [],
     }));
   }
+
+  /**
+   * Updates student demographic and academic profile
+   */
+  public static async updateStudent(
+    schoolId: string,
+    studentId: string,
+    payload: UpdateStudentRequest,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<StudentWithDetails> {
+    // 1. Verify student exists in this school
+    const currentStudent = await this.getStudentById(schoolId, studentId);
+
+    const trimmedName = payload.fullName !== undefined ? payload.fullName.trim() : currentStudent.fullName;
+    const trimmedAdm = payload.admissionNumber !== undefined ? payload.admissionNumber.trim().toUpperCase() : currentStudent.admissionNumber;
+    const trimmedClass = payload.classGrade !== undefined ? payload.classGrade.trim() : currentStudent.classGrade;
+    const trimmedSec = payload.section !== undefined ? payload.section.trim().toUpperCase() : currentStudent.section;
+    const trimmedRoll = payload.rollNumber !== undefined ? (payload.rollNumber?.trim() || null) : currentStudent.rollNumber;
+    const cleanEmergencyPhone = payload.emergencyContactPhone !== undefined
+      ? (payload.emergencyContactPhone && payload.emergencyContactPhone.trim() ? normalizeIndianPhoneNumber(payload.emergencyContactPhone.trim()) : null)
+      : currentStudent.emergencyContactPhone;
+
+    // 2. Check admission number uniqueness if changed
+    if (trimmedAdm !== currentStudent.admissionNumber) {
+      const duplicateCheck = await query<{ id: string }>(
+        `SELECT id FROM students WHERE school_id = $1 AND admission_number = $2 AND id != $3 AND deleted_at IS NULL`,
+        [schoolId, trimmedAdm, studentId]
+      );
+      if (duplicateCheck.length > 0) {
+        throw new ConflictError(`Admission number '${trimmedAdm}' is already registered for another student in this school.`);
+      }
+    }
+
+    // 3. Update student record
+    const updateSql = `
+      UPDATE students
+      SET
+        full_name = $1,
+        admission_number = $2,
+        class_grade = $3,
+        section = $4,
+        roll_number = $5,
+        emergency_contact_phone = $6,
+        updated_at = NOW()
+      WHERE id = $7 AND school_id = $8 AND deleted_at IS NULL
+    `;
+    await query(updateSql, [
+      trimmedName,
+      trimmedAdm,
+      trimmedClass,
+      trimmedSec,
+      trimmedRoll,
+      cleanEmergencyPhone,
+      studentId,
+      schoolId,
+    ]);
+
+    // 4. Audit Log
+    await AuditService.log({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'STUDENT_UPDATED',
+      entityType: 'STUDENT',
+      entityId: studentId,
+      diffJson: {
+        before: {
+          fullName: currentStudent.fullName,
+          admissionNumber: currentStudent.admissionNumber,
+          classGrade: currentStudent.classGrade,
+          section: currentStudent.section,
+          rollNumber: currentStudent.rollNumber,
+          emergencyContactPhone: currentStudent.emergencyContactPhone,
+        },
+        after: {
+          fullName: trimmedName,
+          admissionNumber: trimmedAdm,
+          classGrade: trimmedClass,
+          section: trimmedSec,
+          rollNumber: trimmedRoll,
+          emergencyContactPhone: cleanEmergencyPhone,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Student details updated successfully', {
+      schoolId,
+      studentId,
+      updatedBy: userId,
+    });
+
+    return await this.getStudentById(schoolId, studentId);
+  }
+
+  /**
+   * Soft-deletes a student and cleans up transport allocations
+   */
+  public static async deleteStudent(
+    schoolId: string,
+    studentId: string,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<void> {
+    // 1. Verify student exists in this school
+    const current = await this.getStudentById(schoolId, studentId);
+
+    // 2. Transaction: soft delete student, remove transport stop assignments, delete parents
+    await DbService.withTransaction(async (client) => {
+      // Soft-delete student
+      await client.query(
+        `UPDATE students SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND school_id = $2`,
+        [studentId, schoolId]
+      );
+
+      // Remove transport allocation
+      await client.query(
+        `DELETE FROM student_stop_assignments WHERE student_id = $1 AND school_id = $2`,
+        [studentId, schoolId]
+      );
+
+      // Soft delete parents
+      await client.query(
+        `UPDATE parents SET deleted_at = NOW(), updated_at = NOW() WHERE student_id = $1 AND school_id = $2`,
+        [studentId, schoolId]
+      );
+    });
+
+    // 3. Audit Log
+    await AuditService.log({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'STUDENT_DELETED',
+      entityType: 'STUDENT',
+      entityId: studentId,
+      diffJson: {
+        deletedStudentName: current.fullName,
+        admissionNumber: current.admissionNumber,
+        classGrade: current.classGrade,
+        section: current.section,
+      },
+      ipAddress,
+    });
+
+    logger.info('Student deleted successfully', {
+      schoolId,
+      studentId,
+      deletedBy: userId,
+    });
+  }
+
+  /**
+   * Retrieves chronological transport history (boarding and drop-off events) for a student
+   */
+  public static async getStudentTransportHistory(
+    schoolId: string,
+    studentId: string,
+    limit = 50
+  ): Promise<StudentTransportHistoryResponse> {
+    // 1. Verify student exists in this school
+    await this.getStudentById(schoolId, studentId);
+
+    // 2. Query union of boarding and drop events
+    const historySql = `
+      SELECT 
+        be.id,
+        be.trip_id,
+        'BOARDED'::text AS event_type,
+        be.status,
+        be.marked_by,
+        be.recorded_at,
+        pl.stop_name,
+        pl.sequence_order AS stop_sequence,
+        b.bus_number,
+        b.registration_number AS bus_registration_number,
+        r.name AS route_name,
+        r.code AS route_code,
+        TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS scheduled_date
+      FROM boarding_events be
+      JOIN trips t ON t.id = be.trip_id AND t.school_id = $1
+      JOIN routes r ON r.id = t.route_id
+      JOIN buses b ON b.id = t.bus_id
+      JOIN pickup_locations pl ON pl.id = be.stop_id
+      WHERE be.student_id = $2
+      
+      UNION ALL
+      
+      SELECT 
+        de.id,
+        de.trip_id,
+        'DEBOARDED'::text AS event_type,
+        de.status,
+        de.marked_by,
+        de.recorded_at,
+        pl.stop_name,
+        pl.sequence_order AS stop_sequence,
+        b.bus_number,
+        b.registration_number AS bus_registration_number,
+        r.name AS route_name,
+        r.code AS route_code,
+        TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS scheduled_date
+      FROM drop_events de
+      JOIN trips t ON t.id = de.trip_id AND t.school_id = $1
+      JOIN routes r ON r.id = t.route_id
+      JOIN buses b ON b.id = t.bus_id
+      JOIN pickup_locations pl ON pl.id = de.stop_id
+      WHERE de.student_id = $2
+
+      ORDER BY recorded_at DESC
+      LIMIT $3
+    `;
+
+    const rows = await query<any>(historySql, [schoolId, studentId, limit]);
+
+    let totalBoarded = 0;
+    let totalAbsent = 0;
+    let totalDeboarded = 0;
+    let lastRodeAt: string | null = null;
+
+    const history: StudentTransportHistoryItem[] = rows.map((r, index) => {
+      if (index === 0) {
+        lastRodeAt = r.recorded_at ? new Date(r.recorded_at).toISOString() : null;
+      }
+      if (r.event_type === 'BOARDED') {
+        if (r.status === 'ABSENT') {
+          totalAbsent++;
+        } else {
+          totalBoarded++;
+        }
+      } else if (r.event_type === 'DEBOARDED') {
+        totalDeboarded++;
+      }
+
+      return {
+        id: r.id,
+        tripId: r.trip_id,
+        eventType: r.status === 'ABSENT' ? 'ABSENT' : (r.event_type as 'BOARDED' | 'DEBOARDED'),
+        status: r.status,
+        markedBy: r.marked_by,
+        recordedAt: r.recorded_at ? new Date(r.recorded_at).toISOString() : '',
+        stopName: r.stop_name,
+        stopSequence: r.stop_sequence !== null ? Number(r.stop_sequence) : null,
+        busNumber: r.bus_number,
+        busRegistrationNumber: r.bus_registration_number,
+        routeName: r.route_name,
+        routeCode: r.route_code,
+        scheduledDate: r.scheduled_date,
+      };
+    });
+
+    return {
+      studentId,
+      summary: {
+        totalBoarded,
+        totalAbsent,
+        totalDeboarded,
+        lastRodeAt,
+      },
+      history,
+    };
+  }
 }
+
