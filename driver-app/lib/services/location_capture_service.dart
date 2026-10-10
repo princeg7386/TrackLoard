@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import '../models/device_status_model.dart';
 import 'device_status_service.dart';
-import 'telemetry_queue_service.dart';
+import 'telemetry_upload_service.dart';
 
 /// Continuous Location Capture Engine capturing high-precision GPS, Speed, Accuracy, Battery and Network
 class LocationCaptureService {
@@ -11,7 +11,7 @@ class LocationCaptureService {
   LocationCaptureService._internal();
 
   final DeviceStatusService _deviceStatus = DeviceStatusService();
-  final TelemetryQueueService _queueService = TelemetryQueueService();
+  final TelemetryUploadService _uploadService = TelemetryUploadService();
 
   StreamSubscription<Position>? _positionStreamSub;
   bool _isCapturing = false;
@@ -33,6 +33,7 @@ class LocationCaptureService {
     _activeBusId = busId;
     _activeDriverId = driverId;
     _isCapturing = true;
+    _uploadService.reset();
 
     try {
       final isGpsEnabled = await Geolocator.isLocationServiceEnabled();
@@ -79,6 +80,7 @@ class LocationCaptureService {
     _activeDriverId = null;
     _positionStreamSub?.cancel();
     _positionStreamSub = null;
+    _uploadService.reset();
   }
 
   void _processLocationUpdate(Position pos) {
@@ -107,7 +109,7 @@ class LocationCaptureService {
 
     final speedKmh = (pos.speed * 3.6).clamp(0.0, 180.0);
 
-    _queueService.enqueuePing(
+    _uploadService.processAndUploadLocation(
       tripId: _activeTripId!,
       busId: _activeBusId!,
       driverId: _activeDriverId!,
@@ -116,7 +118,10 @@ class LocationCaptureService {
       speedKmh: speedKmh,
       bearingDegrees: pos.heading >= 0 ? pos.heading : null,
       accuracyMeters: pos.accuracy > 0 ? pos.accuracy : null,
-      recordedAt: pos.timestamp.toUtc().toIso8601String(),
+      batteryPercentage: snapshot.battery.levelPercentage,
+      isCharging: snapshot.battery.isCharging,
+      networkType: networkTypeStr,
+      timestamp: pos.timestamp,
     );
   }
 }

@@ -12,6 +12,7 @@ import { logger } from './logger.service.js';
 
 export interface TelemetryIngestResult {
   ingestedCount: number;
+  duplicatesSkipped: number;
   latestLocation: {
     tripId: string;
     busId: string;
@@ -28,7 +29,7 @@ export interface TelemetryIngestResult {
 
 export class TelemetryService {
   /**
-   * Ingest a single GPS location ping from mobile driver app
+   * Ingest a single GPS location ping from mobile driver app with idempotent deduplication
    */
   static async ingestLocation(
     payload: TelemetryIngestPayload,
@@ -66,7 +67,7 @@ export class TelemetryService {
       throw new ForbiddenError('Driver ID does not match the active trip assignment');
     }
 
-    // Insert into gps_locations
+    // Insert into gps_locations with ON CONFLICT (trip_id, recorded_at) DO NOTHING
     const resultRows = await query<{
       id: string;
       trip_id: string;
@@ -102,6 +103,11 @@ export class TelemetryService {
         ST_SetSRID(ST_MakePoint($5, $4), 4326),
         $6, $7, $8, $9, $10, $11, $12
       )
+      ON CONFLICT (trip_id, recorded_at) DO UPDATE
+      SET 
+        speed_kmh = EXCLUDED.speed_kmh,
+        battery_percentage = COALESCE(EXCLUDED.battery_percentage, gps_locations.battery_percentage),
+        network_type = COALESCE(EXCLUDED.network_type, gps_locations.network_type)
       RETURNING 
         id,
         trip_id as "tripId",
@@ -162,7 +168,7 @@ export class TelemetryService {
   }
 
   /**
-   * Ingest a batch of offline-buffered GPS telemetry pings
+   * Ingest a batch of offline-buffered GPS telemetry pings with deduplication
    */
   static async ingestBatch(
     locations: TelemetryIngestPayload[],
@@ -171,12 +177,22 @@ export class TelemetryService {
     if (locations.length === 0) {
       return {
         ingestedCount: 0,
+        duplicatesSkipped: 0,
         latestLocation: {} as any,
       };
     }
 
+    // Deduplicate on client-sent timestamps in memory first
+    const uniqueMap = new Map<string, TelemetryIngestPayload>();
+    for (const loc of locations) {
+      const key = `${loc.tripId}:${loc.recordedAt}`;
+      uniqueMap.set(key, loc);
+    }
+    const deduplicated = Array.from(uniqueMap.values());
+    const duplicatesSkipped = locations.length - deduplicated.length;
+
     // Sort chronologically
-    const sorted = [...locations].sort(
+    const sorted = [...deduplicated].sort(
       (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
     );
 
@@ -188,7 +204,7 @@ export class TelemetryService {
           throw new ForbiddenError('Driver ID in batch item does not match authenticated session');
         }
 
-        await client.query(
+        const res = await client.query(
           `INSERT INTO gps_locations (
             trip_id,
             bus_id,
@@ -207,7 +223,9 @@ export class TelemetryService {
             $1, $2, $3, $4, $5,
             ST_SetSRID(ST_MakePoint($5, $4), 4326),
             $6, $7, $8, $9, $10, $11, $12
-          );`,
+          )
+          ON CONFLICT (trip_id, recorded_at) DO NOTHING
+          RETURNING id;`,
           [
             loc.tripId,
             loc.busId,
@@ -223,7 +241,9 @@ export class TelemetryService {
             loc.recordedAt,
           ]
         );
-        ingestedCount++;
+        if (res.rowCount && res.rowCount > 0) {
+          ingestedCount++;
+        }
       }
     });
 
@@ -231,12 +251,15 @@ export class TelemetryService {
 
     logger.info('Batch GPS telemetry ingested successfully', {
       batchSize: locations.length,
+      ingestedCount,
+      duplicatesSkipped,
       tripId: latest.tripId,
       busId: latest.busId,
     });
 
     return {
       ingestedCount,
+      duplicatesSkipped,
       latestLocation: {
         tripId: latest.tripId,
         busId: latest.busId,
