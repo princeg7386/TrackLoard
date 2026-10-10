@@ -2,14 +2,20 @@ import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/app_formatters.dart';
 import '../models/assigned_trip.dart';
+import '../models/device_status_model.dart';
 import '../models/driver_profile.dart';
 import '../models/permission_status_model.dart';
+import '../models/trip_state_model.dart';
 import '../services/auth_service.dart';
+import '../services/device_status_service.dart';
 import '../services/permission_service.dart';
+import '../services/trip_status_service.dart';
+import '../widgets/active_trip_card.dart';
+import '../widgets/live_status_bar.dart';
 import 'login_screen.dart';
 import 'permissions_screen.dart';
 
-/// Driver Home Screen displaying Today's Bus, Today's Route, Permission Health, and Telemetry Status
+/// Driver Home Screen displaying Live Telemetry Status, Today's Bus, Active Trip & Scheduled Routes
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -20,6 +26,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final AuthService _authService = AuthService();
   final PermissionService _permissionService = PermissionService();
+  final DeviceStatusService _deviceStatusService = DeviceStatusService();
+  final TripStatusService _tripStatusService = TripStatusService();
 
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -34,20 +42,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _deviceStatusService.startMonitoring();
     _loadInitialData();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _deviceStatusService.stopMonitoring();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Automatically refresh permission health on return to foreground
       _checkPermissionsStatus();
+      _deviceStatusService.refresh();
     }
   }
 
@@ -70,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await Future.wait([
       _fetchProfile(),
       _checkPermissionsStatus(),
+      _deviceStatusService.refresh(),
     ]);
   }
 
@@ -85,6 +96,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _profileData = result.data;
         _errorMessage = null;
         _isOffline = false;
+
+        // Update active trip state in trip service
+        final activeTripMap = result.data!.activeTrip ??
+            (result.data!.todayTrips.isNotEmpty ? result.data!.todayTrips.first : null);
+        _tripStatusService.updateActiveTrip(activeTripMap);
       } else {
         _errorMessage = result.message;
         _isOffline = result.isOffline;
@@ -102,6 +118,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await Future.wait([
       _fetchProfile(),
       _checkPermissionsStatus(),
+      _deviceStatusService.refresh(),
     ]);
   }
 
@@ -118,6 +135,85 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       MaterialPageRoute(builder: (_) => const PermissionsScreen()),
     );
     _checkPermissionsStatus();
+    _deviceStatusService.refresh();
+  }
+
+  void _showTelemetryDiagnosticsSheet() {
+    final snapshot = _deviceStatusService.currentSnapshot;
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Telemetry Diagnostics',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            _buildDiagRow(
+              'GPS Coordinates',
+              snapshot.gps.latitude != null
+                  ? '${snapshot.gps.latitude!.toStringAsFixed(5)}, ${snapshot.gps.longitude!.toStringAsFixed(5)}'
+                  : 'Searching for Fix',
+            ),
+            _buildDiagRow('GPS Accuracy', snapshot.gps.accuracyLabel),
+            _buildDiagRow('Speedometer', snapshot.gps.speedLabel),
+            _buildDiagRow('Network Carrier / Type', snapshot.network.label),
+            _buildDiagRow(
+              'Battery Level & State',
+              '${snapshot.battery.batteryLabel} ${snapshot.battery.isCharging ? '(Charging ⚡)' : ''}',
+            ),
+            _buildDiagRow(
+              'Telemetry Readiness',
+              snapshot.isTelemetryHealthy ? 'Healthy & Transmitting' : 'Degraded',
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _openPermissionsFlow();
+                },
+                child: const Text('Configure Device Permissions'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDiagRow(String title, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(title, style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.textPrimary),
+          ),
+        ],
+      ),
+    );
   }
 
   void _confirmLogout() {
@@ -149,38 +245,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ],
       ),
     );
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status.toUpperCase()) {
-      case 'IN_TRANSIT':
-        return AppTheme.statusSuccess;
-      case 'DELAYED':
-        return AppTheme.statusWarning;
-      case 'COMPLETED':
-        return AppTheme.statusNeutral;
-      case 'CANCELLED':
-        return AppTheme.statusEmergency;
-      case 'SCHEDULED':
-      default:
-        return AppTheme.accentSky;
-    }
-  }
-
-  Color _getStatusBgColor(String status) {
-    switch (status.toUpperCase()) {
-      case 'IN_TRANSIT':
-        return AppTheme.statusSuccessLight;
-      case 'DELAYED':
-        return AppTheme.statusWarningLight;
-      case 'COMPLETED':
-        return AppTheme.statusNeutralLight;
-      case 'CANCELLED':
-        return AppTheme.statusEmergencyLight;
-      case 'SCHEDULED':
-      default:
-        return const Color(0xFFF0F9FF);
-    }
   }
 
   @override
@@ -228,13 +292,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Permission Warning Banner (if missing permissions)
+              // 1. TOP LIVE STATUS BAR (GPS, Network, Battery)
+              InkWell(
+                onTap: _showTelemetryDiagnosticsSheet,
+                borderRadius: BorderRadius.circular(8),
+                child: const LiveStatusBarWidget(),
+              ),
+
+              const SizedBox(height: 12),
+
+              // 2. Permission Warning Banner (if missing permissions)
               if (isPermIncomplete) ...[
                 _buildPermissionWarningBanner(),
                 const SizedBox(height: 12),
               ],
 
-              // 2. Offline or Error Banner
+              // 3. Offline or Error Banner
               if (_isOffline) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -249,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Offline Mode. Showing cached bus & route assignments.',
+                          'Offline Mode. Telemetry buffered locally; cached routes shown.',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -302,26 +375,50 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ),
               ] else ...[
-                // SECTION 1: TODAY'S ASSIGNED BUS
+                // SECTION 1: ACTIVE TRIP LIVE TRACKER (if active trip exists)
+                StreamBuilder<ActiveTripProgress?>(
+                  stream: _tripStatusService.tripStream,
+                  initialData: _tripStatusService.activeTrip,
+                  builder: (context, tripSnap) {
+                    final activeTrip = tripSnap.data;
+                    if (activeTrip != null) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildSectionHeader(
+                            activeTrip.isActive ? 'ACTIVE TRIP IN PROGRESS' : 'NEXT SCHEDULED TRIP',
+                            Icons.directions_bus_rounded,
+                          ),
+                          const SizedBox(height: 8),
+                          ActiveTripCard(trip: activeTrip),
+                          const SizedBox(height: 20),
+                        ],
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+
+                // SECTION 2: TODAY'S ASSIGNED BUS
                 _buildSectionHeader('TODAY\'S ASSIGNED BUS', Icons.directions_bus_filled_rounded),
                 const SizedBox(height: 8),
                 _buildAssignedBusCard(assignedBus),
 
                 const SizedBox(height: 20),
 
-                // SECTION 2: TODAY'S SCHEDULED ROUTE & TRIPS
-                _buildSectionHeader('TODAY\'S SCHEDULED ROUTES', Icons.alt_route_rounded),
+                // SECTION 3: ALL SCHEDULED TRIPS FOR TODAY
+                _buildSectionHeader('ALL SCHEDULED TRIPS', Icons.alt_route_rounded),
                 const SizedBox(height: 8),
                 _buildTodayRoutesCard(),
 
                 const SizedBox(height: 20),
 
-                // SECTION 3: WHATSAPP BOT QUICK OPERATIONS
+                // SECTION 4: WHATSAPP BOT QUICK OPERATIONS
                 _buildWhatsAppBotCard(),
 
                 const SizedBox(height: 20),
 
-                // SECTION 4: BACKGROUND TELEMETRY STATUS & PERMISSIONS
+                // SECTION 5: TELEMETRY SERVICE & DIAGNOSTICS LAUNCHER
                 _buildTelemetryStatusCard(),
 
                 const SizedBox(height: 24),
@@ -423,7 +520,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Widget _buildAssignedBusCard(DriverAssignedBus? bus) {
     if (bus == null) {
-      // Empty State: No Bus Assigned
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(20.0),
@@ -460,7 +556,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Bus Badge
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
@@ -477,7 +572,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 ),
-                // Status Badge
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
@@ -559,7 +653,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildTodayRoutesCard() {
     final tripsRaw = _profileData?.todayTrips ?? [];
     if (tripsRaw.isEmpty) {
-      // Empty State: No Trips Scheduled Today
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(20.0),
@@ -595,8 +688,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildTripItem(AssignedTrip trip) {
-    final statusColor = _getStatusColor(trip.status);
-    final statusBgColor = _getStatusBgColor(trip.status);
+    Color statusColor;
+    Color statusBgColor;
+
+    switch (trip.status.toUpperCase()) {
+      case 'IN_TRANSIT':
+        statusColor = AppTheme.statusSuccess;
+        statusBgColor = AppTheme.statusSuccessLight;
+        break;
+      case 'DELAYED':
+        statusColor = AppTheme.statusWarning;
+        statusBgColor = AppTheme.statusWarningLight;
+        break;
+      case 'COMPLETED':
+        statusColor = AppTheme.statusNeutral;
+        statusBgColor = AppTheme.statusNeutralLight;
+        break;
+      case 'CANCELLED':
+        statusColor = AppTheme.statusEmergency;
+        statusBgColor = AppTheme.statusEmergencyLight;
+        break;
+      case 'SCHEDULED':
+      default:
+        statusColor = AppTheme.accentSky;
+        statusBgColor = const Color(0xFFF0F9FF);
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -712,7 +828,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4), // Light WhatsApp Emerald
+        color: const Color(0xFFF0FDF4),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFBBF7D0)),
       ),
@@ -775,7 +891,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     return InkWell(
-      onTap: _openPermissionsFlow,
+      onTap: _showTelemetryDiagnosticsSheet,
       borderRadius: BorderRadius.circular(10),
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -814,7 +930,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 2),
                   Text(
                     isFullReady
-                        ? 'Background GPS service running optimal'
+                        ? 'Tap to view live telemetry diagnostics'
                         : (isGpsOff
                             ? 'Tap to enable device GPS hardware'
                             : 'Tap to configure location permissions'),
