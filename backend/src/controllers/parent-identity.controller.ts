@@ -234,5 +234,79 @@ export class ParentIdentityController {
       201
     );
   }
+
+  /**
+   * Generates and dispatches a verified WhatsApp onboarding invitation
+   */
+  public static async sendOnboardInvite(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const { schoolId, parentId } = req.params;
+    const { ttlHours, customNote } = req.body || {};
+    const adminUserId = req.user?.id || null;
+
+    const result = await ParentIdentityService.sendOnboardingInvite(
+      schoolId,
+      parentId,
+      {
+        ttlHours,
+        customNote,
+        adminUserId,
+      }
+    );
+
+    sendSuccess(
+      res,
+      result,
+      'WhatsApp onboarding invitation dispatched successfully',
+      201
+    );
+  }
+
+  /**
+   * Public endpoint to verify onboarding token and return structured status
+   */
+  public static async verifyOnboardToken(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const rawToken =
+      typeof req.query.token === 'string'
+        ? req.query.token
+        : typeof req.params.token === 'string'
+          ? req.params.token
+          : '';
+
+    const verification = await ParentIdentityService.verifyOnboardingToken(rawToken);
+
+    sendSuccess(
+      res,
+      verification,
+      'Onboarding token verified successfully'
+    );
+  }
+
+  /**
+   * Public endpoint to confirm parent identity & activate live tracking session
+   */
+  public static async confirmOnboard(
+    req: Request,
+    res: Response
+  ): Promise<void> {
+    const { token, phoneLast4 } = req.body;
+
+    const confirmation = await ParentIdentityService.confirmOnboardingActivation(
+      token,
+      phoneLast4
+    );
+
+    sendSuccess(
+      res,
+      confirmation,
+      'Live tracking portal activated successfully'
+    );
+  }
 }
+
 

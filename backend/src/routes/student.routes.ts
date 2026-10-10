@@ -114,6 +114,19 @@ studentRouter.post(
   ParentIdentityController.sendNotice
 );
 
+// 3g. Dispatch WhatsApp Onboarding Invitation to Parent
+studentRouter.post(
+  '/:schoolId/parents/:parentId/onboard',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  ParentIdentityController.sendOnboardInvite
+);
+
 // 4. Get Student Transport Attendance History
 studentRouter.get(
   '/:schoolId/students/:studentId/transport-history',

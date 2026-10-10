@@ -4,6 +4,7 @@ import {
   GenerateParentTokenRequestSchema,
   RevokeParentTokenRequestSchema,
   RevokeStudentTokensRequestSchema,
+  ParentOnboardConfirmRequestSchema,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { ParentIdentityController } from '../controllers/parent-identity.controller.js';
@@ -50,4 +51,17 @@ parentRouter.get(
   ParentIdentityController.getLiveTrackingSession
 );
 
+// 4. Public Onboarding Verification & Activation (Handles valid, expired, revoked, invalid)
+parentRouter.get(
+  '/onboard/verify',
+  ParentIdentityController.verifyOnboardToken
+);
+
+parentRouter.post(
+  '/onboard/confirm',
+  validateBody(ParentOnboardConfirmRequestSchema),
+  ParentIdentityController.confirmOnboard
+);
+
 export default parentRouter;
+

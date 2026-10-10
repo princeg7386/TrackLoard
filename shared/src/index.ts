@@ -748,6 +748,47 @@ export const SendParentNoticeRequestSchema = z.object({
 });
 export type SendParentNoticeRequest = z.infer<typeof SendParentNoticeRequestSchema>;
 
+export interface ParentOnboardInviteResponse {
+  token: string;
+  tokenPrefix: string;
+  expiresAt: string;
+  inviteUrl: string;
+  messageBody: string;
+  notificationId: string;
+  parent: {
+    id: string;
+    fullName: string;
+    phone: string;
+  };
+  student: {
+    id: string;
+    fullName: string;
+    admissionNumber: string;
+  };
+}
+
+export interface ParentOnboardVerificationResponse {
+  status: 'VALID' | 'EXPIRED' | 'REVOKED' | 'INVALID';
+  errorCode?: 'TOKEN_EXPIRED' | 'TOKEN_REVOKED' | 'TOKEN_INVALID' | 'STUDENT_UNASSIGNED';
+  errorMessage?: string;
+  session?: ParentLiveTrackingSession | null;
+  phoneLast4?: string;
+  supportPhone?: string;
+}
+
+export const ParentOnboardConfirmRequestSchema = z.object({
+  token: z.string().min(1, 'Tracking token is required'),
+  phoneLast4: z.string().length(4, 'Last 4 digits of phone number required').optional(),
+});
+export type ParentOnboardConfirmRequest = z.infer<typeof ParentOnboardConfirmRequestSchema>;
+
+export interface ParentOnboardConfirmResponse {
+  confirmed: boolean;
+  activatedAt: string;
+  session: ParentLiveTrackingSession;
+}
+
+
 
 
 /**

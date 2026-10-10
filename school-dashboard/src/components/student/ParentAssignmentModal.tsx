@@ -22,11 +22,14 @@ import {
   KeyRound,
   FileText,
   Calendar,
+  Copy,
+  Check,
 } from 'lucide-react';
 import {
   ParentRecordWithStudent,
   ParentAssignmentDetails,
   ParentCommunicationItem,
+  ParentOnboardInviteResponse,
   StudentWithDetails,
 } from '@school-bus/shared';
 import {
@@ -34,6 +37,7 @@ import {
   relinkParentStudent,
   fetchParentCommunicationHistory,
   sendParentNotice,
+  sendParentOnboardInvite,
   fetchStudents,
 } from '../../services/studentApi';
 import { EmptyState } from '../ui/EmptyState';
@@ -79,6 +83,36 @@ export function ParentAssignmentModal({
   const [noticeMessage, setNoticeMessage] = useState('');
   const [isSendingNotice, setIsSendingNotice] = useState(false);
   const [sendNoticeSuccess, setSendNoticeSuccess] = useState<string | null>(null);
+
+  // WhatsApp Onboarding Invite workflow
+  const [isSendingInvite, setIsSendingInvite] = useState(false);
+  const [inviteResult, setInviteResult] = useState<ParentOnboardInviteResponse | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  const handleSendOnboardingInvite = async () => {
+    if (!parent) return;
+    setIsSendingInvite(true);
+    setErrorMessage(null);
+
+    try {
+      const res = await sendParentOnboardInvite(schoolId, parent.id, { ttlHours: 72 });
+      setInviteResult(res);
+      loadAssignmentAndHistory();
+      loadCommunications();
+      if (onAssignmentUpdated) onAssignmentUpdated();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to dispatch onboarding invitation.');
+    } finally {
+      setIsSendingInvite(false);
+    }
+  };
+
+  const handleCopyInviteLink = (url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
+
 
   const loadAssignmentAndHistory = useCallback(async () => {
     if (!parent) return;
@@ -549,7 +583,7 @@ export function ParentAssignmentModal({
                       )}
                     </div>
 
-                    <div className="bg-white p-3 rounded-md border border-slate-200 text-xs space-y-2">
+                    <div className="bg-white p-3 rounded-md border border-slate-200 text-xs space-y-3">
                       {details.activeTrackingToken && !details.activeTrackingToken.isRevoked ? (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
@@ -573,13 +607,67 @@ export function ParentAssignmentModal({
                       ) : (
                         <div className="text-slate-500 text-xs flex items-center justify-between">
                           <span>No live tracking token is currently active. Dispatch an invite to generate one.</span>
-                          <button
-                            type="button"
-                            onClick={() => setActiveTab('send_notice')}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded text-[11px] shadow-2xs"
-                          >
-                            Send Invite
-                          </button>
+                        </div>
+                      )}
+
+                      {/* Onboarding invite dispatch button */}
+                      <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                        <span className="text-[11px] text-slate-500">
+                          {details.activeTrackingToken ? 'Link active (72h validity)' : 'Parent onboarding pending'}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={handleSendOnboardingInvite}
+                          disabled={isSendingInvite || !parent.phone}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded text-xs shadow-2xs transition-colors"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>{isSendingInvite ? 'Sending...' : 'Send WhatsApp Onboarding Invite'}</span>
+                        </button>
+                      </div>
+
+                      {/* Invite Result & Copy Link Banner */}
+                      {inviteResult && (
+                        <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-md space-y-2 text-xs">
+                          <div className="flex items-center gap-1.5 text-emerald-900 font-semibold text-[11px]">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>WhatsApp Invitation Dispatched Successfully</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              readOnly
+                              value={inviteResult.inviteUrl}
+                              className="flex-1 px-2.5 py-1 text-xs bg-white border border-emerald-300 rounded font-mono text-slate-700"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleCopyInviteLink(inviteResult.inviteUrl)}
+                              className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded text-xs font-semibold flex items-center gap-1 shrink-0"
+                            >
+                              {copiedLink ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span>Copied</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Copy className="w-3 h-3 text-slate-500" />
+                                  <span>Copy Link</span>
+                                </>
+                              )}
+                            </button>
+                            <a
+                              href={inviteResult.inviteUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded"
+                              title="Test Live Parent View"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
                         </div>
                       )}
                     </div>

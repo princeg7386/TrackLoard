@@ -11,6 +11,9 @@ import {
   ParentAssignmentDetails,
   ParentCommunicationItem,
   SendParentNoticeRequest,
+  ParentOnboardInviteResponse,
+  ParentOnboardVerificationResponse,
+  ParentOnboardConfirmResponse,
 } from '@school-bus/shared';
 
 
@@ -469,6 +472,92 @@ export async function sendParentNotice(
   const json = await res.json();
   return json.data;
 }
+
+/**
+ * Dispatches a WhatsApp onboarding invitation with secure tracking link to a parent
+ */
+export async function sendParentOnboardInvite(
+  schoolId: string,
+  parentId: string,
+  options?: { ttlHours?: number; customNote?: string }
+): Promise<ParentOnboardInviteResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/parents/${parentId}/onboard`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(options || {}),
+    }
+  );
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Failed to dispatch WhatsApp invite (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
+/**
+ * Public method to verify an onboarding / tracking token
+ */
+export async function verifyOnboardToken(
+  token: string
+): Promise<ParentOnboardVerificationResponse> {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/parent/onboard/verify?token=${encodeURIComponent(token)}`,
+      {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+
+    if (!res.ok) {
+      return {
+        status: 'INVALID',
+        errorCode: 'TOKEN_INVALID',
+        errorMessage: 'Unable to verify tracking link',
+      };
+    }
+
+    const json = await res.json();
+    return json.data;
+  } catch {
+    return {
+      status: 'INVALID',
+      errorCode: 'TOKEN_INVALID',
+      errorMessage: 'Network error communicating with school tracking server',
+    };
+  }
+}
+
+/**
+ * Public method to confirm parent identity and activate live tracking portal
+ */
+export async function confirmOnboardActivation(payload: {
+  token: string;
+  phoneLast4?: string;
+}): Promise<ParentOnboardConfirmResponse> {
+  const res = await fetch(`${API_BASE_URL}/parent/onboard/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson.message || `Activation failed (${res.status})`);
+  }
+
+  const json = await res.json();
+  return json.data;
+}
+
 
 
 

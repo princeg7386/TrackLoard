@@ -9,6 +9,9 @@ import {
   ParentAssignmentDetails,
   ParentCommunicationItem,
   SendParentNoticeRequest,
+  ParentOnboardInviteResponse,
+  ParentOnboardVerificationResponse,
+  ParentOnboardConfirmResponse,
   normalizeIndianPhoneNumber,
   TripStatus,
   RouteType,
@@ -1115,6 +1118,283 @@ export class ParentIdentityService {
       createdAt: new Date(row.created_at).toISOString(),
     };
   }
+
+  /**
+   * Generates and dispatches a verified WhatsApp onboarding invitation for a parent
+   */
+  public static async sendOnboardingInvite(
+    schoolId: string,
+    parentId: string,
+    options?: {
+      ttlHours?: number;
+      customNote?: string;
+      adminUserId?: string | null;
+    }
+  ): Promise<ParentOnboardInviteResponse> {
+    const parentSql = `
+      SELECT 
+        p.id AS parent_id,
+        p.full_name AS parent_name,
+        p.phone AS parent_phone,
+        p.relationship,
+        s.id AS student_id,
+        s.full_name AS student_name,
+        s.admission_number,
+        sch.id AS school_id,
+        sch.name AS school_name,
+        b.bus_number,
+        pl.stop_name
+      FROM parents p
+      JOIN students s ON p.student_id = s.id AND s.deleted_at IS NULL
+      JOIN schools sch ON p.school_id = sch.id
+      LEFT JOIN student_stop_assignments ssa ON s.id = ssa.student_id AND ssa.deleted_at IS NULL
+      LEFT JOIN pickup_locations pl ON ssa.pickup_stop_id = pl.id AND pl.deleted_at IS NULL
+      LEFT JOIN routes r ON pl.route_id = r.id AND r.deleted_at IS NULL
+      LEFT JOIN buses b ON r.default_bus_id = b.id AND b.deleted_at IS NULL
+      WHERE p.id = $1 AND p.school_id = $2
+    `;
+
+    const parentRows = await query<any>(parentSql, [parentId, schoolId]);
+
+    if (parentRows.length === 0) {
+      throw new NotFoundError('Parent record not found under this school');
+    }
+
+    const row = parentRows[0];
+
+    if (!row.parent_phone || !row.parent_phone.trim()) {
+      throw new ValidationError('Cannot dispatch onboarding invite: parent does not have a registered mobile number');
+    }
+
+    const ttlHours = options?.ttlHours && options.ttlHours > 0 ? options.ttlHours : 72;
+
+    // Generate cryptographically secure tracking token
+    const tokenData = await this.createTrackingToken({
+      parentId: row.parent_id,
+      studentId: row.student_id,
+      schoolId: row.school_id,
+      ttlHours,
+      purpose: 'WELCOME_ONBOARDING',
+    });
+
+    const parentWebBase = process.env.PARENT_WEB_URL || 'http://localhost:3000';
+    const inviteUrl = `${parentWebBase}/track?token=${tokenData.token}`;
+
+    const busSnippet = row.bus_number ? ` on Bus ${row.bus_number}` : '';
+    const stopSnippet = row.stop_name ? ` (Pickup: ${row.stop_name})` : '';
+
+    const messageBody = `Namaste ${row.parent_name}! Welcome to ${row.school_name} live school bus tracking.
+
+Live safety tracking is active for ${row.student_name} (${row.admission_number})${busSnippet}${stopSnippet}.
+
+Tap your secure one-click tracking link to start viewing live bus location:
+${inviteUrl}
+
+(Secure token expires in ${ttlHours} hours. No native app download required.)`;
+
+    const mockProviderId = `wa_onboard_${crypto.randomUUID().slice(0, 12)}`;
+
+    const notifSql = `
+      INSERT INTO notifications (
+        school_id,
+        recipient_phone,
+        recipient_role,
+        channel,
+        template_name,
+        message_body,
+        status,
+        provider_message_id,
+        created_at
+      ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', 'WELCOME_ONBOARDING', $3, 'SENT', $4, NOW())
+      RETURNING id
+    `;
+
+    const notifRows = await query<any>(notifSql, [
+      schoolId,
+      row.parent_phone,
+      messageBody,
+      mockProviderId,
+    ]);
+
+    const notificationId = notifRows[0].id;
+
+    // Record audit log
+    await AuditService.logAction({
+      schoolId,
+      userId: options?.adminUserId || null,
+      action: 'PARENT_ONBOARDING_INVITE_SENT',
+      entityType: 'PARENT',
+      entityId: parentId,
+      diffJson: {
+        tokenPrefix: tokenData.tokenPrefix,
+        expiresAt: tokenData.expiresAt,
+        phone: row.parent_phone,
+        notificationId,
+      },
+    });
+
+    logger.info('WhatsApp onboarding invite dispatched to parent', {
+      schoolId,
+      parentId,
+      phone: row.parent_phone,
+      tokenPrefix: tokenData.tokenPrefix,
+    });
+
+    return {
+      token: tokenData.token,
+      tokenPrefix: tokenData.tokenPrefix,
+      expiresAt: tokenData.expiresAt,
+      inviteUrl,
+      messageBody,
+      notificationId,
+      parent: {
+        id: row.parent_id,
+        fullName: row.parent_name,
+        phone: row.parent_phone,
+      },
+      student: {
+        id: row.student_id,
+        fullName: row.student_name,
+        admissionNumber: row.admission_number,
+      },
+    };
+  }
+
+  /**
+   * Verifies an onboarding / tracking token and returns structured status
+   * (Handles valid, expired, revoked, and invalid tokens gracefully)
+   */
+  public static async verifyOnboardingToken(
+    rawToken: string
+  ): Promise<ParentOnboardVerificationResponse> {
+    if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
+      return {
+        status: 'INVALID',
+        errorCode: 'TOKEN_INVALID',
+        errorMessage: 'Tracking token is missing or malformed',
+        session: null,
+      };
+    }
+
+    const tokenHash = this.hashToken(rawToken);
+
+    const tokenRows = await query<any>(
+      `
+      SELECT 
+        ptt.id AS token_id,
+        ptt.school_id,
+        ptt.parent_id,
+        ptt.student_id,
+        ptt.trip_id,
+        ptt.purpose,
+        ptt.expires_at,
+        ptt.revoked_at,
+        ptt.deleted_at
+      FROM parent_tracking_tokens ptt
+      WHERE ptt.token_hash = $1
+      `,
+      [tokenHash]
+    );
+
+    if (tokenRows.length === 0 || tokenRows[0].deleted_at) {
+      return {
+        status: 'INVALID',
+        errorCode: 'TOKEN_INVALID',
+        errorMessage: 'Invalid tracking link or link does not exist in our system',
+        session: null,
+      };
+    }
+
+    const token = tokenRows[0];
+
+    // Check revocation
+    if (token.revoked_at) {
+      return {
+        status: 'REVOKED',
+        errorCode: 'TOKEN_REVOKED',
+        errorMessage: 'This live tracking link has been revoked by school transport administration',
+        session: null,
+      };
+    }
+
+    // Check expiration
+    const expiresAt = new Date(token.expires_at);
+    if (expiresAt.getTime() <= Date.now()) {
+      return {
+        status: 'EXPIRED',
+        errorCode: 'TOKEN_EXPIRED',
+        errorMessage: 'This live tracking link has expired. Please request a new invite link from the school.',
+        session: null,
+      };
+    }
+
+    // Valid token - retrieve full live session
+    try {
+      const session = await this.verifyTrackingToken(rawToken);
+      const cleanPhone = session.parent.phone.replace(/[^0-9]/g, '');
+      const phoneLast4 = cleanPhone.slice(-4);
+
+      return {
+        status: 'VALID',
+        session,
+        phoneLast4,
+      };
+    } catch (err: any) {
+      return {
+        status: 'INVALID',
+        errorCode: 'TOKEN_INVALID',
+        errorMessage: err.message || 'Unable to retrieve tracking session',
+        session: null,
+      };
+    }
+  }
+
+  /**
+   * Confirms parent identity and activation of live tracking portal
+   */
+  public static async confirmOnboardingActivation(
+    rawToken: string,
+    phoneLast4?: string
+  ): Promise<ParentOnboardConfirmResponse> {
+    const verification = await this.verifyOnboardingToken(rawToken);
+
+    if (verification.status !== 'VALID' || !verification.session) {
+      throw new UnauthorizedError(verification.errorMessage || 'Invalid or expired tracking token');
+    }
+
+    const session = verification.session;
+
+    if (phoneLast4 && phoneLast4.trim()) {
+      const cleanPhone = session.parent.phone.replace(/[^0-9]/g, '');
+      const actualLast4 = cleanPhone.slice(-4);
+
+      if (phoneLast4.trim() !== actualLast4) {
+        throw new ValidationError('Mobile number verification failed: the last 4 digits do not match');
+      }
+    }
+
+    // Log confirmation notification
+    const confirmMsg = `Parent ${session.parent.fullName} activated live tracking for ${session.student.fullName} (${session.student.admissionNumber}).`;
+    await query(
+      `INSERT INTO notifications (
+        school_id, recipient_phone, recipient_role, channel, template_name, message_body, status, created_at
+      ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', 'ONBOARDING_CONFIRMED', $3, 'SENT', NOW())`,
+      [session.school.id, session.parent.phone, confirmMsg]
+    );
+
+    logger.info('Parent tracking portal onboarding confirmed', {
+      schoolId: session.school.id,
+      parentId: session.parent.id,
+      studentId: session.student.id,
+    });
+
+    return {
+      confirmed: true,
+      activatedAt: new Date().toISOString(),
+      session,
+    };
+  }
 }
+
 
 
