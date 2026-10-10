@@ -1,6 +1,10 @@
 import {
   BusWithDriver,
   BusDetailView,
+  BusTripHistoryItem,
+  BusIncidentHistoryItem,
+  BusAttendanceHistoryResponse,
+  BusFullHistoryResponse,
   CreateBusRequest,
   UpdateBusRequest,
   AssignBusPayload,
@@ -224,3 +228,114 @@ export async function fetchAvailableRoutes(schoolId: string): Promise<Route[]> {
     return [];
   }
 }
+
+/**
+ * Fetches consolidated vehicle history (Bus details, Trips, Incidents, Attendance)
+ */
+export async function fetchBusFullHistory(
+  schoolId: string,
+  busId: string
+): Promise<BusFullHistoryResponse> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/buses/${busId}/history`, {
+    method: 'GET',
+    headers: getAuthHeaders(),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to fetch bus history (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
+/**
+ * Fetches trip history for a bus
+ */
+export async function fetchBusTripHistory(
+  schoolId: string,
+  busId: string,
+  limit = 50,
+  offset = 0
+): Promise<BusTripHistoryItem[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/buses/${busId}/history/trips?limit=${limit}&offset=${offset}`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    }
+  );
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to fetch trip history (HTTP ${res.status})`);
+  }
+
+  return json.data || [];
+}
+
+/**
+ * Fetches safety incident and SOS alert history for a bus
+ */
+export async function fetchBusIncidentHistory(
+  schoolId: string,
+  busId: string,
+  limit = 50,
+  offset = 0
+): Promise<BusIncidentHistoryItem[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/buses/${busId}/history/incidents?limit=${limit}&offset=${offset}`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    }
+  );
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to fetch incident history (HTTP ${res.status})`);
+  }
+
+  return json.data || [];
+}
+
+/**
+ * Fetches attendance history and student boarding records for a bus
+ */
+export async function fetchBusAttendanceHistory(
+  schoolId: string,
+  busId: string,
+  limit = 50
+): Promise<BusAttendanceHistoryResponse> {
+  const res = await fetch(
+    `${API_BASE_URL}/schools/${schoolId}/buses/${busId}/history/attendance?limit=${limit}`,
+    {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    }
+  );
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to fetch attendance history (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+

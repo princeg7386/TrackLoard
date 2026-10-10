@@ -176,4 +176,101 @@ export class BusController {
       next(error);
     }
   }
+
+  /**
+   * Retrieves full vehicle history (Bus details, Trips, Incidents, Attendance)
+   * GET /api/v1/schools/:schoolId/buses/:busId/history
+   */
+  public static async getBusHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const history = await BusService.getBusFullHistory(schoolId, busId);
+
+      res.status(200).json({
+        success: true,
+        data: history,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Retrieves paginated trip history for a vehicle
+   * GET /api/v1/schools/:schoolId/buses/:busId/history/trips
+   */
+  public static async getBusTripHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const limit = Number(req.query.limit) || 50;
+      const offset = Number(req.query.offset) || 0;
+
+      const trips = await BusService.getBusTripHistory(schoolId, busId, limit, offset);
+
+      res.status(200).json({
+        success: true,
+        data: trips,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Retrieves combined safety incident and emergency SOS history for a vehicle
+   * GET /api/v1/schools/:schoolId/buses/:busId/history/incidents
+   */
+  public static async getBusIncidentHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const limit = Number(req.query.limit) || 50;
+      const offset = Number(req.query.offset) || 0;
+
+      const incidents = await BusService.getBusIncidentHistory(schoolId, busId, limit, offset);
+
+      res.status(200).json({
+        success: true,
+        data: incidents,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Retrieves attendance summaries and student boarding records for a vehicle
+   * GET /api/v1/schools/:schoolId/buses/:busId/history/attendance
+   */
+  public static async getBusAttendanceHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const limit = Number(req.query.limit) || 50;
+
+      const attendance = await BusService.getBusAttendanceHistory(schoolId, busId, limit);
+
+      res.status(200).json({
+        success: true,
+        data: attendance,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

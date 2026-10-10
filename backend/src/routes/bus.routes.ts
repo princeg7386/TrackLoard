@@ -95,4 +95,37 @@ busRouter.get(
   BusController.listRoutes
 );
 
+// 9. Full Vehicle History (Bus profile, trips, safety incidents, attendance)
+busRouter.get(
+  '/:schoolId/buses/:busId/history',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  BusController.getBusHistory
+);
+
+// 10. Vehicle Trip History
+busRouter.get(
+  '/:schoolId/buses/:busId/history/trips',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  BusController.getBusTripHistory
+);
+
+// 11. Vehicle Safety Incidents & SOS History
+busRouter.get(
+  '/:schoolId/buses/:busId/history/incidents',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  BusController.getBusIncidentHistory
+);
+
+// 12. Vehicle Attendance History & Student Records
+busRouter.get(
+  '/:schoolId/buses/:busId/history/attendance',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  BusController.getBusAttendanceHistory
+);
+
 export default busRouter;
+

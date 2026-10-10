@@ -11,6 +11,7 @@ import { AssignBusModal } from '../../../components/bus/AssignBusModal';
 import { BusDetailModal } from '../../../components/bus/BusDetailModal';
 import { EditBusModal } from '../../../components/bus/EditBusModal';
 import { DeleteBusDialog } from '../../../components/bus/DeleteBusDialog';
+import { BusHistoryModal } from '../../../components/bus/BusHistoryModal';
 
 export default function FleetBusesPage() {
   const { user } = useAuth();
@@ -30,6 +31,7 @@ export default function FleetBusesPage() {
   const [selectedBusForAssign, setSelectedBusForAssign] = useState<BusWithDriver | null>(null);
   const [selectedBusForEdit, setSelectedBusForEdit] = useState<BusWithDriver | null>(null);
   const [selectedBusForDelete, setSelectedBusForDelete] = useState<BusWithDriver | null>(null);
+  const [selectedBusForHistory, setSelectedBusForHistory] = useState<BusWithDriver | null>(null);
 
   useEffect(() => {
     if (user?.schoolId) {
@@ -192,6 +194,7 @@ export default function FleetBusesPage() {
           onManageAssignments={(bus) => setSelectedBusForAssign(bus)}
           onEditBus={(bus) => setSelectedBusForEdit(bus)}
           onDeleteBus={(bus) => setSelectedBusForDelete(bus)}
+          onViewHistory={(bus) => setSelectedBusForHistory(bus)}
         />
       </div>
 
@@ -221,6 +224,10 @@ export default function FleetBusesPage() {
           setSelectedBusForDetail(null);
           setSelectedBusForDelete(bus);
         }}
+        onViewHistory={(bus) => {
+          setSelectedBusForDetail(null);
+          setSelectedBusForHistory(bus);
+        }}
       />
 
       {/* 3. Assign Driver & Route Modal */}
@@ -248,6 +255,14 @@ export default function FleetBusesPage() {
         isOpen={!!selectedBusForDelete}
         onClose={() => setSelectedBusForDelete(null)}
         onSuccess={handleBusDeleted}
+      />
+
+      {/* 6. Vehicle History & Audit Modal */}
+      <BusHistoryModal
+        schoolId={schoolId}
+        bus={selectedBusForHistory}
+        isOpen={!!selectedBusForHistory}
+        onClose={() => setSelectedBusForHistory(null)}
       />
     </div>
   );

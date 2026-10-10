@@ -11,6 +11,7 @@ import {
   Eye,
   Edit2,
   Trash2,
+  History,
 } from 'lucide-react';
 import { BusWithDriver } from '@school-bus/shared';
 import { EmptyState } from '../ui/EmptyState';
@@ -23,6 +24,7 @@ interface BusListTableProps {
   onManageAssignments: (bus: BusWithDriver) => void;
   onEditBus: (bus: BusWithDriver) => void;
   onDeleteBus: (bus: BusWithDriver) => void;
+  onViewHistory: (bus: BusWithDriver) => void;
 }
 
 export function BusListTable({
@@ -33,6 +35,7 @@ export function BusListTable({
   onManageAssignments,
   onEditBus,
   onDeleteBus,
+  onViewHistory,
 }: BusListTableProps) {
   if (isLoading) {
     return (
@@ -170,6 +173,14 @@ export function BusListTable({
                     className="p-1 text-slate-500 hover:text-sky-700 hover:bg-sky-50 rounded transition-colors"
                   >
                     <Eye className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onViewHistory(bus)}
+                    title="View Trip & Safety History"
+                    className="p-1 text-slate-500 hover:text-sky-700 hover:bg-sky-50 rounded transition-colors"
+                  >
+                    <History className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"

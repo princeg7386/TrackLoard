@@ -17,6 +17,7 @@ import {
   Trash2,
   Settings2,
   Activity,
+  History,
 } from 'lucide-react';
 import { BusDetailView } from '@school-bus/shared';
 import { fetchBusDetail } from '../../services/busApi';
@@ -29,6 +30,7 @@ interface BusDetailModalProps {
   onEdit: (bus: BusDetailView) => void;
   onManageAssignments: (bus: BusDetailView) => void;
   onDelete: (bus: BusDetailView) => void;
+  onViewHistory: (bus: BusDetailView) => void;
 }
 
 export function BusDetailModal({
@@ -39,6 +41,7 @@ export function BusDetailModal({
   onEdit,
   onManageAssignments,
   onDelete,
+  onViewHistory,
 }: BusDetailModalProps) {
   const [busDetail, setBusDetail] = useState<BusDetailView | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -422,6 +425,14 @@ export function BusDetailModal({
             </button>
 
             <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => onViewHistory(busDetail)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-sky-700 bg-white hover:bg-slate-100 border border-slate-300 rounded-md shadow-2xs transition-colors"
+              >
+                <History className="w-3.5 h-3.5 text-slate-500" />
+                History & Audits
+              </button>
               <button
                 type="button"
                 onClick={() => onEdit(busDetail)}

@@ -7,6 +7,12 @@ import {
   BusDetailView,
   BusCurrentLocation,
   BusCurrentTrip,
+  BusTripHistoryItem,
+  BusIncidentHistoryItem,
+  BusAttendanceSummaryItem,
+  BusAttendanceRecordItem,
+  BusAttendanceHistoryResponse,
+  BusFullHistoryResponse,
   Driver,
   Route,
   normalizeIndianRegistrationNumber,
@@ -697,4 +703,307 @@ export class BusService {
     `;
     return await query<Route>(sql, [schoolId]);
   }
+
+  /**
+   * Retrieves paginated trip history for a bus
+   */
+  public static async getBusTripHistory(
+    schoolId: string,
+    busId: string,
+    limit = 50,
+    offset = 0
+  ): Promise<BusTripHistoryItem[]> {
+    // Verify vehicle belongs to school tenant
+    await this.getBusById(schoolId, busId);
+
+    const sql = `
+      SELECT 
+        t.id,
+        t.school_id AS "schoolId",
+        t.route_id AS "routeId",
+        r.name AS "routeName",
+        r.code AS "routeCode",
+        r.route_type AS "routeType",
+        t.driver_id AS "driverId",
+        d.full_name AS "driverName",
+        d.phone AS "driverPhone",
+        t.status,
+        TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS "scheduledDate",
+        t.scheduled_start_time AS "scheduledStartTime",
+        t.actual_start_time AS "actualStartTime",
+        t.actual_end_time AS "actualEndTime",
+        t.current_stop_sequence AS "currentStopSequence",
+        t.delay_minutes AS "delayMinutes",
+        COALESCE(b_count.boarded_count, 0)::int AS "totalBoarded"
+      FROM trips t
+      JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+      JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+      LEFT JOIN (
+        SELECT trip_id, COUNT(DISTINCT student_id) AS boarded_count
+        FROM boarding_events
+        WHERE status = 'BOARDED'
+        GROUP BY trip_id
+      ) b_count ON b_count.trip_id = t.id
+      WHERE t.bus_id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+      ORDER BY t.scheduled_date DESC, t.scheduled_start_time DESC
+      LIMIT $3 OFFSET $4
+    `;
+
+    const rows = await query<any>(sql, [busId, schoolId, limit, offset]);
+
+    return rows.map((r) => ({
+      id: r.id,
+      schoolId: r.schoolId,
+      routeId: r.routeId,
+      routeName: r.routeName,
+      routeCode: r.routeCode,
+      routeType: r.routeType,
+      driverId: r.driverId,
+      driverName: r.driverName,
+      driverPhone: r.driverPhone,
+      status: r.status,
+      scheduledDate: r.scheduledDate,
+      scheduledStartTime: new Date(r.scheduledStartTime).toISOString(),
+      actualStartTime: r.actualStartTime ? new Date(r.actualStartTime).toISOString() : null,
+      actualEndTime: r.actualEndTime ? new Date(r.actualEndTime).toISOString() : null,
+      currentStopSequence: Number(r.currentStopSequence) || 0,
+      delayMinutes: Number(r.delayMinutes) || 0,
+      totalBoarded: Number(r.totalBoarded) || 0,
+    }));
+  }
+
+  /**
+   * Retrieves combined safety incident and emergency SOS alert history for a bus
+   */
+  public static async getBusIncidentHistory(
+    schoolId: string,
+    busId: string,
+    limit = 50,
+    offset = 0
+  ): Promise<BusIncidentHistoryItem[]> {
+    // Verify vehicle belongs to school tenant
+    await this.getBusById(schoolId, busId);
+
+    const sql = `
+      SELECT * FROM (
+        SELECT 
+          i.id,
+          i.school_id AS "schoolId",
+          i.trip_id AS "tripId",
+          'INCIDENT' AS category,
+          i.incident_type AS type,
+          i.severity,
+          i.status,
+          i.description,
+          d.full_name AS "driverName",
+          r.name AS "routeName",
+          i.latitude,
+          i.longitude,
+          i.reported_by AS "reportedBy",
+          NULL::text AS "acknowledgedAt",
+          i.resolved_at AS "resolvedAt",
+          NULL::text AS "resolutionNotes",
+          i.created_at AS "createdAt"
+        FROM incidents i
+        LEFT JOIN drivers d ON i.driver_id = d.id
+        LEFT JOIN trips t ON i.trip_id = t.id
+        LEFT JOIN routes r ON t.route_id = r.id
+        WHERE i.bus_id = $1 AND i.school_id = $2
+
+        UNION ALL
+
+        SELECT 
+          s.id,
+          s.school_id AS "schoolId",
+          s.trip_id AS "tripId",
+          'SOS' AS category,
+          s.trigger_source AS type,
+          'CRITICAL' AS severity,
+          s.status,
+          CONCAT('Emergency SOS triggered via ', s.trigger_source) AS description,
+          d.full_name AS "driverName",
+          r.name AS "routeName",
+          s.latitude,
+          s.longitude,
+          'DRIVER' AS "reportedBy",
+          s.acknowledged_at::text AS "acknowledgedAt",
+          s.resolved_at AS "resolvedAt",
+          s.resolution_notes AS "resolutionNotes",
+          s.created_at AS "createdAt"
+        FROM sos_events s
+        LEFT JOIN drivers d ON s.driver_id = d.id
+        LEFT JOIN trips t ON s.trip_id = t.id
+        LEFT JOIN routes r ON t.route_id = r.id
+        WHERE s.bus_id = $1 AND s.school_id = $2
+      ) events
+      ORDER BY "createdAt" DESC
+      LIMIT $3 OFFSET $4
+    `;
+
+    const rows = await query<any>(sql, [busId, schoolId, limit, offset]);
+
+    return rows.map((r) => ({
+      id: r.id,
+      schoolId: r.schoolId,
+      tripId: r.tripId,
+      category: r.category as 'INCIDENT' | 'SOS',
+      type: r.type,
+      severity: r.severity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL',
+      status: r.status,
+      description: r.description,
+      driverName: r.driverName,
+      routeName: r.routeName,
+      latitude: r.latitude != null ? Number(r.latitude) : null,
+      longitude: r.longitude != null ? Number(r.longitude) : null,
+      reportedBy: r.reportedBy,
+      acknowledgedAt: r.acknowledgedAt ? new Date(r.acknowledgedAt).toISOString() : null,
+      resolvedAt: r.resolvedAt ? new Date(r.resolvedAt).toISOString() : null,
+      resolutionNotes: r.resolutionNotes,
+      createdAt: new Date(r.createdAt).toISOString(),
+    }));
+  }
+
+  /**
+   * Retrieves student boarding and drop attendance history and trip summaries for a bus
+   */
+  public static async getBusAttendanceHistory(
+    schoolId: string,
+    busId: string,
+    limit = 50
+  ): Promise<BusAttendanceHistoryResponse> {
+    // Verify vehicle belongs to school tenant
+    await this.getBusById(schoolId, busId);
+
+    // 1. Trip Summaries
+    const summarySql = `
+      SELECT 
+        t.id AS "tripId",
+        TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS "scheduledDate",
+        r.name AS "routeName",
+        r.code AS "routeCode",
+        r.route_type AS "shiftType",
+        d.full_name AS "driverName",
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'BOARDED')::int AS "totalBoarded",
+        COUNT(DISTINCT b.id) FILTER (WHERE b.status = 'ABSENT')::int AS "totalAbsent",
+        COUNT(DISTINCT dr.id) FILTER (WHERE dr.status = 'DEBOARDED')::int AS "totalDeboarded",
+        (COUNT(DISTINCT b.id) + COUNT(DISTINCT dr.id))::int AS "totalEvents"
+      FROM trips t
+      JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+      JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+      LEFT JOIN boarding_events b ON b.trip_id = t.id
+      LEFT JOIN drop_events dr ON dr.trip_id = t.id
+      WHERE t.bus_id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+      GROUP BY t.id, t.scheduled_date, r.name, r.code, r.route_type, d.full_name
+      ORDER BY t.scheduled_date DESC, t.scheduled_start_time DESC
+      LIMIT $3
+    `;
+    const summaryRows = await query<any>(summarySql, [busId, schoolId, limit]);
+
+    const summaries: BusAttendanceSummaryItem[] = summaryRows.map((s) => ({
+      tripId: s.tripId,
+      scheduledDate: s.scheduledDate,
+      routeName: s.routeName,
+      routeCode: s.routeCode,
+      shiftType: s.shiftType,
+      driverName: s.driverName,
+      totalBoarded: Number(s.totalBoarded) || 0,
+      totalAbsent: Number(s.totalAbsent) || 0,
+      totalDeboarded: Number(s.totalDeboarded) || 0,
+      totalEvents: Number(s.totalEvents) || 0,
+    }));
+
+    // 2. Recent Student Boarding / Drop Records
+    const recordsSql = `
+      SELECT * FROM (
+        SELECT 
+          b.id,
+          b.trip_id AS "tripId",
+          TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS "scheduledDate",
+          s.id AS "studentId",
+          s.full_name AS "studentName",
+          s.admission_number AS "admissionNumber",
+          s.class_grade AS "classGrade",
+          s.section,
+          p.stop_name AS "stopName",
+          'BOARDING' AS "eventType",
+          b.status,
+          b.marked_by AS "markedBy",
+          b.recorded_at AS "recordedAt"
+        FROM boarding_events b
+        JOIN trips t ON b.trip_id = t.id
+        JOIN students s ON b.student_id = s.id
+        JOIN pickup_locations p ON b.stop_id = p.id
+        WHERE t.bus_id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+
+        UNION ALL
+
+        SELECT 
+          dr.id,
+          dr.trip_id AS "tripId",
+          TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS "scheduledDate",
+          s.id AS "studentId",
+          s.full_name AS "studentName",
+          s.admission_number AS "admissionNumber",
+          s.class_grade AS "classGrade",
+          s.section,
+          p.stop_name AS "stopName",
+          'DROP' AS "eventType",
+          dr.status,
+          dr.marked_by AS "markedBy",
+          dr.recorded_at AS "recordedAt"
+        FROM drop_events dr
+        JOIN trips t ON dr.trip_id = t.id
+        JOIN students s ON dr.student_id = s.id
+        JOIN pickup_locations p ON dr.stop_id = p.id
+        WHERE t.bus_id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+      ) records
+      ORDER BY "recordedAt" DESC
+      LIMIT 50
+    `;
+    const recordRows = await query<any>(recordsSql, [busId, schoolId]);
+
+    const recentRecords: BusAttendanceRecordItem[] = recordRows.map((r) => ({
+      id: r.id,
+      tripId: r.tripId,
+      scheduledDate: r.scheduledDate,
+      studentId: r.studentId,
+      studentName: r.studentName,
+      admissionNumber: r.admissionNumber,
+      classGrade: r.classGrade,
+      section: r.section,
+      stopName: r.stopName,
+      eventType: r.eventType as 'BOARDING' | 'DROP',
+      status: r.status,
+      markedBy: r.markedBy,
+      recordedAt: new Date(r.recordedAt).toISOString(),
+    }));
+
+    return {
+      summaries,
+      recentRecords,
+    };
+  }
+
+  /**
+   * Retrieves consolidated vehicle history (Bus Profile, Trips, Incidents, Attendance)
+   */
+  public static async getBusFullHistory(
+    schoolId: string,
+    busId: string
+  ): Promise<BusFullHistoryResponse> {
+    const [bus, trips, incidents, attendance] = await Promise.all([
+      this.getBusById(schoolId, busId),
+      this.getBusTripHistory(schoolId, busId, 30),
+      this.getBusIncidentHistory(schoolId, busId, 30),
+      this.getBusAttendanceHistory(schoolId, busId, 30),
+    ]);
+
+    return {
+      bus,
+      trips,
+      incidents,
+      attendance,
+    };
+  }
 }
+
