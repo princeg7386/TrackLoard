@@ -8,6 +8,7 @@ import {
   UnauthorizedError,
   ForbiddenError,
 } from '../middlewares/error.middleware.js';
+import { GpsHealthService } from './gps-health.service.js';
 import { logger } from './logger.service.js';
 
 export interface TelemetryIngestResult {
@@ -141,6 +142,45 @@ export class TelemetryService {
 
     const inserted = resultRows[0]!;
 
+    // Refresh bus latest location cache & GPS health state
+    const healthStatus = GpsHealthService.calculateHealthStatus({
+      accuracyMeters: payload.accuracyMeters,
+      recordedAt: payload.recordedAt,
+      isOnline: payload.networkType !== 'OFFLINE',
+      hasActiveTrip: true,
+    });
+
+    await query(
+      `UPDATE buses 
+       SET last_latitude = $1,
+           last_longitude = $2,
+           last_location = ST_SetSRID(ST_MakePoint($2, $1), 4326),
+           last_speed_kmh = $3,
+           last_accuracy_meters = $4,
+           last_bearing_degrees = $5,
+           last_battery_percentage = $6,
+           last_is_charging = $7,
+           last_network_type = $8,
+           last_gps_recorded_at = $9,
+           gps_health_status = $10,
+           updated_at = NOW()
+       WHERE id = $11
+         AND (last_gps_recorded_at IS NULL OR last_gps_recorded_at <= $9);`,
+      [
+        payload.latitude,
+        payload.longitude,
+        payload.speedKmh ?? 0,
+        payload.accuracyMeters ?? null,
+        payload.bearingDegrees ?? null,
+        payload.batteryPercentage ?? null,
+        payload.isCharging ?? false,
+        payload.networkType ?? 'CELLULAR',
+        payload.recordedAt,
+        healthStatus,
+        payload.busId,
+      ]
+    );
+
     logger.debug('GPS telemetry ping ingested', {
       tripId: payload.tripId,
       busId: payload.busId,
@@ -244,6 +284,52 @@ export class TelemetryService {
         if (res.rowCount && res.rowCount > 0) {
           ingestedCount++;
         }
+      }
+
+      // Group latest point by busId to refresh bus cache
+      const busLatestMap = new Map<string, TelemetryIngestPayload>();
+      for (const loc of sorted) {
+        busLatestMap.set(loc.busId, loc);
+      }
+
+      for (const [busId, latestLoc] of busLatestMap.entries()) {
+        const healthStatus = GpsHealthService.calculateHealthStatus({
+          accuracyMeters: latestLoc.accuracyMeters,
+          recordedAt: latestLoc.recordedAt,
+          isOnline: latestLoc.networkType !== 'OFFLINE',
+          hasActiveTrip: true,
+        });
+
+        await client.query(
+          `UPDATE buses 
+           SET last_latitude = $1,
+               last_longitude = $2,
+               last_location = ST_SetSRID(ST_MakePoint($2, $1), 4326),
+               last_speed_kmh = $3,
+               last_accuracy_meters = $4,
+               last_bearing_degrees = $5,
+               last_battery_percentage = $6,
+               last_is_charging = $7,
+               last_network_type = $8,
+               last_gps_recorded_at = $9,
+               gps_health_status = $10,
+               updated_at = NOW()
+           WHERE id = $11
+             AND (last_gps_recorded_at IS NULL OR last_gps_recorded_at <= $9);`,
+          [
+            latestLoc.latitude,
+            latestLoc.longitude,
+            latestLoc.speedKmh ?? 0,
+            latestLoc.accuracyMeters ?? null,
+            latestLoc.bearingDegrees ?? null,
+            latestLoc.batteryPercentage ?? null,
+            latestLoc.isCharging ?? false,
+            latestLoc.networkType ?? 'CELLULAR',
+            latestLoc.recordedAt,
+            healthStatus,
+            busId,
+          ]
+        );
       }
     });
 

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { TelemetryService } from '../services/telemetry.service.js';
+import { GpsHealthService } from '../services/gps-health.service.js';
 import { TelemetryIngestPayload } from '@school-bus/shared';
 
 export class TelemetryController {
@@ -81,6 +82,42 @@ export class TelemetryController {
           count: trail.length,
           trail,
         },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/health
+   * Retrieve real-time GPS health overview for school fleet
+   */
+  static async getFleetHealth(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const result = await GpsHealthService.getSchoolFleetGpsHealth(schoolId!);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/buses/:busId/health
+   * Retrieve real-time GPS health summary for a specific bus
+   */
+  static async getBusHealth(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { busId } = req.params;
+      const result = await GpsHealthService.getBusGpsHealth(busId!);
+
+      res.status(200).json({
+        success: true,
+        data: result,
       });
     } catch (error) {
       next(error);

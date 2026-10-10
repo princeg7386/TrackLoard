@@ -960,6 +960,53 @@ export const GpsLocationRecordSchema = TelemetryIngestSchema.extend({
 });
 export type GpsLocationRecord = z.infer<typeof GpsLocationRecordSchema>;
 
+// GPS Health Threshold Constants & Status
+export const GPS_THRESHOLDS = {
+  ACCURACY_OPTIMAL_METERS: 15,
+  ACCURACY_MAX_ACCEPTABLE_METERS: 30,
+  STALE_SIGNAL_SECONDS: 60,
+  SIGNAL_LOST_SECONDS: 300,
+} as const;
+
+export const GpsHealthStatusSchema = z.enum([
+  'HEALTHY',
+  'DEGRADED_ACCURACY',
+  'STALE_SIGNAL',
+  'SIGNAL_LOST',
+  'OFFLINE',
+]);
+export type GpsHealthStatus = z.infer<typeof GpsHealthStatusSchema>;
+
+export const BusGpsHealthSummarySchema = z.object({
+  busId: z.string().uuid(),
+  busNumber: z.string(),
+  registrationNumber: z.string(),
+  healthStatus: GpsHealthStatusSchema,
+  lastLatitude: z.number().nullable().optional(),
+  lastLongitude: z.number().nullable().optional(),
+  lastSpeedKmh: z.number().nullable().optional(),
+  lastAccuracyMeters: z.number().nullable().optional(),
+  lastBatteryPercentage: z.number().nullable().optional(),
+  lastIsCharging: z.boolean().nullable().optional(),
+  lastNetworkType: z.string().nullable().optional(),
+  lastRecordedAt: z.string().nullable().optional(),
+  ageSeconds: z.number().optional(),
+  activeTripId: z.string().uuid().nullable().optional(),
+});
+export type BusGpsHealthSummary = z.infer<typeof BusGpsHealthSummarySchema>;
+
+export const FleetGpsHealthOverviewSchema = z.object({
+  schoolId: z.string().uuid(),
+  totalBuses: z.number(),
+  healthyCount: z.number(),
+  degradedCount: z.number(),
+  staleCount: z.number(),
+  lostCount: z.number(),
+  offlineCount: z.number(),
+  buses: z.array(BusGpsHealthSummarySchema),
+});
+export type FleetGpsHealthOverview = z.infer<typeof FleetGpsHealthOverviewSchema>;
+
 // 12. Boarding & Drop Attendance Events
 export const BoardingEventSchema = z.object({
   id: z.string().uuid().optional(),
