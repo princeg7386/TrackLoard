@@ -6,12 +6,15 @@ import '../models/device_status_model.dart';
 import '../models/driver_profile.dart';
 import '../models/permission_status_model.dart';
 import '../models/trip_state_model.dart';
+import '../services/app_lifecycle_manager.dart';
 import '../services/auth_service.dart';
 import '../services/device_status_service.dart';
 import '../services/permission_service.dart';
+import '../services/telemetry_queue_service.dart';
 import '../services/trip_status_service.dart';
 import '../widgets/active_trip_card.dart';
 import '../widgets/live_status_bar.dart';
+import '../widgets/queue_sync_indicator.dart';
 import 'login_screen.dart';
 import 'permissions_screen.dart';
 
@@ -28,6 +31,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final PermissionService _permissionService = PermissionService();
   final DeviceStatusService _deviceStatusService = DeviceStatusService();
   final TripStatusService _tripStatusService = TripStatusService();
+  final TelemetryQueueService _queueService = TelemetryQueueService();
+  final AppLifecycleManager _lifecycleManager = AppLifecycleManager();
 
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -42,14 +47,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _deviceStatusService.startMonitoring();
+    _lifecycleManager.init();
     _loadInitialData();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _deviceStatusService.stopMonitoring();
     super.dispose();
   }
 
@@ -58,6 +62,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       _checkPermissionsStatus();
       _deviceStatusService.refresh();
+      _queueService.flushPendingQueue();
     }
   }
 
@@ -70,17 +75,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadInitialData() async {
-    final cached = await _authService.getStoredDriver();
-    setState(() {
-      _storedDriver = cached;
-      _isLoading = true;
-      _errorMessage = null;
-    });
+    // 1. Immediately read last-known state from SQLite for instant cold start
+    final cachedSnapshot = await _authService.getLastKnownSnapshot();
+    final cachedDriver = await _authService.getStoredDriver();
 
+    if (cachedSnapshot?.profile != null) {
+      setState(() {
+        _profileData = cachedSnapshot!.profile;
+        _storedDriver = cachedDriver;
+        _isLoading = false;
+      });
+
+      final activeTripMap = cachedSnapshot!.profile!.activeTrip ??
+          (cachedSnapshot.profile!.todayTrips.isNotEmpty ? cachedSnapshot.profile!.todayTrips.first : null);
+      _tripStatusService.updateActiveTrip(activeTripMap);
+    } else {
+      setState(() {
+        _storedDriver = cachedDriver;
+        _isLoading = true;
+      });
+    }
+
+    // 2. Fetch live data in parallel
     await Future.wait([
       _fetchProfile(),
       _checkPermissionsStatus(),
       _deviceStatusService.refresh(),
+      _queueService.init(),
     ]);
   }
 
@@ -95,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (result.success && result.data != null) {
         _profileData = result.data;
         _errorMessage = null;
-        _isOffline = false;
+        _isOffline = result.isOffline;
 
         // Update active trip state in trip service
         final activeTripMap = result.data!.activeTrip ??
@@ -119,6 +140,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _fetchProfile(),
       _checkPermissionsStatus(),
       _deviceStatusService.refresh(),
+      _queueService.flushPendingQueue(),
     ]);
   }
 
@@ -140,6 +162,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _showTelemetryDiagnosticsSheet() {
     final snapshot = _deviceStatusService.currentSnapshot;
+    final pendingCount = _queueService.pendingCount;
+
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -179,20 +203,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               'Battery Level & State',
               '${snapshot.battery.batteryLabel} ${snapshot.battery.isCharging ? '(Charging ⚡)' : ''}',
             ),
+            _buildDiagRow('SQLite Pending Queue', '$pendingCount pings stored'),
             _buildDiagRow(
               'Telemetry Readiness',
               snapshot.isTelemetryHealthy ? 'Healthy & Transmitting' : 'Degraded',
             ),
             const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _openPermissionsFlow();
-                },
-                child: const Text('Configure Device Permissions'),
-              ),
+            Row(
+              children: [
+                if (pendingCount > 0)
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.cloud_upload_outlined, size: 16),
+                      label: const Text('Flush Queue'),
+                      onPressed: () {
+                        _queueService.flushPendingQueue();
+                        Navigator.pop(ctx);
+                      },
+                    ),
+                  ),
+                if (pendingCount > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _openPermissionsFlow();
+                    },
+                    child: const Text('Permissions'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -299,15 +339,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 child: const LiveStatusBarWidget(),
               ),
 
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
 
-              // 2. Permission Warning Banner (if missing permissions)
+              // 2. OFFLINE SQLITE PENDING QUEUE INDICATOR (Visible when pings buffered)
+              const QueueSyncIndicator(),
+
+              // 3. Permission Warning Banner (if missing permissions)
               if (isPermIncomplete) ...[
                 _buildPermissionWarningBanner(),
                 const SizedBox(height: 12),
               ],
 
-              // 3. Offline or Error Banner
+              // 4. Offline or Error Banner
               if (_isOffline) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -322,7 +365,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Offline Mode. Telemetry buffered locally; cached routes shown.',
+                          'Offline Mode. Telemetry buffered in SQLite; last known state shown.',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
@@ -366,7 +409,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 const SizedBox(height: 12),
               ],
 
-              // Loading Spinner State
+              // Loading Spinner State (only if no cache exists)
               if (_isLoading && _profileData == null) ...[
                 const Center(
                   child: Padding(

@@ -1,15 +1,18 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants/api_constants.dart';
 import '../models/driver_profile.dart';
+import '../models/last_known_state_model.dart';
 import 'api_service.dart';
+import 'local_database_service.dart';
 
-/// Service responsible for managing driver session, login, profile caching, and logout
+/// Service responsible for managing driver session, login, SQLite state persistence, and logout
 class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
 
   final ApiService _api = ApiService();
+  final LocalDatabaseService _db = LocalDatabaseService();
 
   /// Attempt Driver login via phone and PIN/licenseNumber
   Future<ApiResponse<DriverProfileData>> login({
@@ -77,6 +80,12 @@ class AuthService {
     if (response.success && response.data != null) {
       try {
         final profile = DriverProfileData.fromJson(response.data!);
+
+        // Persist fresh last known state snapshot into SQLite
+        await _db.saveLastKnownState(
+          LastKnownStateSnapshot(profile: profile),
+        );
+
         return ApiResponse<DriverProfileData>(
           success: true,
           data: profile,
@@ -88,6 +97,20 @@ class AuthService {
           success: false,
           message: 'Error parsing profile: $e',
           statusCode: response.statusCode,
+        );
+      }
+    }
+
+    // If request failed (e.g. offline), attempt reading from SQLite last-known cache
+    if (response.isOffline || response.statusCode == 0 || response.statusCode == 408) {
+      final cachedSnapshot = await _db.getLastKnownState();
+      if (cachedSnapshot?.profile != null) {
+        return ApiResponse<DriverProfileData>(
+          success: true,
+          data: cachedSnapshot!.profile,
+          message: 'Loaded from offline storage',
+          statusCode: 200,
+          isOffline: true,
         );
       }
     }
@@ -121,6 +144,11 @@ class AuthService {
     };
   }
 
+  /// Retrieve last known state directly from SQLite without network delay
+  Future<LastKnownStateSnapshot?> getLastKnownSnapshot() async {
+    return _db.getLastKnownState();
+  }
+
   /// Clear driver session and local storage
   Future<void> logout() async {
     try {
@@ -138,5 +166,8 @@ class AuthService {
     await prefs.remove(ApiConstants.keyAssignedBusId);
     await prefs.remove(ApiConstants.keyAssignedBusNumber);
     await prefs.remove(ApiConstants.keyAssignedBusReg);
+
+    // Clear local SQLite caches
+    await _db.clearAll();
   }
 }
