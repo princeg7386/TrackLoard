@@ -214,18 +214,52 @@ export const DriverSchema = z.object({
 export type Driver = z.infer<typeof DriverSchema>;
 
 // 4. Bus (Fleet Vehicle - NO capacity / NO active-inactive toggles)
+export const IndianVehicleRegistrationRegex =
+  /^[A-Z]{2}[ -]?[0-9]{1,2}[ -]?(?:[A-Z]{1,3}[ -]?)?[0-9]{4}$|^[0-9]{2}[ -]?BH[ -]?[0-9]{4}[ -]?[A-Z]{1,2}$/i;
+
+export function normalizeIndianRegistrationNumber(reg: string): string {
+  if (!reg) return '';
+  return reg.trim().toUpperCase().replace(/[\s-]+/g, '-');
+}
+
 export const BusSchema = z.object({
   id: z.string().uuid().optional(),
   schoolId: z.string().uuid(),
   registrationNumber: z.string().min(3, 'Registration number required'),
   busNumber: z.string().min(1, 'Bus internal identifier required'),
   defaultDriverId: z.string().uuid().nullable().optional(),
-  deviceIdentifier: z.string().optional(),
-  makeModel: z.string().optional(),
+  deviceIdentifier: z.string().optional().nullable(),
+  makeModel: z.string().optional().nullable(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
 });
 export type Bus = z.infer<typeof BusSchema>;
+
+export const CreateBusRequestSchema = z.object({
+  busNumber: z.string().min(1, 'Bus internal number is required (e.g. Bus-01 or Yellow-04)').max(50),
+  registrationNumber: z
+    .string()
+    .min(4, 'Valid vehicle registration number required')
+    .max(20)
+    .regex(
+      IndianVehicleRegistrationRegex,
+      'Must be a valid Indian vehicle registration number (e.g. DL-01-AB-1234, MH-12-DE-1433, or 22-BH-1234-AA)'
+    ),
+  makeModel: z.string().max(100).optional().nullable().or(z.literal('')),
+  deviceIdentifier: z.string().max(100).optional().nullable().or(z.literal('')),
+  defaultDriverId: z.string().uuid('Please select a valid driver').optional().nullable().or(z.literal('')),
+});
+export type CreateBusRequest = z.infer<typeof CreateBusRequestSchema>;
+
+export const UpdateBusRequestSchema = CreateBusRequestSchema.partial();
+export type UpdateBusRequest = z.infer<typeof UpdateBusRequestSchema>;
+
+export interface BusWithDriver extends Bus {
+  driverName?: string | null;
+  driverPhone?: string | null;
+  driverLicenseNumber?: string | null;
+  assignedRouteName?: string | null;
+}
 
 // 5. Student
 export const StudentSchema = z.object({

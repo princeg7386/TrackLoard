@@ -21,6 +21,12 @@ export class BadRequestError extends AppError {
   }
 }
 
+export class ConflictError extends AppError {
+  constructor(message: string = 'Resource conflict: record already exists', details?: any) {
+    super(message, 409, details);
+  }
+}
+
 export class ValidationError extends AppError {
   constructor(message: string = 'Validation failed', details?: any) {
     super(message, 422, details);

@@ -4,6 +4,7 @@ import driverAuthRouter from './driver-auth.routes.js';
 import parentRouter from './parent-identity.routes.js';
 import schoolProfileRouter from './school-profile.routes.js';
 import dashboardRouter from './dashboard.routes.js';
+import busRouter from './bus.routes.js';
 
 const apiRouter = Router();
 
@@ -13,6 +14,7 @@ apiRouter.use('/driver/auth', driverAuthRouter);
 apiRouter.use('/parent', parentRouter);
 apiRouter.use('/schools', schoolProfileRouter);
 apiRouter.use('/schools', dashboardRouter);
+apiRouter.use('/schools', busRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({
@@ -27,7 +29,7 @@ apiRouter.get('/', (_req: Request, res: Response) => {
       driverAuth: '/api/v1/driver/auth',
       schools: '/api/v1/schools',
       dashboardSummary: '/api/v1/schools/:schoolId/dashboard/summary',
-      buses: '/api/v1/buses',
+      buses: '/api/v1/schools/:schoolId/buses',
       drivers: '/api/v1/drivers',
       routes: '/api/v1/routes',
       trips: '/api/v1/trips',
