@@ -5,6 +5,7 @@ import parentRouter from './parent-identity.routes.js';
 import schoolProfileRouter from './school-profile.routes.js';
 import dashboardRouter from './dashboard.routes.js';
 import busRouter from './bus.routes.js';
+import driverRouter from './driver.routes.js';
 
 const apiRouter = Router();
 
@@ -15,6 +16,7 @@ apiRouter.use('/parent', parentRouter);
 apiRouter.use('/schools', schoolProfileRouter);
 apiRouter.use('/schools', dashboardRouter);
 apiRouter.use('/schools', busRouter);
+apiRouter.use('/schools', driverRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({

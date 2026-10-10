@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { BusService } from '../src/services/bus.service.js';
+import { DriverService } from '../src/services/driver.service.js';
 import { AuthService } from '../src/services/auth.service.js';
 import { UserRole, BusWithDriver, Driver, Route } from '@school-bus/shared';
 import { BadRequestError } from '../src/middlewares/error.middleware.js';
@@ -186,7 +187,8 @@ describe('Bus Assignments (Micro-phase 6.2: Driver & Route Pairing)', () => {
         },
       ];
 
-      const spy = vi.spyOn(BusService, 'getDrivers').mockResolvedValueOnce(mockDrivers);
+      const spy = vi.spyOn(DriverService, 'getDrivers').mockResolvedValueOnce(mockDrivers as any);
+      const busSpy = vi.spyOn(BusService, 'getDrivers').mockResolvedValueOnce(mockDrivers);
 
       const res = await request(app)
         .get(`/api/v1/schools/${schoolIdA}/drivers`)
@@ -198,6 +200,7 @@ describe('Bus Assignments (Micro-phase 6.2: Driver & Route Pairing)', () => {
       expect(res.body.data[0].fullName).toBe('Ramesh Kumar');
 
       spy.mockRestore();
+      busSpy.mockRestore();
     });
 
     it('returns list of routes for school tenant', async () => {

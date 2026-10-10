@@ -207,11 +207,37 @@ export const DriverSchema = z.object({
   fullName: z.string().min(2, 'Full name required'),
   phone: z.string().regex(/^\+?[1-9]\d{9,14}$/, 'Valid phone number with country code required'),
   licenseNumber: z.string().min(5, 'Valid license number required'),
-  licenseExpiry: z.string().optional(),
+  licenseExpiry: z.string().optional().nullable(),
+  photoUrl: z.string().optional().nullable(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
 });
 export type Driver = z.infer<typeof DriverSchema>;
+
+export const CreateDriverRequestSchema = z.object({
+  fullName: z.string().min(2, 'Driver full name must be at least 2 characters').max(100),
+  phone: z.string().min(10, 'Valid 10-digit mobile phone number required'),
+  licenseNumber: z.string().min(5, 'Valid Indian driving license number required (min 5 chars)').max(50),
+  licenseExpiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'License expiry must be in YYYY-MM-DD format').optional().nullable().or(z.literal('')),
+  photoUrl: z.string().max(500).optional().nullable().or(z.literal('')),
+  pin: z.string().regex(/^\d{4,6}$/, 'Driver login PIN must be 4 to 6 digits').optional().nullable().or(z.literal('')),
+  assignedBusId: z.string().uuid('Please select a valid vehicle').optional().nullable().or(z.literal('')),
+});
+export type CreateDriverRequest = z.infer<typeof CreateDriverRequestSchema>;
+
+export const UpdateDriverRequestSchema = CreateDriverRequestSchema.partial();
+export type UpdateDriverRequest = z.infer<typeof UpdateDriverRequestSchema>;
+
+export interface DriverWithBus extends Driver {
+  assignedBusId?: string | null;
+  assignedBusNumber?: string | null;
+  assignedRegistrationNumber?: string | null;
+  assignedRouteId?: string | null;
+  assignedRouteName?: string | null;
+  assignedRouteCode?: string | null;
+  lastActiveAt?: string | null;
+}
+
 
 // 4. Bus (Fleet Vehicle - NO capacity / NO active-inactive toggles)
 export const IndianVehicleRegistrationRegex =

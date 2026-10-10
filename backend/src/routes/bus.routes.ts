@@ -79,15 +79,7 @@ busRouter.put(
   BusController.updateAssignments
 );
 
-// 7. Driver directory listing for dropdowns
-busRouter.get(
-  '/:schoolId/drivers',
-  authenticateToken,
-  requireTenantScope('params', 'schoolId'),
-  BusController.listDrivers
-);
-
-// 8. Route directory listing for dropdowns
+// 7. Route directory listing for dropdowns
 busRouter.get(
   '/:schoolId/routes',
   authenticateToken,

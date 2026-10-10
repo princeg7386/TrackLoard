@@ -1,22 +1,123 @@
 'use client';
 
-import React from 'react';
-import { Users, Plus, Search } from 'lucide-react';
-import { EmptyState } from '../../../components/ui/EmptyState';
+import React, { useState, useEffect, useCallback } from 'react';
+import { User, Plus, Search, RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
+import { useAuth } from '../../../contexts/AuthContext';
+import { DriverWithBus } from '@school-bus/shared';
+import { fetchDrivers } from '../../../services/driverApi';
+import { DriverListTable } from '../../../components/driver/DriverListTable';
+import { CreateDriverModal } from '../../../components/driver/CreateDriverModal';
 
 export default function DriversDirectoryPage() {
+  const { user } = useAuth();
+  const [schoolId, setSchoolId] = useState<string>(
+    user?.schoolId || '111e4567-e89b-12d3-a456-426614174001'
+  );
+
+  const [drivers, setDrivers] = useState<DriverWithBus[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+
+  useEffect(() => {
+    if (user?.schoolId) {
+      setSchoolId(user.schoolId);
+    } else if (typeof window !== 'undefined') {
+      const storedId = localStorage.getItem('sb_school_id');
+      if (storedId) setSchoolId(storedId);
+    }
+  }, [user]);
+
+  // Online / Offline monitor
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setIsOffline(true);
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  const loadDrivers = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const data = await fetchDrivers(schoolId);
+      setDrivers(data);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to load school driver directory.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [schoolId]);
+
+  useEffect(() => {
+    loadDrivers();
+  }, [loadDrivers]);
+
+  const handleDriverCreated = (newDriver: DriverWithBus) => {
+    setDrivers((prev) => [newDriver, ...prev]);
+  };
+
+  const filteredDrivers = drivers.filter(
+    (d) =>
+      d.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      d.phone.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      d.licenseNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (d.assignedBusNumber && d.assignedBusNumber.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
   return (
     <div className="space-y-6">
+      {/* Offline Alert */}
+      {isOffline && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between text-amber-900 text-xs">
+          <div className="flex items-center gap-2">
+            <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>You are currently offline. Changes will sync when connectivity is restored.</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadDrivers}
+            className="px-2 py-1 bg-amber-200 hover:bg-amber-300 font-semibold rounded text-amber-900"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
+
+      {/* Header with Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight">Drivers Directory</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Manage authorized school bus drivers, mobile credentials, license records, and WhatsApp access.
+            Register and manage authorized transport drivers, mobile app credentials, license records, and vehicle pairings.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
             type="button"
+            onClick={loadDrivers}
+            title="Refresh Drivers"
+            className="p-2 bg-white hover:bg-slate-50 text-slate-600 rounded-md border border-slate-300 shadow-2xs transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsCreateModalOpen(true)}
             className="inline-flex items-center gap-2 px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold rounded-md shadow-xs transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -25,30 +126,57 @@ export default function DriversDirectoryPage() {
         </div>
       </div>
 
+      {/* Error State */}
+      {errorMessage && (
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg flex items-center justify-between text-rose-900 text-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadDrivers}
+            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-md shadow-2xs"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Driver Table Card */}
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
-          <div className="relative w-72">
+        {/* Search and Counts Filter Bar */}
+        <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/50">
+          <div className="relative w-full sm:w-72">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by driver name, phone, license..."
+              placeholder="Search by driver name, phone, license, bus..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
-              disabled
             />
           </div>
-          <span className="text-xs text-slate-500 font-mono">0 drivers</span>
+          <div className="text-xs text-slate-500 font-mono">
+            {filteredDrivers.length} of {drivers.length} drivers
+          </div>
         </div>
 
-        <div className="p-12">
-          <EmptyState
-            icon={Users}
-            title="No Drivers Registered Yet"
-            description="Create driver profiles with phone numbers to issue secure mobile login PINs and WhatsApp operational triggers."
-            actionLabel="Add First Driver"
-            onAction={() => alert('Driver onboarding form will be available in Phase 7.')}
-          />
-        </div>
+        {/* Driver Table View */}
+        <DriverListTable
+          drivers={filteredDrivers}
+          isLoading={isLoading}
+          onAddDriver={() => setIsCreateModalOpen(true)}
+        />
       </div>
+
+      {/* Create Driver Modal */}
+      <CreateDriverModal
+        schoolId={schoolId}
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSuccess={handleDriverCreated}
+      />
     </div>
   );
 }
