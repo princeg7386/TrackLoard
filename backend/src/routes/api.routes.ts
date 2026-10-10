@@ -6,6 +6,7 @@ import schoolProfileRouter from './school-profile.routes.js';
 import dashboardRouter from './dashboard.routes.js';
 import busRouter from './bus.routes.js';
 import driverRouter from './driver.routes.js';
+import studentRouter from './student.routes.js';
 
 const apiRouter = Router();
 
@@ -17,6 +18,7 @@ apiRouter.use('/schools', schoolProfileRouter);
 apiRouter.use('/schools', dashboardRouter);
 apiRouter.use('/schools', busRouter);
 apiRouter.use('/schools', driverRouter);
+apiRouter.use('/schools', studentRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({

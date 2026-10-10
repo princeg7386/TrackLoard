@@ -510,12 +510,39 @@ export const StudentSchema = z.object({
   admissionNumber: z.string().min(1, 'Admission number required'),
   classGrade: z.string().min(1, 'Class/Grade required'),
   section: z.string().min(1, 'Section required'),
-  rollNumber: z.string().optional(),
-  emergencyContactPhone: z.string().optional(),
+  rollNumber: z.string().optional().nullable(),
+  emergencyContactPhone: z.string().optional().nullable(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
 });
 export type Student = z.infer<typeof StudentSchema>;
+
+export const CreateStudentRequestSchema = z.object({
+  fullName: z.string().min(2, 'Student full name must be at least 2 characters').max(100),
+  admissionNumber: z.string().min(1, 'Admission number / Student ID is required').max(50),
+  classGrade: z.string().min(1, 'Class/Grade is required (e.g. Class 5, Grade 10)').max(50),
+  section: z.string().min(1, 'Section is required (e.g. A, B)').max(10),
+  rollNumber: z.string().max(50).optional().nullable().or(z.literal('')),
+  emergencyContactPhone: z.string().optional().nullable().or(z.literal('')),
+});
+export type CreateStudentRequest = z.infer<typeof CreateStudentRequestSchema>;
+
+export const UpdateStudentRequestSchema = CreateStudentRequestSchema.partial();
+export type UpdateStudentRequest = z.infer<typeof UpdateStudentRequestSchema>;
+
+export interface StudentWithDetails extends Student {
+  pickupStopId?: string | null;
+  pickupStopName?: string | null;
+  dropStopId?: string | null;
+  dropStopName?: string | null;
+  assignedRouteId?: string | null;
+  assignedRouteName?: string | null;
+  assignedRouteCode?: string | null;
+  parentName?: string | null;
+  parentPhone?: string | null;
+  parentRelationship?: string | null;
+  parentCount?: number;
+}
 
 // 6. Parent (1:1 Direct Child Context)
 export const ParentSchema = z.object({
