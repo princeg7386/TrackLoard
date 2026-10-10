@@ -1,4 +1,10 @@
-import { BusWithDriver, CreateBusRequest, Driver } from '@school-bus/shared';
+import {
+  BusWithDriver,
+  CreateBusRequest,
+  AssignBusPayload,
+  Driver,
+  Route,
+} from '@school-bus/shared';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
 
@@ -31,7 +37,6 @@ export async function fetchBuses(schoolId: string): Promise<BusWithDriver[]> {
     return json.data || [];
   } catch (error: any) {
     if (error.message === 'UNAUTHORIZED') throw error;
-    // Return empty array for local dev if backend not running
     return [];
   }
 }
@@ -72,11 +77,58 @@ export async function createBus(
 }
 
 /**
- * Fetches registered drivers for assignment dropdown
+ * Updates driver and/or route assignments for a bus atomically
+ */
+export async function updateBusAssignments(
+  schoolId: string,
+  busId: string,
+  payload: AssignBusPayload
+): Promise<BusWithDriver> {
+  const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/buses/${busId}/assignments`, {
+    method: 'PUT',
+    headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  const json = await res.json();
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('UNAUTHORIZED');
+    }
+    throw new Error(json.error?.message || `Failed to update assignments (HTTP ${res.status})`);
+  }
+
+  return json.data;
+}
+
+/**
+ * Fetches registered drivers for assignment dropdowns
  */
 export async function fetchAvailableDrivers(schoolId: string): Promise<Driver[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/drivers`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    if (!res.ok) {
+      return [];
+    }
+
+    const json = await res.json();
+    return json.data || [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetches configured routes for assignment dropdowns
+ */
+export async function fetchAvailableRoutes(schoolId: string): Promise<Route[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/routes`, {
       method: 'GET',
       headers: getAuthHeaders(),
     });

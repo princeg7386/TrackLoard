@@ -7,6 +7,7 @@ import { BusWithDriver } from '@school-bus/shared';
 import { fetchBuses } from '../../../services/busApi';
 import { BusListTable } from '../../../components/bus/BusListTable';
 import { CreateBusModal } from '../../../components/bus/CreateBusModal';
+import { AssignBusModal } from '../../../components/bus/AssignBusModal';
 
 export default function FleetBusesPage() {
   const { user } = useAuth();
@@ -18,7 +19,8 @@ export default function FleetBusesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedBusForAssign, setSelectedBusForAssign] = useState<BusWithDriver | null>(null);
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -70,11 +72,16 @@ export default function FleetBusesPage() {
     setBuses((prev) => [newBus, ...prev]);
   };
 
+  const handleBusUpdated = (updatedBus: BusWithDriver) => {
+    setBuses((prev) => prev.map((b) => (b.id === updatedBus.id ? updatedBus : b)));
+  };
+
   const filteredBuses = buses.filter(
     (b) =>
       b.busNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       b.registrationNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (b.driverName && b.driverName.toLowerCase().includes(searchTerm.toLowerCase()))
+      (b.driverName && b.driverName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (b.assignedRouteName && b.assignedRouteName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -116,7 +123,7 @@ export default function FleetBusesPage() {
 
           <button
             type="button"
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => setIsCreateModalOpen(true)}
             className="inline-flex items-center gap-2 px-3.5 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold rounded-md shadow-xs transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -150,7 +157,7 @@ export default function FleetBusesPage() {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by bus number, registration..."
+              placeholder="Search by bus number, registration, driver, route..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-md focus:outline-hidden focus:ring-1 focus:ring-sky-500"
@@ -165,16 +172,26 @@ export default function FleetBusesPage() {
         <BusListTable
           buses={filteredBuses}
           isLoading={isLoading}
-          onAddBus={() => setIsModalOpen(true)}
+          onAddBus={() => setIsCreateModalOpen(true)}
+          onManageAssignments={(bus) => setSelectedBusForAssign(bus)}
         />
       </div>
 
       {/* Create Bus Modal */}
       <CreateBusModal
         schoolId={schoolId}
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
         onSuccess={handleBusCreated}
+      />
+
+      {/* Assign Driver & Route Modal */}
+      <AssignBusModal
+        schoolId={schoolId}
+        bus={selectedBusForAssign}
+        isOpen={!!selectedBusForAssign}
+        onClose={() => setSelectedBusForAssign(null)}
+        onSuccess={handleBusUpdated}
       />
     </div>
   );

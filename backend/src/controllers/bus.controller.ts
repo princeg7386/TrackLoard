@@ -59,4 +59,72 @@ export class BusController {
       next(error);
     }
   }
+
+  /**
+   * Updates Driver and/or Route assignments for a bus
+   * PUT /api/v1/schools/:schoolId/buses/:busId/assignments
+   */
+  public static async updateAssignments(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      const userId = req.user?.id;
+      const ipAddress = req.ip;
+
+      const updatedBus = await BusService.assignDriverAndRoute(
+        schoolId,
+        busId,
+        req.body,
+        userId,
+        ipAddress
+      );
+
+      res.status(200).json({
+        success: true,
+        data: updatedBus,
+        message: 'Bus assignments updated successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Lists drivers for dropdowns
+   * GET /api/v1/schools/:schoolId/drivers
+   */
+  public static async listDrivers(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const drivers = await BusService.getDrivers(schoolId);
+
+      res.status(200).json({
+        success: true,
+        data: drivers,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Lists routes for dropdowns
+   * GET /api/v1/schools/:schoolId/routes
+   */
+  public static async listRoutes(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const routes = await BusService.getRoutes(schoolId);
+
+      res.status(200).json({
+        success: true,
+        data: routes,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }

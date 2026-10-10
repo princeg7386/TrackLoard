@@ -1,7 +1,10 @@
 import { query } from '../config/database.js';
 import {
   CreateBusRequest,
+  AssignBusPayload,
   BusWithDriver,
+  Driver,
+  Route,
   normalizeIndianRegistrationNumber,
 } from '@school-bus/shared';
 import {
@@ -9,6 +12,7 @@ import {
   BadRequestError,
   NotFoundError,
 } from '../middlewares/error.middleware.js';
+import { DbService } from './db.service.js';
 import { AuditService } from './audit.service.js';
 import { logger } from './logger.service.js';
 
@@ -152,7 +156,125 @@ export class BusService {
   }
 
   /**
-   * Lists all fleet vehicles for a school
+   * Updates Driver and/or Route assignments for a bus atomically
+   */
+  public static async assignDriverAndRoute(
+    schoolId: string,
+    busId: string,
+    payload: AssignBusPayload,
+    userId?: string,
+    ipAddress?: string
+  ): Promise<BusWithDriver> {
+    const currentBus = await this.getBusById(schoolId, busId);
+
+    // 1. Verify Driver if driverId provided
+    if (payload.driverId !== undefined && payload.driverId !== null) {
+      const driverRows = await query<{ id: string }>(
+        `SELECT id FROM drivers WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+        [payload.driverId, schoolId]
+      );
+      if (driverRows.length === 0) {
+        throw new BadRequestError(
+          'Selected driver does not exist or does not belong to this school.'
+        );
+      }
+    }
+
+    // 2. Verify Route if routeId provided
+    if (payload.routeId !== undefined && payload.routeId !== null) {
+      const routeRows = await query<{ id: string }>(
+        `SELECT id FROM routes WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+        [payload.routeId, schoolId]
+      );
+      if (routeRows.length === 0) {
+        throw new BadRequestError(
+          'Selected route does not exist or does not belong to this school.'
+        );
+      }
+    }
+
+    // 3. Atomic Database Transaction Execution
+    await DbService.withTransaction(async (client) => {
+      // Update Driver on Bus
+      if (payload.driverId !== undefined) {
+        await client.query(
+          `UPDATE buses 
+           SET default_driver_id = $1, updated_at = NOW() 
+           WHERE id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+          [payload.driverId, busId, schoolId]
+        );
+      }
+
+      // Update Route assignment
+      if (payload.routeId !== undefined) {
+        if (payload.routeId !== null) {
+          // Unbind any other route previously bound to this bus
+          await client.query(
+            `UPDATE routes 
+             SET default_bus_id = NULL, updated_at = NOW() 
+             WHERE school_id = $1 AND default_bus_id = $2 AND id != $3 AND deleted_at IS NULL`,
+            [schoolId, busId, payload.routeId]
+          );
+
+          // Bind route to this bus
+          await client.query(
+            `UPDATE routes 
+             SET default_bus_id = $1, updated_at = NOW() 
+             WHERE id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+            [busId, payload.routeId, schoolId]
+          );
+        } else {
+          // Unassign all routes for this bus
+          await client.query(
+            `UPDATE routes 
+             SET default_bus_id = NULL, updated_at = NOW() 
+             WHERE school_id = $1 AND default_bus_id = $2 AND deleted_at IS NULL`,
+            [schoolId, busId]
+          );
+        }
+      }
+    });
+
+    const updatedBus = await this.getBusById(schoolId, busId);
+
+    // 4. Record Audit Trail
+    await AuditService.logAction({
+      schoolId,
+      userId: userId || null,
+      userRole: 'SCHOOL_ADMIN',
+      action: 'BUS_ASSIGNMENTS_UPDATED',
+      entityType: 'BUS',
+      entityId: busId,
+      diffJson: {
+        before: {
+          defaultDriverId: currentBus.defaultDriverId,
+          driverName: currentBus.driverName,
+          assignedRouteId: currentBus.assignedRouteId,
+          assignedRouteName: currentBus.assignedRouteName,
+        },
+        after: {
+          defaultDriverId: updatedBus.defaultDriverId,
+          driverName: updatedBus.driverName,
+          assignedRouteId: updatedBus.assignedRouteId,
+          assignedRouteName: updatedBus.assignedRouteName,
+        },
+      },
+      ipAddress,
+    });
+
+    logger.info('Bus assignments updated successfully', {
+      schoolId,
+      busId,
+      driverId: updatedBus.defaultDriverId,
+      routeId: updatedBus.assignedRouteId,
+      updatedBy: userId,
+    });
+
+    return updatedBus;
+  }
+
+  /**
+   * Lists all fleet vehicles for a school with joined driver and route details
    */
   public static async getBuses(schoolId: string): Promise<BusWithDriver[]> {
     const sql = `
@@ -169,7 +291,10 @@ export class BusService {
         d.full_name AS "driverName",
         d.phone AS "driverPhone",
         d.license_number AS "driverLicenseNumber",
-        r.name AS "assignedRouteName"
+        r.id AS "assignedRouteId",
+        r.name AS "assignedRouteName",
+        r.code AS "assignedRouteCode",
+        r.route_type AS "assignedRouteType"
       FROM buses b
       LEFT JOIN drivers d ON b.default_driver_id = d.id AND d.deleted_at IS NULL
       LEFT JOIN routes r ON r.default_bus_id = b.id AND r.deleted_at IS NULL
@@ -181,7 +306,7 @@ export class BusService {
   }
 
   /**
-   * Retrieves single bus by ID
+   * Retrieves single bus by ID with joined driver and route details
    */
   public static async getBusById(schoolId: string, busId: string): Promise<BusWithDriver> {
     const sql = `
@@ -198,7 +323,10 @@ export class BusService {
         d.full_name AS "driverName",
         d.phone AS "driverPhone",
         d.license_number AS "driverLicenseNumber",
-        r.name AS "assignedRouteName"
+        r.id AS "assignedRouteId",
+        r.name AS "assignedRouteName",
+        r.code AS "assignedRouteCode",
+        r.route_type AS "assignedRouteType"
       FROM buses b
       LEFT JOIN drivers d ON b.default_driver_id = d.id AND d.deleted_at IS NULL
       LEFT JOIN routes r ON r.default_bus_id = b.id AND r.deleted_at IS NULL
@@ -211,5 +339,50 @@ export class BusService {
     }
 
     return rows[0];
+  }
+
+  /**
+   * Retrieves registered drivers for tenant dropdowns
+   */
+  public static async getDrivers(schoolId: string): Promise<Driver[]> {
+    const sql = `
+      SELECT
+        id,
+        school_id AS "schoolId",
+        full_name AS "fullName",
+        phone,
+        license_number AS "licenseNumber",
+        license_expiry AS "licenseExpiry",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM drivers
+      WHERE school_id = $1 AND deleted_at IS NULL
+      ORDER BY full_name ASC
+    `;
+    return await query<Driver>(sql, [schoolId]);
+  }
+
+  /**
+   * Retrieves configured routes for tenant dropdowns
+   */
+  public static async getRoutes(schoolId: string): Promise<Route[]> {
+    const sql = `
+      SELECT
+        id,
+        school_id AS "schoolId",
+        name,
+        code,
+        route_type AS "routeType",
+        default_bus_id AS "defaultBusId",
+        default_driver_id AS "defaultDriverId",
+        path_polyline AS "pathPolyline",
+        estimated_duration_minutes AS "estimatedDurationMinutes",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM routes
+      WHERE school_id = $1 AND deleted_at IS NULL
+      ORDER BY name ASC
+    `;
+    return await query<Route>(sql, [schoolId]);
   }
 }

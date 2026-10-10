@@ -254,11 +254,20 @@ export type CreateBusRequest = z.infer<typeof CreateBusRequestSchema>;
 export const UpdateBusRequestSchema = CreateBusRequestSchema.partial();
 export type UpdateBusRequest = z.infer<typeof UpdateBusRequestSchema>;
 
+export const AssignBusPayloadSchema = z.object({
+  driverId: z.string().uuid('Valid driver UUID required').nullable().optional(),
+  routeId: z.string().uuid('Valid route UUID required').nullable().optional(),
+});
+export type AssignBusPayload = z.infer<typeof AssignBusPayloadSchema>;
+
 export interface BusWithDriver extends Bus {
   driverName?: string | null;
   driverPhone?: string | null;
   driverLicenseNumber?: string | null;
+  assignedRouteId?: string | null;
   assignedRouteName?: string | null;
+  assignedRouteCode?: string | null;
+  assignedRouteType?: string | null;
 }
 
 // 5. Student
