@@ -784,7 +784,9 @@ export class DriverService {
 
     await query(
       `UPDATE drivers 
-       SET updated_at = NOW() 
+       SET token_version = COALESCE(token_version, 1) + 1,
+           session_revoked_at = NOW(),
+           updated_at = NOW() 
        WHERE school_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [schoolId, driverId]
     );

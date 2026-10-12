@@ -15,11 +15,11 @@ declare global {
 /**
  * Middleware to authenticate requests using Driver JWT Bearer token
  */
-export function authenticateDriver(
+export async function authenticateDriver(
   req: Request,
   _res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return next(new UnauthorizedError('Driver authorization token is missing'));
@@ -31,12 +31,39 @@ export function authenticateDriver(
   }
 
   try {
-    const driverPayload = DriverAuthService.verifyDriverToken(token);
+    const driverPayload = await DriverAuthService.verifyDriverSession(token);
     req.driver = driverPayload;
     next();
   } catch (error) {
     next(error);
   }
+}
+
+/**
+ * Optional driver authentication: extracts and verifies session if Authorization header present
+ */
+export async function authenticateDriverOptional(
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next();
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return next();
+  }
+
+  try {
+    const driverPayload = await DriverAuthService.verifyDriverSession(token);
+    req.driver = driverPayload;
+  } catch {
+    // Optional, ignore invalid token on logout
+  }
+  next();
 }
 
 /**
