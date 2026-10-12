@@ -57,7 +57,7 @@ export class BusService {
     }>(duplicateSql, [schoolId, normalizedReg, trimmedBusNumber]);
 
     if (existing.length > 0) {
-      const match = existing[0];
+      const match = existing[0]!;
       if (match.registration_number.toUpperCase() === normalizedReg.toUpperCase()) {
         throw new ConflictError(
           `Vehicle with registration number "${normalizedReg}" is already registered in your fleet.`
@@ -92,9 +92,9 @@ export class BusService {
         );
       }
 
-      driverName = driverRows[0].fullName;
-      driverPhone = driverRows[0].phone;
-      driverLicense = driverRows[0].licenseNumber;
+      driverName = driverRows[0]!.fullName;
+      driverPhone = driverRows[0]!.phone;
+      driverLicense = driverRows[0]!.licenseNumber;
     }
 
     // 3. Insert bus record
@@ -129,7 +129,7 @@ export class BusService {
       cleanMakeModel,
     ]);
 
-    const createdBus = insertedRows[0];
+    const createdBus = insertedRows[0]!;
     createdBus.driverName = driverName;
     createdBus.driverPhone = driverPhone;
     createdBus.driverLicenseNumber = driverLicense;
@@ -402,7 +402,7 @@ export class BusService {
 
     let currentLocation: BusCurrentLocation | null = null;
     if (locRows.length > 0) {
-      const loc = locRows[0];
+      const loc = locRows[0]!;
       currentLocation = {
         latitude: Number(loc.latitude),
         longitude: Number(loc.longitude),
@@ -451,7 +451,7 @@ export class BusService {
 
     let currentTrip: BusCurrentTrip | null = null;
     if (tripRows.length > 0) {
-      const tr = tripRows[0];
+      const tr = tripRows[0]!;
       currentTrip = {
         id: tr.id,
         routeId: tr.routeId,
@@ -656,7 +656,7 @@ export class BusService {
       throw new NotFoundError(`Vehicle with ID ${busId} not found in this school.`);
     }
 
-    return rows[0];
+    return rows[0]!;
   }
 
   /**

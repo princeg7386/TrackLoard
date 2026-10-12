@@ -1,4 +1,4 @@
-import { Pool, PoolConfig } from 'pg';
+import { Pool, PoolConfig, PoolClient } from 'pg';
 import { env } from './env.js';
 
 const poolConfig: PoolConfig = {
@@ -22,6 +22,26 @@ export async function query<T = any>(text: string, params?: any[]): Promise<T[]>
     console.warn(`[Slow Query ${duration}ms]: ${text}`);
   }
   return res.rows;
+}
+
+/**
+ * Execute operations within an atomic PostgreSQL transaction.
+ * Automatically acquires client, executes BEGIN, commits on success,
+ * rolls back on error, and safely releases client back to the pool.
+ */
+export async function transaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function verifyPostGisConnection(): Promise<{

@@ -105,7 +105,7 @@ export class DriverService {
         pinHash,
       ]);
 
-      createdDriverId = insertRes.rows[0].id;
+      createdDriverId = insertRes.rows[0]!.id;
 
       // If bus assignment provided, update bus default driver
       if (assignedBusId) {
@@ -217,7 +217,7 @@ export class DriverService {
       throw new NotFoundError(`Driver with ID ${driverId} not found in this school.`);
     }
 
-    return rows[0];
+    return rows[0]!;
   }
 
   /**

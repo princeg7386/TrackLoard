@@ -162,6 +162,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const { search, relationship, whatsAppStatus } = req.query;
 
       const records = await ParentIdentityService.listParentsForSchool(
@@ -193,6 +197,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId, parentId } = req.params;
+      if (!schoolId || !parentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Parent ID are required' } });
+        return;
+      }
       const details = await ParentIdentityService.getParentAssignmentDetails(
         schoolId,
         parentId
@@ -218,6 +226,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId, parentId } = req.params;
+      if (!schoolId || !parentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Parent ID are required' } });
+        return;
+      }
       const { studentId } = req.body;
       const actorUserId = req.user?.id || null;
 
@@ -257,6 +269,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId, parentId } = req.params;
+      if (!schoolId || !parentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Parent ID are required' } });
+        return;
+      }
       const history = await ParentIdentityService.getParentCommunicationHistory(
         schoolId,
         parentId
@@ -282,6 +298,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId, parentId } = req.params;
+      if (!schoolId || !parentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Parent ID are required' } });
+        return;
+      }
       const notice = await ParentIdentityService.sendParentNotice(
         schoolId,
         parentId,
@@ -309,6 +329,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId, parentId } = req.params;
+      if (!schoolId || !parentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Parent ID are required' } });
+        return;
+      }
       const { ttlHours, customNote } = req.body || {};
       const adminUserId = req.user?.id || null;
 

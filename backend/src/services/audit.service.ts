@@ -1,3 +1,4 @@
+import { PoolClient } from 'pg';
 import { query } from '../config/database.js';
 import { AuditLog, PaginatedResult } from '@school-bus/shared';
 import { logger } from './logger.service.js';
@@ -11,6 +12,8 @@ export interface RecordAuditLogParams {
   entityId: string;
   diffJson?: Record<string, any>;
   ipAddress?: string;
+  client?: PoolClient;
+  throwOnError?: boolean;
 }
 
 export interface QueryAuditLogsParams {
@@ -24,6 +27,11 @@ export interface QueryAuditLogsParams {
 
 export class AuditService {
   /**
+   * Alias for logAction ensuring backward compatibility with AuditService.log calls
+   */
+  public static log = AuditService.logAction;
+
+  /**
    * Records a security-relevant or operational action into the immutable audit trail
    */
   public static async logAction(params: RecordAuditLogParams): Promise<string> {
@@ -36,6 +44,8 @@ export class AuditService {
       entityId,
       diffJson = {},
       ipAddress = '0.0.0.0',
+      client,
+      throwOnError = false,
     } = params;
 
     // Sanitize diffJson to ensure passwords or raw credentials are never persisted to audit logs
@@ -56,18 +66,32 @@ export class AuditService {
     `;
 
     try {
-      const rows = await query<{ id: string }>(sql, [
-        schoolId,
-        userId,
-        userRole,
-        action,
-        entityType,
-        entityId,
-        JSON.stringify(sanitizedDiff),
-        ipAddress,
-      ]);
-
-      const logId = rows[0]?.id || '';
+      let logId = '';
+      if (client) {
+        const res = await client.query<{ id: string }>(sql, [
+          schoolId,
+          userId,
+          userRole,
+          action,
+          entityType,
+          entityId,
+          JSON.stringify(sanitizedDiff),
+          ipAddress,
+        ]);
+        logId = res.rows[0]?.id || '';
+      } else {
+        const rows = await query<{ id: string }>(sql, [
+          schoolId,
+          userId,
+          userRole,
+          action,
+          entityType,
+          entityId,
+          JSON.stringify(sanitizedDiff),
+          ipAddress,
+        ]);
+        logId = rows[0]?.id || '';
+      }
 
       logger.info('Audit log recorded', {
         logId,
@@ -79,7 +103,6 @@ export class AuditService {
 
       return logId;
     } catch (error: any) {
-      // Never crash the primary request if audit insert fails; log high priority alert
       logger.error('Failed to write audit log entry', {
         error: error.message,
         action,
@@ -87,6 +110,9 @@ export class AuditService {
         entityId,
         schoolId,
       });
+      if (throwOnError || client) {
+        throw error;
+      }
       return '';
     }
   }

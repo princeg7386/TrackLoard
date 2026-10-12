@@ -9,6 +9,10 @@ export class StudentController {
   public static async createStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -31,6 +35,10 @@ export class StudentController {
   public static async listStudents(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const { search, classGrade, section } = req.query;
 
       const students = await StudentService.getStudents(schoolId, {
@@ -55,6 +63,10 @@ export class StudentController {
   public static async getStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const student = await StudentService.getStudentById(schoolId, studentId);
 
       res.status(200).json({
@@ -73,6 +85,10 @@ export class StudentController {
   public static async getParents(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const parents = await StudentService.getParentsByStudentId(schoolId, studentId);
 
       res.status(200).json({
@@ -85,12 +101,16 @@ export class StudentController {
   }
 
   /**
-   * Adds or updates parent/guardian details and emergency contact
+   * Adds or updates parent/guardians details and emergency contact
    * POST /api/v1/schools/:schoolId/students/:studentId/parents
    */
   public static async upsertParent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -119,6 +139,10 @@ export class StudentController {
   public static async deleteParent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId, parentId } = req.params;
+      if (!schoolId || !studentId || !parentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID, Student ID, and Parent ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -140,6 +164,10 @@ export class StudentController {
   public static async getTransportOptions(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const options = await StudentService.getTransportOptions(schoolId);
 
       res.status(200).json({
@@ -158,6 +186,10 @@ export class StudentController {
   public static async assignTransport(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -186,6 +218,10 @@ export class StudentController {
   public static async updateStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -214,6 +250,10 @@ export class StudentController {
   public static async deleteStudent(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -235,6 +275,10 @@ export class StudentController {
   public static async getTransportHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;
+      if (!schoolId || !studentId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Student ID are required' } });
+        return;
+      }
       const limit = req.query.limit ? Number(req.query.limit) : 50;
 
       const history = await StudentService.getStudentTransportHistory(schoolId, studentId, limit);

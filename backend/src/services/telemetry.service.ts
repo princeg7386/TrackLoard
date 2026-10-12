@@ -123,19 +123,19 @@ export class TelemetryService {
     // Insert into gps_locations with ON CONFLICT (trip_id, recorded_at) DO NOTHING
     const resultRows = await query<{
       id: string;
-      trip_id: string;
-      bus_id: string;
-      driver_id: string;
+      tripId: string;
+      busId: string;
+      driverId: string;
       latitude: number;
       longitude: number;
-      speed_kmh: number;
-      bearing_degrees: number | null;
-      accuracy_meters: number | null;
-      battery_percentage: number | null;
-      is_charging: boolean | null;
-      network_type: string | null;
-      recorded_at: string;
-      created_at: string;
+      speedKmh: number;
+      bearingDegrees: number | null;
+      accuracyMeters: number | null;
+      batteryPercentage: number | null;
+      isCharging: boolean | null;
+      networkType: string | null;
+      recordedAt: string;
+      createdAt: string;
     }>(
       `INSERT INTO gps_locations (
         trip_id,
@@ -477,19 +477,19 @@ export class TelemetryService {
   static async getLatestBusLocation(busId: string) {
     const rows = await query<{
       id: string;
-      trip_id: string;
-      bus_id: string;
-      driver_id: string;
+      tripId: string;
+      busId: string;
+      driverId: string;
       latitude: number;
       longitude: number;
-      speed_kmh: number;
-      bearing_degrees: number | null;
-      accuracy_meters: number | null;
-      battery_percentage: number | null;
-      is_charging: boolean | null;
-      network_type: string | null;
-      recorded_at: string;
-      created_at: string;
+      speedKmh: number;
+      bearingDegrees: number | null;
+      accuracyMeters: number | null;
+      batteryPercentage: number | null;
+      isCharging: boolean | null;
+      networkType: string | null;
+      recordedAt: string;
+      createdAt: string;
     }>(
       `SELECT 
         id,
@@ -543,11 +543,11 @@ export class TelemetryService {
       id: string;
       latitude: number;
       longitude: number;
-      speed_kmh: number;
-      bearing_degrees: number | null;
-      accuracy_meters: number | null;
-      battery_percentage: number | null;
-      recorded_at: string;
+      speedKmh: number;
+      bearingDegrees: number | null;
+      accuracyMeters: number | null;
+      batteryPercentage: number | null;
+      recordedAt: string;
     }>(
       `SELECT 
         id,

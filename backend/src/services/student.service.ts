@@ -92,7 +92,7 @@ export class StudentService {
         cleanEmergencyPhone,
       ]);
 
-      createdStudentId = insertRes.rows[0].id;
+      createdStudentId = insertRes.rows[0]!.id;
 
       if (guardianName && guardianPhone) {
         const insertParentSql = `
@@ -118,7 +118,7 @@ export class StudentService {
     });
 
     // 3. Security Audit Logging
-    await AuditService.log({
+    await AuditService.logAction({
       schoolId,
       userId: userId || null,
       userRole: 'SCHOOL_ADMIN',
@@ -486,7 +486,7 @@ export class StudentService {
       );
 
       if (existingParentRes.rows.length > 0) {
-        const parentId = existingParentRes.rows[0].id;
+        const parentId = existingParentRes.rows[0]!.id;
         const updateSql = `
           UPDATE parents
           SET
@@ -529,7 +529,7 @@ export class StudentService {
     });
 
     // 3. Security Audit Log
-    await AuditService.log({
+    await AuditService.logAction({
       schoolId,
       userId: userId || null,
       userRole: 'SCHOOL_ADMIN',
@@ -576,7 +576,7 @@ export class StudentService {
       throw new NotFoundError('Parent record not found or does not belong to this student.');
     }
 
-    const parent = parentRows[0];
+    const parent = parentRows[0]!;
 
     // 2. Soft-delete parent
     await query(
@@ -585,7 +585,7 @@ export class StudentService {
     );
 
     // 3. Security Audit Log
-    await AuditService.log({
+    await AuditService.logAction({
       schoolId,
       userId: userId || null,
       userRole: 'SCHOOL_ADMIN',
@@ -625,7 +625,7 @@ export class StudentService {
     if (studentCheck.length === 0) {
       throw new NotFoundError('Student record not found or does not belong to your school.');
     }
-    const student = studentCheck[0];
+    const student = studentCheck[0]!;
 
     const pickupStopId = payload.pickupStopId && payload.pickupStopId.trim() ? payload.pickupStopId.trim() : null;
     const dropStopId = payload.dropStopId && payload.dropStopId.trim() ? payload.dropStopId.trim() : null;
@@ -670,7 +670,7 @@ export class StudentService {
       });
 
       // Audit Log
-      await AuditService.log({
+      await AuditService.logAction({
         schoolId,
         userId: userId || null,
         userRole: 'SCHOOL_ADMIN',
@@ -680,7 +680,7 @@ export class StudentService {
         diffJson: {
           studentName: student.full_name,
           pickupStopId,
-          pickupStopName: stopCheck[0].stop_name,
+          pickupStopName: stopCheck[0]!.stop_name,
           dropStopId,
         },
         ipAddress,
@@ -702,7 +702,7 @@ export class StudentService {
       });
 
       // Audit Log
-      await AuditService.log({
+      await AuditService.logAction({
         schoolId,
         userId: userId || null,
         userRole: 'SCHOOL_ADMIN',
@@ -846,7 +846,7 @@ export class StudentService {
     ]);
 
     // 4. Audit Log
-    await AuditService.log({
+    await AuditService.logAction({
       schoolId,
       userId: userId || null,
       userRole: 'SCHOOL_ADMIN',
@@ -917,7 +917,7 @@ export class StudentService {
     });
 
     // 3. Audit Log
-    await AuditService.log({
+    await AuditService.logAction({
       schoolId,
       userId: userId || null,
       userRole: 'SCHOOL_ADMIN',

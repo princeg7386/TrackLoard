@@ -9,6 +9,10 @@ export class DriverController {
   public static async createDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -31,6 +35,10 @@ export class DriverController {
   public static async listDrivers(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const drivers = await DriverService.getDrivers(schoolId);
 
       res.status(200).json({
@@ -49,6 +57,10 @@ export class DriverController {
   public static async getDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const driver = await DriverService.getDriverById(schoolId, driverId);
 
       res.status(200).json({
@@ -67,6 +79,10 @@ export class DriverController {
   public static async assignBus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -89,6 +105,10 @@ export class DriverController {
   public static async getDriverHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const history = await DriverService.getDriverFullHistory(schoolId, driverId);
 
       res.status(200).json({
@@ -107,6 +127,10 @@ export class DriverController {
   public static async updateDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -129,6 +153,10 @@ export class DriverController {
   public static async resetPin(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const { pin } = req.body;
       const userId = req.user?.id;
       const ipAddress = req.ip;
@@ -151,6 +179,10 @@ export class DriverController {
   public static async revokeSessions(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -172,6 +204,10 @@ export class DriverController {
   public static async removeDriver(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, driverId } = req.params;
+      if (!schoolId || !driverId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Driver ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
