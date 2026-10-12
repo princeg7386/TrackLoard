@@ -50,5 +50,20 @@ telemetryRouter.get(
   TelemetryController.getBusHealth
 );
 
+// 7. Real-time SSE stream for school fleet canvas (Tenant isolated)
+telemetryRouter.get(
+  '/schools/:schoolId/feed',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.streamSchoolFeed
+);
+
+// 8. Real-time SSE stream for trip tracking
+telemetryRouter.get(
+  '/trips/:tripId/feed',
+  TelemetryController.streamTripFeed
+);
+
 export default telemetryRouter;
+
 

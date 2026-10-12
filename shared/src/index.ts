@@ -1007,6 +1007,33 @@ export const FleetGpsHealthOverviewSchema = z.object({
 });
 export type FleetGpsHealthOverview = z.infer<typeof FleetGpsHealthOverviewSchema>;
 
+// Real-Time Telemetry Feed Event Definition (SSE / Pub-Sub)
+export type TelemetryFeedEventType = 'INITIAL_STATE' | 'LOCATION_UPDATE' | 'HEALTH_UPDATE' | 'HEARTBEAT';
+
+export interface TelemetryFeedEvent {
+  type: TelemetryFeedEventType;
+  schoolId: string;
+  busId: string;
+  tripId: string;
+  latitude: number;
+  longitude: number;
+  speedKmh: number;
+  bearingDegrees?: number | null;
+  accuracyMeters?: number | null;
+  batteryPercentage?: number | null;
+  isCharging?: boolean | null;
+  networkType?: string | null;
+  healthStatus: GpsHealthStatus;
+  recordedAt: string;
+  timestamp: string;
+}
+
+export const TelemetryFeedQuerySchema = z.object({
+  token: z.string().optional(),
+});
+export type TelemetryFeedQuery = z.infer<typeof TelemetryFeedQuerySchema>;
+
+
 // 12. Boarding & Drop Attendance Events
 export const BoardingEventSchema = z.object({
   id: z.string().uuid().optional(),

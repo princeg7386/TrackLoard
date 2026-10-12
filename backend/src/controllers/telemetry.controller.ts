@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
+import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { TelemetryIngestPayload } from '@school-bus/shared';
 
 export class TelemetryController {
@@ -118,6 +119,81 @@ export class TelemetryController {
       res.status(200).json({
         success: true,
         data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/feed
+   * Real-time Server-Sent Events (SSE) telemetry feed for school admin fleet canvas
+   */
+  static async streamSchoolFeed(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+
+      // 1. Initialize SSE connection headers
+      RealtimeFeedService.initSseStream(res);
+
+      // 2. Fetch and dispatch initial fleet state
+      const initialFleet = await GpsHealthService.getSchoolFleetGpsHealth(schoolId!);
+      RealtimeFeedService.sendSseMessage(res, 'initial_state', initialFleet);
+
+      // 3. Subscribe to real-time telemetry updates for this school
+      const unsubscribe = RealtimeFeedService.subscribeSchool(schoolId!, (event) => {
+        RealtimeFeedService.sendSseMessage(res, 'location_update', event);
+      });
+
+      // 4. Setup periodic heartbeat ping to prevent timeouts
+      const heartbeatInterval = setInterval(() => {
+        RealtimeFeedService.sendSseHeartbeat(res);
+      }, 20000);
+
+      // 5. Clean up on client disconnect
+      req.on('close', () => {
+        clearInterval(heartbeatInterval);
+        unsubscribe();
+        res.end();
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/feed
+   * Real-time Server-Sent Events (SSE) telemetry feed for a specific trip
+   */
+  static async streamTripFeed(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+
+      // 1. Initialize SSE connection headers
+      RealtimeFeedService.initSseStream(res);
+
+      // 2. Fetch and dispatch recent trail as initial state
+      const recentTrail = await TelemetryService.getTripLocationTrail(tripId!, 20);
+      RealtimeFeedService.sendSseMessage(res, 'initial_state', {
+        tripId,
+        recentTrail,
+      });
+
+      // 3. Subscribe to real-time telemetry updates for this trip
+      const unsubscribe = RealtimeFeedService.subscribeTrip(tripId!, (event) => {
+        RealtimeFeedService.sendSseMessage(res, 'location_update', event);
+      });
+
+      // 4. Setup periodic heartbeat ping
+      const heartbeatInterval = setInterval(() => {
+        RealtimeFeedService.sendSseHeartbeat(res);
+      }, 20000);
+
+      // 5. Clean up on client disconnect
+      req.on('close', () => {
+        clearInterval(heartbeatInterval);
+        unsubscribe();
+        res.end();
       });
     } catch (error) {
       next(error);

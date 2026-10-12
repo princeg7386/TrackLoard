@@ -2,13 +2,16 @@ import { query, transaction } from '../config/database.js';
 import {
   TelemetryIngestPayload,
   GpsLocationRecord,
+  TelemetryFeedEvent,
 } from '@school-bus/shared';
 import {
   NotFoundError,
   UnauthorizedError,
   ForbiddenError,
+  BadRequestError,
 } from '../middlewares/error.middleware.js';
 import { GpsHealthService } from './gps-health.service.js';
+import { RealtimeFeedService } from './realtime-feed.service.js';
 import { logger } from './logger.service.js';
 
 export interface TelemetryIngestResult {
@@ -30,12 +33,56 @@ export interface TelemetryIngestResult {
 
 export class TelemetryService {
   /**
+   * Validate that GPS recorded timestamp is not in the future and not older than 24 hours
+   */
+  static validateTimestamp(recordedAt: string): void {
+    const recordedTime = new Date(recordedAt).getTime();
+    if (isNaN(recordedTime)) {
+      throw new BadRequestError('Invalid recordedAt timestamp');
+    }
+
+    const now = Date.now();
+    const maxFutureSkewMs = 5 * 60 * 1000; // Allow 5 minutes clock skew
+    if (recordedTime > now + maxFutureSkewMs) {
+      throw new BadRequestError('Telemetry recordedAt timestamp cannot be in the future');
+    }
+
+    const maxAgeMs = 24 * 60 * 60 * 1000; // 24 hours maximum historical age
+    if (now - recordedTime > maxAgeMs) {
+      throw new BadRequestError('Telemetry ping is too old (> 24 hours)');
+    }
+  }
+
+  /**
+   * Validate coordinate bounds and realistic kinematic limits
+   */
+  static validateKinematics(payload: {
+    speedKmh?: number | null;
+    latitude: number;
+    longitude: number;
+  }): void {
+    if (payload.speedKmh != null && payload.speedKmh > 160) {
+      throw new BadRequestError('Telemetry speed exceeds realistic vehicle threshold (> 160 km/h)');
+    }
+    if (payload.latitude < -90 || payload.latitude > 90) {
+      throw new BadRequestError('Latitude out of valid geographic range [-90, 90]');
+    }
+    if (payload.longitude < -180 || payload.longitude > 180) {
+      throw new BadRequestError('Longitude out of valid geographic range [-180, 180]');
+    }
+  }
+
+  /**
    * Ingest a single GPS location ping from mobile driver app with idempotent deduplication
    */
   static async ingestLocation(
     payload: TelemetryIngestPayload,
     authenticatedDriverId?: string
   ): Promise<GpsLocationRecord> {
+    // 1. Source & Kinematic validation
+    this.validateTimestamp(payload.recordedAt);
+    this.validateKinematics(payload);
+
     // If driver authentication is provided, ensure payload matches driver identity
     if (authenticatedDriverId && payload.driverId !== authenticatedDriverId) {
       throw new ForbiddenError('Driver ID in telemetry payload does not match authenticated session');
@@ -66,6 +113,11 @@ export class TelemetryService {
 
     if (trip.driver_id !== payload.driverId) {
       throw new ForbiddenError('Driver ID does not match the active trip assignment');
+    }
+
+    // Validate trip lifecycle: reject finished or cancelled trips
+    if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
+      throw new BadRequestError(`Cannot ingest telemetry for a trip that is ${trip.status.toLowerCase()}`);
     }
 
     // Insert into gps_locations with ON CONFLICT (trip_id, recorded_at) DO NOTHING
@@ -189,6 +241,25 @@ export class TelemetryService {
       speed: payload.speedKmh,
     });
 
+    // 3. Broadcast real-time feed event (SSE / Pub-Sub)
+    RealtimeFeedService.publish({
+      type: 'LOCATION_UPDATE',
+      schoolId: trip.school_id,
+      busId: payload.busId,
+      tripId: payload.tripId,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      speedKmh: payload.speedKmh ?? 0,
+      bearingDegrees: payload.bearingDegrees ?? null,
+      accuracyMeters: payload.accuracyMeters ?? null,
+      batteryPercentage: payload.batteryPercentage ?? null,
+      isCharging: payload.isCharging ?? false,
+      networkType: payload.networkType ?? 'CELLULAR',
+      healthStatus,
+      recordedAt: new Date(payload.recordedAt).toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+
     return {
       id: parseInt(inserted.id, 10),
       tripId: inserted.tripId,
@@ -225,6 +296,8 @@ export class TelemetryService {
     // Deduplicate on client-sent timestamps in memory first
     const uniqueMap = new Map<string, TelemetryIngestPayload>();
     for (const loc of locations) {
+      this.validateTimestamp(loc.recordedAt);
+      this.validateKinematics(loc);
       const key = `${loc.tripId}:${loc.recordedAt}`;
       uniqueMap.set(key, loc);
     }
@@ -237,8 +310,25 @@ export class TelemetryService {
     );
 
     let ingestedCount = 0;
+    const tripSchoolMap = new Map<string, string>();
 
     await transaction(async (client) => {
+      // Validate unique trips in batch
+      const tripIds = Array.from(new Set(sorted.map((s) => s.tripId)));
+      for (const tripId of tripIds) {
+        const tripRes = await client.query<{ id: string; school_id: string; status: string }>(
+          `SELECT id, school_id, status FROM trips WHERE id = $1 LIMIT 1;`,
+          [tripId]
+        );
+        const trip = tripRes.rows[0];
+        if (trip) {
+          if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
+            throw new BadRequestError(`Cannot ingest telemetry for trip ${tripId} which is ${trip.status.toLowerCase()}`);
+          }
+          tripSchoolMap.set(tripId, trip.school_id);
+        }
+      }
+
       for (const loc of sorted) {
         if (authenticatedDriverId && loc.driverId !== authenticatedDriverId) {
           throw new ForbiddenError('Driver ID in batch item does not match authenticated session');
@@ -330,6 +420,26 @@ export class TelemetryService {
             busId,
           ]
         );
+
+        // Broadcast real-time feed event
+        const schoolId = tripSchoolMap.get(latestLoc.tripId) ?? '';
+        RealtimeFeedService.publish({
+          type: 'LOCATION_UPDATE',
+          schoolId,
+          busId,
+          tripId: latestLoc.tripId,
+          latitude: latestLoc.latitude,
+          longitude: latestLoc.longitude,
+          speedKmh: latestLoc.speedKmh ?? 0,
+          bearingDegrees: latestLoc.bearingDegrees ?? null,
+          accuracyMeters: latestLoc.accuracyMeters ?? null,
+          batteryPercentage: latestLoc.batteryPercentage ?? null,
+          isCharging: latestLoc.isCharging ?? false,
+          networkType: latestLoc.networkType ?? 'CELLULAR',
+          healthStatus,
+          recordedAt: new Date(latestLoc.recordedAt).toISOString(),
+          timestamp: new Date().toISOString(),
+        });
       }
     });
 

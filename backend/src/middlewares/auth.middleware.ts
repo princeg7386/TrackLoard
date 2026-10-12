@@ -24,13 +24,16 @@ export function authenticateToken(
   next: NextFunction
 ): void {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new UnauthorizedError('Authentication token is missing');
+  let token: string | undefined;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (req.query?.token && typeof req.query.token === 'string') {
+    token = req.query.token;
   }
 
-  const token = authHeader.split(' ')[1];
   if (!token) {
-    throw new UnauthorizedError('Invalid authorization token format');
+    throw new UnauthorizedError('Authentication token is missing');
   }
 
   try {
