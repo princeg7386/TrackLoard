@@ -1,8 +1,10 @@
 /// Application API Constants and Endpoints
 class ApiConstants {
-  // Default Base URL for Android Emulator (10.0.2.2 accesses host machine localhost:4000)
-  // Can be configured at runtime or environment variable
-  static const String defaultBaseUrl = 'http://10.0.2.2:4000/api/v1';
+  // Configurable Base URL via --dart-define=API_BASE_URL=... with emulator/localhost fallback
+  static const String defaultBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:4000/api/v1',
+  );
 
   // Driver Authentication Endpoints
   static const String loginEndpoint = '/driver/auth/login';
