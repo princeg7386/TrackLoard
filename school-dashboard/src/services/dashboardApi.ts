@@ -55,7 +55,7 @@ export interface SchoolDashboardSummary {
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
 
 export async function fetchDashboardSummary(schoolId: string): Promise<SchoolDashboardSummary> {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('sb_admin_token') : null;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('sb_auth_token') : null;
 
   try {
     const res = await fetch(`${API_BASE_URL}/schools/${schoolId}/dashboard/summary`, {

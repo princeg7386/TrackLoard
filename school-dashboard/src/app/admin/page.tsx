@@ -35,11 +35,9 @@ type ViewState =
 
 export default function AdminOverviewPage() {
   const { user } = useAuth();
-  const [schoolId, setSchoolId] = useState<string>(
-    user?.schoolId || '111e4567-e89b-12d3-a456-426614174001'
-  );
+  const [schoolId, setSchoolId] = useState<string>(user?.schoolId || '');
   const [data, setData] = useState<SchoolDashboardSummary | null>(null);
-  const [viewState, setViewState] = useState<ViewState>('loading');
+  const [viewState, setViewState] = useState<ViewState>(user?.schoolId ? 'loading' : 'unauthorized');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isOffline, setIsOffline] = useState<boolean>(false);
 
@@ -71,6 +69,10 @@ export default function AdminOverviewPage() {
   }, []);
 
   const loadDashboard = useCallback(async () => {
+    if (!schoolId) {
+      setViewState('unauthorized');
+      return;
+    }
     setViewState('loading');
     setErrorMessage('');
 
