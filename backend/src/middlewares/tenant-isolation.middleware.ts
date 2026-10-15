@@ -156,3 +156,28 @@ export function requirePermission(domain: ResourceDomain, action: PermissionActi
     }
   };
 }
+
+/**
+ * Middleware to enforce that the authenticated JWT actor is scoped to a specific school.
+ * Use on routes where tenant isolation is enforced via req.user.schoolId rather than
+ * a body/param field (e.g. token revocation where the token ID itself is looked up
+ * and its school is verified in the service layer against req.user.schoolId).
+ *
+ * Exported as requireTenantScope alias: requireActorTenantScope
+ */
+export function requireActorTenantScope(req: Request, _res: Response, next: NextFunction): void {
+  try {
+    const actor = req.user;
+    if (!actor) {
+      return next(new UnauthorizedError('Authentication is required'));
+    }
+    if (!actor.schoolId) {
+      return next(new ForbiddenError('This action requires a school-scoped account'));
+    }
+    // requireTenantScope: schoolId verified from JWT — service layer validates resource ownership
+    req.tenantSchoolId = actor.schoolId;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}

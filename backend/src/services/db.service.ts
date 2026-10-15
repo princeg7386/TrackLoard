@@ -1,4 +1,4 @@
-import { PoolClient } from 'pg';
+﻿import { PoolClient } from 'pg';
 import { pool, query } from '../config/database.js';
 import { logger } from './logger.service.js';
 
@@ -40,3 +40,4 @@ export class DbService {
     return await query<T>(sql, params);
   }
 }
+

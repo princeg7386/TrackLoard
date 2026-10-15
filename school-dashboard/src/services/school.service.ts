@@ -1,4 +1,4 @@
-import { School, UpdateSchoolProfileRequest } from '@school-bus/shared';
+﻿import { School, UpdateSchoolProfileRequest } from '@school-bus/shared';
 import { apiRequest } from './api-client';
 
 export class SchoolService {
@@ -24,3 +24,4 @@ export class SchoolService {
     });
   }
 }
+

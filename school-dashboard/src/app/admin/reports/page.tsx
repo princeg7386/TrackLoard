@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import { FileText, Download, Calendar, ShieldCheck } from 'lucide-react';
@@ -52,3 +52,4 @@ export default function ReportsLogsPage() {
     </div>
   );
 }
+

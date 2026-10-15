@@ -1,4 +1,4 @@
-import crypto from 'crypto';
+﻿import crypto from 'crypto';
 
 export class IdUtil {
   /**
@@ -28,3 +28,4 @@ export class IdUtil {
     return prefix ? `${prefix}-${code}` : code;
   }
 }
+

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -82,7 +82,7 @@ export function StudentTransportHistoryModal({
             <div>
               <h2 className="text-base font-bold text-slate-900 leading-tight">Transport & Attendance History</h2>
               <p className="text-xs text-slate-500">
-                {student.fullName} ({student.admissionNumber}) • {student.classGrade}-{student.section}
+                {student.fullName} ({student.admissionNumber}) â€¢ {student.classGrade}-{student.section}
               </p>
             </div>
           </div>
@@ -222,7 +222,7 @@ export function StudentTransportHistoryModal({
                             {rec.routeName && (
                               <span>Route: {rec.routeCode || rec.routeName}</span>
                             )}
-                            <span className="text-slate-400">• Marked by {rec.markedBy.toLowerCase()}</span>
+                            <span className="text-slate-400">â€¢ Marked by {rec.markedBy.toLowerCase()}</span>
                           </div>
                         </div>
                       </div>
@@ -257,3 +257,4 @@ export function StudentTransportHistoryModal({
     </div>
   );
 }
+

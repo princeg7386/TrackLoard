@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { UpdateSchoolProfileRequestSchema, UserRole } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
@@ -27,3 +27,4 @@ schoolProfileRouter.put(
 );
 
 export default schoolProfileRouter;
+

@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import { verifyPostGisConnection } from '../config/database.js';
 import { env } from '../config/env.js';
 
@@ -38,3 +38,4 @@ router.get('/health', async (_req: Request, res: Response) => {
 });
 
 export default router;
+

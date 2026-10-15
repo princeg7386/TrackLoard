@@ -1,4 +1,4 @@
-import app from './app.js';
+﻿import app from './app.js';
 import { env } from './config/env.js';
 import { pool } from './config/database.js';
 import { SecurityUtil } from './utils/security.util.js';
@@ -6,7 +6,7 @@ import { SecurityUtil } from './utils/security.util.js';
 // Enforce production secrets check at startup
 const secretCheck = SecurityUtil.validateProductionSecrets();
 if (!secretCheck.valid) {
-  console.error('❌ Production secrets verification failed:', secretCheck.issues);
+  console.error('âŒ Production secrets verification failed:', secretCheck.issues);
   if (env.NODE_ENV === 'production') {
     process.exit(1);
   }
@@ -15,19 +15,19 @@ if (!secretCheck.valid) {
 const PORT = env.PORT;
 
 const server = app.listen(PORT, () => {
-  console.log(`🚌 [${env.APP_NAME}] Server running in ${env.NODE_ENV} mode on port ${PORT}`);
-  console.log(`📡 Health check available at: http://localhost:${PORT}/health`);
-  console.log(`🔗 API Base route: http://localhost:${PORT}/api/v1`);
+  console.log(`ðŸšŒ [${env.APP_NAME}] Server running in ${env.NODE_ENV} mode on port ${PORT}`);
+  console.log(`ðŸ“¡ Health check available at: http://localhost:${PORT}/health`);
+  console.log(`ðŸ”— API Base route: http://localhost:${PORT}/api/v1`);
 });
 
 // Graceful Shutdown Handlers
 async function handleShutdown(signal: string) {
-  console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+  console.log(`\nðŸ›‘ Received ${signal}. Starting graceful shutdown...`);
   server.close(async () => {
-    console.log('🔒 Closed HTTP server connections.');
+    console.log('ðŸ”’ Closed HTTP server connections.');
     try {
       await pool.end();
-      console.log('📦 Closed database pool connections.');
+      console.log('ðŸ“¦ Closed database pool connections.');
       process.exit(0);
     } catch (err) {
       console.error('Error closing database pool:', err);
@@ -37,7 +37,7 @@ async function handleShutdown(signal: string) {
 
   // Force exit after 10s if hanging
   setTimeout(() => {
-    console.error('⚠️ Could not close connections in time, forcefully shutting down');
+    console.error('âš ï¸ Could not close connections in time, forcefully shutting down');
     process.exit(1);
   }, 10000);
 }
@@ -46,3 +46,4 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 export default server;
+

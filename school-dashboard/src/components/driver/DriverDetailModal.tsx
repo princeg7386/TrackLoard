@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -321,7 +321,7 @@ export function DriverDetailModal({
                   <div className="p-3 bg-white border border-slate-200 rounded-md space-y-1">
                     <span className="text-[11px] text-slate-500 block">App Login PIN</span>
                     <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-slate-800">•••••• (Configured)</span>
+                      <span className="font-mono font-bold text-slate-800">â€¢â€¢â€¢â€¢â€¢â€¢ (Configured)</span>
                       <button
                         type="button"
                         onClick={() => onResetPin(driver)}
@@ -440,3 +440,4 @@ export function DriverDetailModal({
     </div>
   );
 }
+

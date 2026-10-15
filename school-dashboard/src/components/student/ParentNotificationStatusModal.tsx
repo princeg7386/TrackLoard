@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -224,7 +224,7 @@ export function ParentNotificationStatusModal({
                 Parent Notification Health & Link Activity
               </h2>
               <p className="text-xs text-slate-500">
-                {parent.fullName} ({parent.phone || 'No phone'}) • Linked to {parent.student.fullName} ({parent.student.admissionNumber})
+                {parent.fullName} ({parent.phone || 'No phone'}) â€¢ Linked to {parent.student.fullName} ({parent.student.admissionNumber})
               </p>
             </div>
           </div>
@@ -546,3 +546,4 @@ export function ParentNotificationStatusModal({
     </div>
   );
 }
+

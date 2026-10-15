@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+﻿import { query } from '../config/database.js';
 import {
   School,
   UpdateSchoolProfileRequest,
@@ -150,3 +150,4 @@ export class SchoolProfileService {
     return updated;
   }
 }
+

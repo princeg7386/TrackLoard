@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { AuthUserPayload, UserRole } from '@school-bus/shared';
 import { AuthService } from '../services/auth.service.js';
 import {
@@ -63,3 +63,4 @@ export function requireRoles(...allowedRoles: UserRole[]) {
     next();
   };
 }
+

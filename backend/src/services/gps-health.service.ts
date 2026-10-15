@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+﻿import { query } from '../config/database.js';
 import {
   GpsHealthStatus,
   GPS_THRESHOLDS,
@@ -227,3 +227,4 @@ export class GpsHealthService {
     };
   }
 }
+

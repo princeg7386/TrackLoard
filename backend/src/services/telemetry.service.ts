@@ -1,4 +1,4 @@
-import { query, transaction } from '../config/database.js';
+﻿import { query, transaction } from '../config/database.js';
 import {
   TelemetryIngestPayload,
   GpsLocationRecord,
@@ -327,11 +327,11 @@ export class TelemetryService {
     const tripSchoolMap = new Map<string, string>();
 
     await transaction(async (client) => {
-      // Validate unique trips in batch
+      // Validate unique trips in batch â€” fetch bus_id and driver_id to enforce assignment
       const tripIds = Array.from(new Set(sorted.map((s) => s.tripId)));
       for (const tripId of tripIds) {
-        const tripRes = await client.query<{ id: string; school_id: string; status: string }>(
-          `SELECT id, school_id, status FROM trips WHERE id = $1 LIMIT 1;`,
+        const tripRes = await client.query<{ id: string; school_id: string; bus_id: string; driver_id: string; status: string }>(
+          `SELECT id, school_id, bus_id, driver_id, status FROM trips WHERE id = $1 LIMIT 1;`,
           [tripId]
         );
         const trip = tripRes.rows[0];
@@ -339,9 +339,24 @@ export class TelemetryService {
           if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
             throw new BadRequestError(`Cannot ingest telemetry for trip ${tripId} which is ${trip.status.toLowerCase()}`);
           }
+          // Verify the bus and driver in the batch match the trip assignment
+          const repLoc = sorted.find((s) => s.tripId === tripId);
+          if (repLoc) {
+            if (trip.bus_id !== repLoc.busId) {
+              throw new ForbiddenError(
+                `Bus ID ${repLoc.busId} does not match trip ${tripId} assignment (assigned bus: ${trip.bus_id})`
+              );
+            }
+            if (authenticatedDriverId && trip.driver_id !== authenticatedDriverId) {
+              throw new ForbiddenError(
+                `Authenticated driver is not assigned to trip ${tripId}`
+              );
+            }
+          }
           tripSchoolMap.set(tripId, trip.school_id);
         }
       }
+
 
       for (const loc of sorted) {
         if (authenticatedDriverId && loc.driverId !== authenticatedDriverId) {
@@ -591,3 +606,4 @@ export class TelemetryService {
     }));
   }
 }
+

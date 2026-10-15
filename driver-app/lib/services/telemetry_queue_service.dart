@@ -107,15 +107,20 @@ class TelemetryQueueService {
           await _db.removeTelemetry(ids);
           _pendingCount = await _db.getPendingCount();
           _queueCountController.add(_pendingCount);
-        } else if (batchResult.statusCode >= 400 && batchResult.statusCode < 500 && batchResult.statusCode != 429) {
-          // Client validation rejection (400 Bad Request / 403 Forbidden / 422 Unprocessable)
-          // To prevent permanently head-of-line blocking the queue with a malformed payload, drop poison-pill batch
+        } else if (batchResult.statusCode >= 400 &&
+            batchResult.statusCode < 500 &&
+            batchResult.statusCode != 401 &&
+            batchResult.statusCode != 403 &&
+            batchResult.statusCode != 429) {
+          // Poison-pill drop: client validation rejection (400 Bad Request / 422 Unprocessable).
+          // 401 Unauthorized and 403 Forbidden are NOT dropped — the session may be expired or
+          // revoked and the driver must re-authenticate. GPS data is preserved for retry.
           await _db.removeTelemetry(ids);
           _pendingCount = await _db.getPendingCount();
           _queueCountController.add(_pendingCount);
         } else {
-          // Transient failure (5xx server error, 429 rate limit, or network disconnection)
-          // Increment retry counter and stop current drain cycle
+          // Transient failure: 5xx server error, 429 rate limit, 401/403 auth error, network loss.
+          // Increment retry counter and stop current drain cycle. Data is preserved.
           await _db.incrementRetryCount(ids);
           break;
         }

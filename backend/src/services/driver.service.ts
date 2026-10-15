@@ -1,4 +1,4 @@
-import bcrypt from 'bcryptjs';
+﻿import bcrypt from 'bcryptjs';
 import { query } from '../config/database.js';
 import {
   CreateDriverRequest,
@@ -865,5 +865,6 @@ export class DriverService {
     });
   }
 }
+
 
 

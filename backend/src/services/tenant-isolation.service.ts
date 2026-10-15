@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+﻿import { query } from '../config/database.js';
 import {
   AuthUserPayload,
   DriverAuthPayload,
@@ -207,3 +207,4 @@ export class TenantIsolationService {
     };
   }
 }
+

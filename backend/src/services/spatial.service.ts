@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+﻿import { query } from '../config/database.js';
 import {
   GeoCoordinates,
   TelemetryIngestPayload,
@@ -130,3 +130,4 @@ export class SpatialService {
     };
   }
 }
+

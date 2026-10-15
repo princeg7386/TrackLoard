@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { DashboardService } from '../services/dashboard.service.js';
 
 export class DashboardController {
@@ -23,3 +23,4 @@ export class DashboardController {
     }
   }
 }
+

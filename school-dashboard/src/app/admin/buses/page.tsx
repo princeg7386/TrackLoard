@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Bus, Plus, Search, RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
@@ -267,3 +267,4 @@ export default function FleetBusesPage() {
     </div>
   );
 }
+

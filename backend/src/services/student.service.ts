@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+﻿import { query } from '../config/database.js';
 import {
   CreateStudentRequest,
   UpdateStudentRequest,
@@ -1051,4 +1051,5 @@ export class StudentService {
     };
   }
 }
+
 

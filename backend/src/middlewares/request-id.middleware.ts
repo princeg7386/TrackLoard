@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { IdUtil } from '../utils/id.util.js';
 
 // Extend Express Request interface to include request ID
@@ -29,3 +29,4 @@ export function requestIdMiddleware(
 
   next();
 }
+

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -95,7 +95,7 @@ export default function LoginPage() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
                   className="w-full pl-9 pr-3 py-2 text-xs rounded-md border border-slate-300 focus:border-sky-600 focus:ring-1 focus:ring-sky-600"
                 />
               </div>
@@ -131,3 +131,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

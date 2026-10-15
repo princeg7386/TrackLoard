@@ -1,4 +1,4 @@
-import { Pool, PoolConfig, PoolClient } from 'pg';
+﻿import { Pool, PoolConfig, PoolClient } from 'pg';
 import { env } from './env.js';
 
 const poolConfig: PoolConfig = {
@@ -64,3 +64,4 @@ export async function verifyPostGisConnection(): Promise<{
     };
   }
 }
+

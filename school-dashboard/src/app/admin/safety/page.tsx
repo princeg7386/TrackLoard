@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import { ShieldCheck, Filter } from 'lucide-react';
@@ -40,3 +40,4 @@ export default function SafetyIncidentsPage() {
     </div>
   );
 }
+

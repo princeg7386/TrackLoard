@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import { AdminAccountForm } from '../../../components/admin/AdminAccountForm';
@@ -17,3 +17,4 @@ export default function AdminAccountPage() {
     </div>
   );
 }
+

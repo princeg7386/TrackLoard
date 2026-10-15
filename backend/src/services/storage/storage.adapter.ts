@@ -1,4 +1,4 @@
-import fs from 'fs';
+﻿import fs from 'fs';
 import path from 'path';
 
 export interface UploadOptions {
@@ -88,3 +88,4 @@ export class MockStorageAdapter implements IStorageAdapter {
     return this.store.has(filePath);
   }
 }
+

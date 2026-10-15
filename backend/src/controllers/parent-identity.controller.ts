@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import {
   ParentIdentityLookupRequest,
   GenerateParentTokenRequest,
@@ -489,3 +489,4 @@ export class ParentIdentityController {
     }
   }
 }
+

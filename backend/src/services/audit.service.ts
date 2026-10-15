@@ -1,4 +1,4 @@
-import { PoolClient } from 'pg';
+﻿import { PoolClient } from 'pg';
 import { query } from '../config/database.js';
 import { AuditLog, PaginatedResult } from '@school-bus/shared';
 import { logger } from './logger.service.js';
@@ -226,3 +226,4 @@ export class AuditService {
     return sanitized;
   }
 }
+

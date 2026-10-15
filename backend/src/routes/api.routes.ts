@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import authRouter from './auth.routes.js';
 import driverAuthRouter from './driver-auth.routes.js';
 import parentRouter from './parent-identity.routes.js';
@@ -47,3 +47,4 @@ apiRouter.get('/', (_req: Request, res: Response) => {
 });
 
 export default apiRouter;
+

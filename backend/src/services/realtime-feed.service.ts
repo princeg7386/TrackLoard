@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events';
+﻿import { EventEmitter } from 'events';
 import { Response } from 'express';
 import { TelemetryFeedEvent, GpsHealthStatus } from '@school-bus/shared';
 import { logger } from './logger.service.js';
@@ -121,3 +121,4 @@ export class RealtimeFeedService {
     return this.emitter.listenerCount(channel);
   }
 }
+

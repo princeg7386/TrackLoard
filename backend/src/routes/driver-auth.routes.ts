@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { DriverAuthController } from '../controllers/driver-auth.controller.js';
 import { validateRequest } from '../middlewares/validate.middleware.js';
 import { authenticateDriver, authenticateDriverOptional } from '../middlewares/driver-auth.middleware.js';
@@ -23,3 +23,4 @@ driverAuthRouter.post('/logout', authenticateDriverOptional, DriverAuthControlle
 driverAuthRouter.get('/me', authenticateDriver, DriverAuthController.getProfile);
 
 export default driverAuthRouter;
+

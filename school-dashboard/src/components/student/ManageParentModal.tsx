@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -232,7 +232,7 @@ export function ManageParentModal({
                   {student.fullName}
                 </span>
                 <span className="text-[11px] text-slate-500 font-mono">
-                  {student.admissionNumber} • {student.classGrade} (Sec {student.section})
+                  {student.admissionNumber} â€¢ {student.classGrade} (Sec {student.section})
                 </span>
               </div>
             </div>
@@ -499,3 +499,4 @@ export function ManageParentModal({
     </div>
   );
 }
+

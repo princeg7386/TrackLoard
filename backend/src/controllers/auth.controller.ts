@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { AuthService } from '../services/auth.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 
@@ -30,8 +30,8 @@ export class AuthController {
         res,
         {
           requested: true,
-          // Only return token in dev/test mode for automated testing convenience
-          ...(process.env.NODE_ENV !== 'production' ? { devResetToken: result.resetToken } : {}),
+          // Only return token in test mode for automated testing convenience
+          ...(process.env.NODE_ENV === 'test' ? { devResetToken: result.resetToken } : {}),
         },
         'If an account exists, a password reset link has been dispatched'
       );
@@ -82,3 +82,4 @@ export class AuthController {
     }
   }
 }
+

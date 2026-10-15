@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { ApiResponse } from '@school-bus/shared';
 import { env } from '../config/env.js';
@@ -117,3 +117,4 @@ export function errorHandler(
   };
   res.status(500).json(payload);
 }
+

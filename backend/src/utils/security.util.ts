@@ -1,4 +1,4 @@
-import { Request } from 'express';
+﻿import { Request } from 'express';
 import { env } from '../config/env.js';
 
 export class SecurityUtil {
@@ -70,3 +70,4 @@ export class SecurityUtil {
     return `${prefix}****${suffix}`;
   }
 }
+

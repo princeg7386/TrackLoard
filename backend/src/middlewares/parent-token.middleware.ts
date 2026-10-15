@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { ParentLiveTrackingSession } from '@school-bus/shared';
 import { ParentIdentityService } from '../services/parent-identity.service.js';
 import { UnauthorizedError } from './error.middleware.js';
@@ -55,3 +55,4 @@ export async function authenticateParentTrackingToken(
     next(error);
   }
 }
+

@@ -1,8 +1,8 @@
-import { pool, query } from '../config/database.js';
+﻿import { pool, query } from '../config/database.js';
 import { runMigrations } from './migrate.js';
 
 export async function seedDatabase(): Promise<void> {
-  console.log('🌱 Starting database seeding for development & testing...');
+  console.log('ðŸŒ± Starting database seeding for development & testing...');
 
   // Ensure migrations are executed first
   await runMigrations();
@@ -83,7 +83,7 @@ export async function seedDatabase(): Promise<void> {
         $2,
         'Tata Starbus Ultra 32'
       )
-      ON CONFLICT (school_id, registration_number) DO UPDATE SET bus_number = EXCLUDED.bus_number
+      ON CONFLICT (school_id, registration_number) WHERE deleted_at IS NULL DO UPDATE SET bus_number = EXCLUDED.bus_number
       RETURNING id;
     `, [schoolId, driver1Id]);
     const bus1Id = bus1Res.rows[0].id;
@@ -97,7 +97,7 @@ export async function seedDatabase(): Promise<void> {
         $2,
         'Eicher Starline 38'
       )
-      ON CONFLICT (school_id, registration_number) DO UPDATE SET bus_number = EXCLUDED.bus_number;
+      ON CONFLICT (school_id, registration_number) WHERE deleted_at IS NULL DO UPDATE SET bus_number = EXCLUDED.bus_number;
     `, [schoolId, driver2Id]);
 
     // 5. Create Route
@@ -112,7 +112,7 @@ export async function seedDatabase(): Promise<void> {
         $3,
         40
       )
-      ON CONFLICT (school_id, code) DO UPDATE SET name = EXCLUDED.name
+      ON CONFLICT (school_id, code) WHERE deleted_at IS NULL DO UPDATE SET name = EXCLUDED.name
       RETURNING id;
     `, [schoolId, bus1Id, driver1Id]);
     const routeId = routeRes.rows[0].id;
@@ -151,7 +151,7 @@ export async function seedDatabase(): Promise<void> {
       const stdRes = await client.query(`
         INSERT INTO students (school_id, full_name, admission_number, class_grade, section, emergency_contact_phone)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (school_id, admission_number) DO UPDATE SET full_name = EXCLUDED.full_name
+        ON CONFLICT (school_id, admission_number) WHERE deleted_at IS NULL DO UPDATE SET full_name = EXCLUDED.full_name
         RETURNING id;
       `, [schoolId, item.name, item.adm, item.grade, item.sec, item.phone]);
       const studentId = stdRes.rows[0].id;
@@ -160,7 +160,7 @@ export async function seedDatabase(): Promise<void> {
       await client.query(`
         INSERT INTO parents (school_id, student_id, full_name, phone, relationship)
         VALUES ($1, $2, $3, $4, 'PARENT')
-        ON CONFLICT (student_id, phone) DO UPDATE SET full_name = EXCLUDED.full_name;
+        ON CONFLICT (student_id, phone) WHERE deleted_at IS NULL DO UPDATE SET full_name = EXCLUDED.full_name;
       `, [schoolId, studentId, item.parent, item.phone]);
 
       // Stop Assignment
@@ -184,12 +184,12 @@ export async function seedDatabase(): Promise<void> {
     `, [schoolId, routeId, bus1Id, driver1Id, today]);
 
     await client.query('COMMIT');
-    console.log('✅ Seed data successfully inserted!');
-    console.log(`🏫 School: DPS RKP (ID: ${schoolId})`);
-    console.log(`🚌 Bus 04 assigned to Route RTE-S04 with 4 PostGIS stops & 4 students`);
+    console.log('âœ… Seed data successfully inserted!');
+    console.log(`ðŸ« School: DPS RKP (ID: ${schoolId})`);
+    console.log(`ðŸšŒ Bus 04 assigned to Route RTE-S04 with 4 PostGIS stops & 4 students`);
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('❌ Error during seeding:', error);
+    console.error('âŒ Error during seeding:', error);
     throw error;
   } finally {
     client.release();
@@ -204,3 +204,4 @@ if (process.argv[1] && process.argv[1].endsWith('seed.ts')) {
       process.exit(1);
     });
 }
+

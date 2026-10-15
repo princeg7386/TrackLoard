@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
@@ -200,3 +200,4 @@ export class TelemetryController {
     }
   }
 }
+

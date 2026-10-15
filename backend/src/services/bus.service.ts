@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+﻿import { query } from '../config/database.js';
 import {
   CreateBusRequest,
   UpdateBusRequest,
@@ -310,7 +310,7 @@ export class BusService {
     // 1. Safety Check: Verify no trip is currently IN_PROGRESS
     const activeTrips = await query<{ id: string }>(
       `SELECT id FROM trips 
-       WHERE bus_id = $1 AND school_id = $2 AND status = 'IN_PROGRESS' AND deleted_at IS NULL`,
+       WHERE bus_id = $1 AND school_id = $2 AND status = 'IN_TRANSIT' AND deleted_at IS NULL`,
       [busId, schoolId]
     );
 
@@ -431,9 +431,9 @@ export class BusService {
       WHERE t.bus_id = $1 
         AND t.school_id = $2 
         AND t.scheduled_date = CURRENT_DATE
-        AND t.status IN ('IN_PROGRESS', 'SCHEDULED')
+        AND t.status IN ('IN_TRANSIT', 'SCHEDULED')
         AND t.deleted_at IS NULL
-      ORDER BY (CASE WHEN t.status = 'IN_PROGRESS' THEN 1 ELSE 2 END), t.scheduled_start_time ASC
+      ORDER BY (CASE WHEN t.status = 'IN_TRANSIT' THEN 1 ELSE 2 END), t.scheduled_start_time ASC
       LIMIT 1
     `;
     const tripRows = await query<{
@@ -1006,4 +1006,5 @@ export class BusService {
     };
   }
 }
+
 

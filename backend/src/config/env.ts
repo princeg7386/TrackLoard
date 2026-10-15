@@ -1,4 +1,4 @@
-import dotenv from 'dotenv';
+﻿import dotenv from 'dotenv';
 import { z } from 'zod';
 
 dotenv.config();
@@ -37,10 +37,11 @@ export type EnvConfig = z.infer<typeof EnvSchema>;
 function loadConfig(): EnvConfig {
   const parsed = EnvSchema.safeParse(process.env);
   if (!parsed.success) {
-    console.error('❌ Invalid environment variables configuration:', parsed.error.format());
+    console.error('âŒ Invalid environment variables configuration:', parsed.error.format());
     throw new Error('Environment configuration validation failed');
   }
   return parsed.data;
 }
 
 export const env = loadConfig();
+

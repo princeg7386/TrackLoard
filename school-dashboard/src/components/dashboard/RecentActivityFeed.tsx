@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import Link from 'next/link';
@@ -72,7 +72,7 @@ export function RecentActivityFeed({ activities }: RecentActivityFeedProps) {
                       )}
                     </div>
                     <span className="text-[11px] font-mono text-slate-400 block mt-0.5">
-                      Action: {item.action} • Entity: {item.entityType}
+                      Action: {item.action} â€¢ Entity: {item.entityType}
                     </span>
                   </div>
                   <span className="text-[11px] font-mono text-slate-400 shrink-0 select-none">
@@ -99,3 +99,4 @@ export function RecentActivityFeed({ activities }: RecentActivityFeedProps) {
     </div>
   );
 }
+

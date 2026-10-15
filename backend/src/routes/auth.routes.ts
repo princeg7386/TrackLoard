@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller.js';
 import { validateRequest } from '../middlewares/validate.middleware.js';
 import { authenticateToken } from '../middlewares/auth.middleware.js';
@@ -61,3 +61,4 @@ authRouter.put(
 );
 
 export default authRouter;
+

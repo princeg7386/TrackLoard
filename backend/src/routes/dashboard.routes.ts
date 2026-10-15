@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
 import { DashboardController } from '../controllers/dashboard.controller.js';
@@ -19,3 +19,4 @@ dashboardRouter.get(
 );
 
 export default dashboardRouter;
+

@@ -1,4 +1,4 @@
-import { Response } from 'express';
+﻿import { Response } from 'express';
 import { ApiResponse, PaginatedResult } from '@school-bus/shared';
 
 /**
@@ -51,3 +51,4 @@ export function sendPaginated<T>(
   };
   return sendSuccess(res, paginatedData, message, 200);
 }
+

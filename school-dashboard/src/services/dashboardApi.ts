@@ -1,4 +1,4 @@
-export interface DashboardMetricSummary {
+﻿export interface DashboardMetricSummary {
   totalBuses: number;
   totalDrivers: number;
   totalRoutes: number;
@@ -115,3 +115,4 @@ export function getFallbackDashboardSummary(schoolId: string): SchoolDashboardSu
     recentActivity: [],
   };
 }
+

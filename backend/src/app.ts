@@ -1,4 +1,4 @@
-import express, { Express, Request, Response, NextFunction } from 'express';
+﻿import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { requestIdMiddleware } from './middlewares/request-id.middleware.js';
@@ -107,3 +107,4 @@ export function createApp(): Express {
 }
 
 export default createApp();
+

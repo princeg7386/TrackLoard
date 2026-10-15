@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import {
@@ -254,7 +254,7 @@ export function ParentListTable({
                     </div>
                     <div className="text-[11px] text-slate-500 font-mono flex items-center gap-2">
                       <span>{parent.student.admissionNumber}</span>
-                      <span>•</span>
+                      <span>â€¢</span>
                       <span>
                         {parent.student.classGrade} - {parent.student.section}
                       </span>
@@ -333,3 +333,4 @@ export function ParentListTable({
     </div>
   );
 }
+

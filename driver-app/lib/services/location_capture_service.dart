@@ -83,6 +83,29 @@ class LocationCaptureService {
     _uploadService.reset();
   }
 
+  /// Called from the Android foreground service isolate to keep GPS running
+  /// when the screen locks or the app moves to the background.
+  /// Re-attaches the position stream if a trip was already active.
+  Future<void> startBackgroundCapture() async {
+    if (!_isCapturing || _activeTripId == null) return;
+
+    // Re-subscribe to position stream in the background isolate
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 5,
+    );
+
+    _positionStreamSub?.cancel();
+    _positionStreamSub = Geolocator.getPositionStream(
+      locationSettings: locationSettings,
+    ).listen(
+      _processLocationUpdate,
+      onError: (_) {
+        // Ignore transient GPS errors; background service retries automatically
+      },
+    );
+  }
+
   void _processLocationUpdate(Position pos) {
     if (!_isCapturing || _activeTripId == null || _activeBusId == null || _activeDriverId == null) {
       return;
@@ -107,7 +130,7 @@ class LocationCaptureService {
         networkTypeStr = 'UNKNOWN';
     }
 
-    final speedKmh = (pos.speed * 3.6).clamp(0.0, 180.0);
+    final speedKmh = (pos.speed * 3.6).clamp(0.0, 160.0);
 
     _uploadService.processAndUploadLocation(
       tripId: _activeTripId!,

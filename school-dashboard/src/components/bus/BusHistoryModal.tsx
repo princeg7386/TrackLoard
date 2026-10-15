@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -317,7 +317,7 @@ export function BusHistoryModal({
                                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border ${
                                     tr.status === 'COMPLETED'
                                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                      : tr.status === 'IN_PROGRESS'
+                                      : tr.status === 'IN_TRANSIT'
                                       ? 'bg-sky-50 text-sky-700 border-sky-200'
                                       : tr.status === 'SCHEDULED'
                                       ? 'bg-amber-50 text-amber-700 border-amber-200'
@@ -339,7 +339,7 @@ export function BusHistoryModal({
                                 )}
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-800">
-                                {tr.totalBoarded != null ? `${tr.totalBoarded} students` : '—'}
+                                {tr.totalBoarded != null ? `${tr.totalBoarded} students` : 'â€”'}
                               </td>
                             </tr>
                           ))}
@@ -490,7 +490,7 @@ export function BusHistoryModal({
                                 <div>
                                   <span className="font-bold text-slate-900 block">{sum.routeName}</span>
                                   <span className="text-[10px] text-slate-400 font-mono">
-                                    {sum.scheduledDate} • {sum.shiftType.replace('_', ' ')}
+                                    {sum.scheduledDate} â€¢ {sum.shiftType.replace('_', ' ')}
                                   </span>
                                 </div>
                                 <span className="text-[11px] text-slate-600 font-medium">
@@ -619,3 +619,4 @@ export function BusHistoryModal({
     </div>
   );
 }
+

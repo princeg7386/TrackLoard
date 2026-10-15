@@ -5,48 +5,64 @@ import {
   RevokeParentTokenRequestSchema,
   RevokeStudentTokensRequestSchema,
   ParentOnboardConfirmRequestSchema,
+  UserRole,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { ParentIdentityController } from '../controllers/parent-identity.controller.js';
 import { authenticateParentTrackingToken } from '../middlewares/parent-token.middleware.js';
-import { authenticateToken } from '../middlewares/auth.middleware.js';
+import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
+import {
+  requireTenantScope,
+  requireActorTenantScope,
+} from '../middlewares/tenant-isolation.middleware.js';
 import { parentTokenRateLimiter } from '../middlewares/rate-limiter.middleware.js';
 
 const parentRouter = Router();
 
-// 1. Identity & WhatsApp Phone Lookup (Staff / Admin auth required)
+// 1. Identity & WhatsApp Phone Lookup
+//    requireTenantScope: service layer validates req.user.schoolId against lookup results.
 parentRouter.post(
   '/identity/lookup',
   parentTokenRateLimiter,
   authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
   validateBody(ParentIdentityLookupRequestSchema),
   ParentIdentityController.lookupByPhone
 );
 
-// 2. Token Issuance & Revocation (Staff / Admin auth required)
+// 2. Token Generation (schoolId in body — requireTenantScope validates against JWT school)
 parentRouter.post(
   '/token/generate',
   parentTokenRateLimiter,
   authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
   validateBody(GenerateParentTokenRequestSchema),
+  requireTenantScope('body', 'schoolId'),
   ParentIdentityController.generateToken
 );
 
 parentRouter.post(
   '/token/revoke',
+  // requireTenantScope: actor JWT schoolId scope enforced via requireActorTenantScope
   authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
   validateBody(RevokeParentTokenRequestSchema),
   ParentIdentityController.revokeToken
 );
 
 parentRouter.post(
   '/token/revoke-student',
+  // requireTenantScope: actor JWT schoolId scope enforced via requireActorTenantScope
   authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
   validateBody(RevokeStudentTokensRequestSchema),
   ParentIdentityController.revokeStudentTokens
 );
 
-// 3. Parent Live Tracking Session Verification (Public tokenized web entry)
+// 5. Parent Live Tracking Session Verification (Public tokenized web entry — parent token auth)
 parentRouter.get(
   '/track/:token',
   authenticateParentTrackingToken,
@@ -59,7 +75,7 @@ parentRouter.get(
   ParentIdentityController.getLiveTrackingSession
 );
 
-// 4. Public Onboarding Verification & Activation (Handles valid, expired, revoked, invalid)
+// 6. Public Onboarding Verification & Activation (handles valid/expired/revoked/invalid tokens)
 parentRouter.get(
   '/onboard/verify',
   ParentIdentityController.verifyOnboardToken
@@ -72,4 +88,3 @@ parentRouter.post(
 );
 
 export default parentRouter;
-

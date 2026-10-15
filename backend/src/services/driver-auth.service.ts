@@ -1,4 +1,4 @@
-import bcrypt from 'bcryptjs';
+﻿import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/database.js';
 import { env } from '../config/env.js';
@@ -284,3 +284,4 @@ export class DriverAuthService {
     return rows.length > 0;
   }
 }
+

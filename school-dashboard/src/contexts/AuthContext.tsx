@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { AuthUserPayload } from '@school-bus/shared';
@@ -87,3 +87,4 @@ export function useAuth(): AuthContextType {
   }
   return context;
 }
+

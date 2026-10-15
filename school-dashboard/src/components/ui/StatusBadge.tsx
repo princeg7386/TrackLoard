@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 
 export type StatusType = 'normal' | 'warning' | 'incident' | 'inactive' | 'info';
 
@@ -59,3 +59,4 @@ export function StatusBadge({
     </span>
   );
 }
+

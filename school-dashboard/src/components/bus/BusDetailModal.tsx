@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -222,7 +222,7 @@ export function BusDetailModal({
                         </span>
                         <span className="font-medium text-slate-800 text-xs block mt-0.5">
                           {busDetail.currentLocation.bearingDegrees != null
-                            ? `${Math.round(busDetail.currentLocation.bearingDegrees)}°`
+                            ? `${Math.round(busDetail.currentLocation.bearingDegrees)}Â°`
                             : 'N/A'}
                         </span>
                       </div>
@@ -259,14 +259,14 @@ export function BusDetailModal({
                   {busDetail.currentTrip && (
                     <span
                       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border ${
-                        busDetail.currentTrip.status === 'IN_PROGRESS'
+                        busDetail.currentTrip.status === 'IN_TRANSIT'
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                           : busDetail.currentTrip.status === 'SCHEDULED'
                           ? 'bg-amber-50 text-amber-700 border-amber-200'
                           : 'bg-slate-100 text-slate-700 border-slate-200'
                       }`}
                     >
-                      {busDetail.currentTrip.status === 'IN_PROGRESS' && (
+                      {busDetail.currentTrip.status === 'IN_TRANSIT' && (
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                       )}
                       {busDetail.currentTrip.status.replace('_', ' ')}
@@ -456,3 +456,4 @@ export function BusDetailModal({
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -334,7 +334,7 @@ export function DriverHistoryModal({
                                   {trip.actualStartTime && (
                                     <div className="text-slate-800 font-medium">
                                       Actual: {formatIST(trip.actualStartTime)}
-                                      {trip.actualEndTime ? ` → ${formatIST(trip.actualEndTime)}` : ''}
+                                      {trip.actualEndTime ? ` â†’ ${formatIST(trip.actualEndTime)}` : ''}
                                     </div>
                                   )}
                                 </div>
@@ -364,7 +364,7 @@ export function DriverHistoryModal({
                                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
                                     trip.status === 'COMPLETED'
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                      : trip.status === 'IN_PROGRESS'
+                                      : trip.status === 'IN_TRANSIT'
                                       ? 'bg-sky-50 text-sky-700 border border-sky-200 animate-pulse'
                                       : trip.status === 'CANCELLED'
                                       ? 'bg-rose-50 text-rose-700 border border-rose-200'
@@ -651,3 +651,4 @@ export function DriverHistoryModal({
     </div>
   );
 }
+

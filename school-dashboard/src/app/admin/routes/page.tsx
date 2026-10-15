@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React from 'react';
 import { MapPin, Plus, Search } from 'lucide-react';
@@ -52,3 +52,4 @@ export default function RoutesStopsPage() {
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { DriverAuthPayload } from '@school-bus/shared';
 import { DriverAuthService } from '../services/driver-auth.service.js';
 import { UnauthorizedError, ForbiddenError } from './error.middleware.js';
@@ -98,3 +98,4 @@ export function requireAssignedBus(busIdSource: 'params' | 'body' = 'params', bu
     }
   };
 }
+

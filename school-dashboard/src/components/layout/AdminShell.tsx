@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState } from 'react';
 import { AdminSidebar } from './AdminSidebar';
@@ -45,3 +45,4 @@ export function AdminShell({ children, title, subtitle }: AdminShellProps) {
     </AuthGuard>
   );
 }
+

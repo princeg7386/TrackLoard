@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect } from 'react';
 import { SchoolProfileForm } from '../../../components/school/SchoolProfileForm';
@@ -32,3 +32,4 @@ export default function SchoolProfilePage() {
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-import { env } from '../config/env.js';
+﻿import { env } from '../config/env.js';
 
 export class TimeUtil {
   /**
@@ -65,3 +65,4 @@ export class TimeUtil {
     return new Date(fullIso);
   }
 }
+

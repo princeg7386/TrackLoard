@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+﻿import { Request, Response } from 'express';
 import { UpdateSchoolProfileRequest } from '@school-bus/shared';
 import { SchoolProfileService } from '../services/school-profile.service.js';
 import { SecurityUtil } from '../utils/security.util.js';
@@ -40,3 +40,4 @@ export class SchoolProfileController {
     );
   }
 }
+

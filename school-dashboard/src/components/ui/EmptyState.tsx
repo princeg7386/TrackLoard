@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import Link from 'next/link';
 import { LucideIcon, Inbox } from 'lucide-react';
 
@@ -84,3 +84,4 @@ export function EmptyState({
     </div>
   );
 }
+

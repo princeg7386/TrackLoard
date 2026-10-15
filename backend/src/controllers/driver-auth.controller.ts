@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 import { query } from '../config/database.js';
 import { DriverAuthService } from '../services/driver-auth.service.js';
 import { sendSuccess } from '../utils/response.util.js';
@@ -42,3 +42,4 @@ export class DriverAuthController {
     }
   }
 }
+

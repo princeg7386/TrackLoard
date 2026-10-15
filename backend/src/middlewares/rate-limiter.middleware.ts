@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+﻿import { Request, Response, NextFunction } from 'express';
 
 export interface RateLimiterOptions {
   windowMs: number; // Duration of window in milliseconds (e.g. 60,000 for 1 minute)
@@ -137,3 +137,4 @@ export const telemetryIngestRateLimiter = createRateLimiter({
     req.driver?.id || req.ip || (req.headers['x-forwarded-for'] as string) || 'telemetry-client',
   message: 'Telemetry ingestion threshold exceeded.',
 });
+
