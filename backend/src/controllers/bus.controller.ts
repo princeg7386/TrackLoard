@@ -9,6 +9,10 @@ export class BusController {
   public static async createBus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -31,6 +35,10 @@ export class BusController {
   public static async listBuses(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const buses = await BusService.getBuses(schoolId);
 
       res.status(200).json({
@@ -49,6 +57,10 @@ export class BusController {
   public static async getBus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const bus = await BusService.getBusDetail(schoolId, busId);
 
       res.status(200).json({
@@ -67,6 +79,10 @@ export class BusController {
   public static async updateBus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -95,6 +111,10 @@ export class BusController {
   public static async deleteBus(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -120,6 +140,10 @@ export class BusController {
   ): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const userId = req.user?.id;
       const ipAddress = req.ip;
 
@@ -148,6 +172,10 @@ export class BusController {
   public static async listDrivers(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const drivers = await BusService.getDrivers(schoolId);
 
       res.status(200).json({
@@ -166,6 +194,10 @@ export class BusController {
   public static async listRoutes(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const routes = await BusService.getRoutes(schoolId);
 
       res.status(200).json({
@@ -188,6 +220,10 @@ export class BusController {
   ): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const history = await BusService.getBusFullHistory(schoolId, busId);
 
       res.status(200).json({
@@ -210,6 +246,10 @@ export class BusController {
   ): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const limit = Number(req.query.limit) || 50;
       const offset = Number(req.query.offset) || 0;
 
@@ -235,6 +275,10 @@ export class BusController {
   ): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const limit = Number(req.query.limit) || 50;
       const offset = Number(req.query.offset) || 0;
 
@@ -260,6 +304,10 @@ export class BusController {
   ): Promise<void> {
     try {
       const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
       const limit = Number(req.query.limit) || 50;
 
       const attendance = await BusService.getBusAttendanceHistory(schoolId, busId, limit);

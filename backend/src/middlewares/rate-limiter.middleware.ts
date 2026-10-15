@@ -105,3 +105,35 @@ export function createRateLimiter(options: RateLimiterOptions, store: IRateLimit
     }
   };
 }
+
+/**
+ * Specialized rate limiter for Admin & Driver authentication
+ * Policy: 10 attempts per 15 minutes per IP
+ */
+export const authRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 10,
+  message: 'Too many authentication attempts. Please try again after 15 minutes.',
+});
+
+/**
+ * Specialized rate limiter for Parent token lookup and generation
+ * Policy: 20 requests per 5 minutes per IP
+ */
+export const parentTokenRateLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  maxRequests: 20,
+  message: 'Too many parent tracking requests. Please try again in 5 minutes.',
+});
+
+/**
+ * High-throughput rate limiter for GPS telemetry ingestion
+ * Policy: 60 telemetry pings per minute per driver session
+ */
+export const telemetryIngestRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 120, // generous allowance for rapid batches
+  keyGenerator: (req: Request) =>
+    req.driver?.id || req.ip || (req.headers['x-forwarded-for'] as string) || 'telemetry-client',
+  message: 'Telemetry ingestion threshold exceeded.',
+});

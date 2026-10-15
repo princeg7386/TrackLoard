@@ -10,11 +10,14 @@ import {
   UpdateAdminProfileRequestSchema,
 } from '@school-bus/shared';
 
+import { authRateLimiter } from '../middlewares/rate-limiter.middleware.js';
+
 const authRouter = Router();
 
 // 1. Admin Login
 authRouter.post(
   '/login',
+  authRateLimiter,
   validateRequest({ body: LoginRequestSchema }),
   AuthController.login
 );

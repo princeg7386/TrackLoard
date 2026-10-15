@@ -5,12 +5,14 @@ import { authenticateDriver } from '../middlewares/driver-auth.middleware.js';
 import { authenticateToken } from '../middlewares/auth.middleware.js';
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
 import { TelemetryIngestSchema, TelemetryBatchIngestSchema } from '@school-bus/shared';
+import { telemetryIngestRateLimiter } from '../middlewares/rate-limiter.middleware.js';
 
 const telemetryRouter = Router();
 
 // 1. Ingest single GPS location ping (Driver auth)
 telemetryRouter.post(
   '/ingest',
+  telemetryIngestRateLimiter,
   authenticateDriver,
   validateRequest({ body: TelemetryIngestSchema }),
   TelemetryController.ingest
@@ -19,6 +21,7 @@ telemetryRouter.post(
 // 2. Ingest batch of offline buffered GPS location pings (Driver auth)
 telemetryRouter.post(
   '/batch',
+  telemetryIngestRateLimiter,
   authenticateDriver,
   validateRequest({ body: TelemetryBatchIngestSchema }),
   TelemetryController.ingestBatch

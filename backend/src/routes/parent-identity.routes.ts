@@ -10,11 +10,14 @@ import { validateBody } from '../middlewares/validate.middleware.js';
 import { ParentIdentityController } from '../controllers/parent-identity.controller.js';
 import { authenticateParentTrackingToken } from '../middlewares/parent-token.middleware.js';
 
+import { parentTokenRateLimiter } from '../middlewares/rate-limiter.middleware.js';
+
 const parentRouter = Router();
 
 // 1. Identity & WhatsApp Phone Lookup
 parentRouter.post(
   '/identity/lookup',
+  parentTokenRateLimiter,
   validateBody(ParentIdentityLookupRequestSchema),
   ParentIdentityController.lookupByPhone
 );
@@ -22,6 +25,7 @@ parentRouter.post(
 // 2. Token Issuance & Revocation
 parentRouter.post(
   '/token/generate',
+  parentTokenRateLimiter,
   validateBody(GenerateParentTokenRequestSchema),
   ParentIdentityController.generateToken
 );

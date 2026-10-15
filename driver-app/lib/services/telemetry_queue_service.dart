@@ -101,13 +101,20 @@ class TelemetryQueueService {
         final ids = pendingItems.map((item) => item.id!).toList();
         final payloadList = pendingItems.map((item) => item.toPayload()).toList();
 
-        final success = await _sendBatchWithRetry(payloadList);
-        if (success) {
+        final batchResult = await _sendBatch(payloadList);
+        if (batchResult.success) {
           // Remove synced records
           await _db.removeTelemetry(ids);
           _pendingCount = await _db.getPendingCount();
           _queueCountController.add(_pendingCount);
+        } else if (batchResult.statusCode >= 400 && batchResult.statusCode < 500 && batchResult.statusCode != 429) {
+          // Client validation rejection (400 Bad Request / 403 Forbidden / 422 Unprocessable)
+          // To prevent permanently head-of-line blocking the queue with a malformed payload, drop poison-pill batch
+          await _db.removeTelemetry(ids);
+          _pendingCount = await _db.getPendingCount();
+          _queueCountController.add(_pendingCount);
         } else {
+          // Transient failure (5xx server error, 429 rate limit, or network disconnection)
           // Increment retry counter and stop current drain cycle
           await _db.incrementRetryCount(ids);
           break;
@@ -124,9 +131,9 @@ class TelemetryQueueService {
     }
   }
 
-  Future<bool> _sendBatchWithRetry(List<Map<String, dynamic>> batch) async {
+  Future<ApiResponse<Map<String, dynamic>>> _sendBatch(List<Map<String, dynamic>> batch) async {
     try {
-      final response = await RetryHelper.retry<ApiResponse<Map<String, dynamic>>>(
+      return await RetryHelper.retry<ApiResponse<Map<String, dynamic>>>(
         maxAttempts: 3,
         initialDelay: const Duration(milliseconds: 500),
         operation: () async {
@@ -136,12 +143,20 @@ class TelemetryQueueService {
             requiresAuth: true,
           );
         },
-        shouldRetry: (err) => true,
+        shouldRetry: (response) {
+          // Only retry if network error or 5xx server error
+          if (response is ApiResponse<Map<String, dynamic>>) {
+            return !response.success && (response.statusCode >= 500 || response.isOffline || response.statusCode == 429);
+          }
+          return true;
+        },
       );
-
-      return response.success;
     } catch (_) {
-      return false;
+      return ApiResponse<Map<String, dynamic>>(
+        success: false,
+        statusCode: 500,
+        message: 'Batch transmission error',
+      );
     }
   }
 

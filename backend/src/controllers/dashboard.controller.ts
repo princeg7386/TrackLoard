@@ -8,6 +8,10 @@ export class DashboardController {
   public static async getSummary(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
       const summary = await DashboardService.getSchoolDashboardSummary(schoolId);
 
       res.status(200).json({

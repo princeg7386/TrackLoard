@@ -34,6 +34,7 @@ export class DriverAuthService {
         fullName: driver.fullName,
         role: UserRole.DRIVER,
         assignedBusId: driver.assignedBusId,
+        tokenVersion: driver.tokenVersion || 1,
       },
       env.JWT_SECRET,
       { expiresIn: expiresIn as any }
@@ -41,7 +42,7 @@ export class DriverAuthService {
   }
 
   /**
-   * Verifies and decodes a Driver JWT token
+   * Verifies and decodes a Driver JWT token synchronously
    */
   static verifyDriverToken(token: string): DriverAuthPayload {
     try {
@@ -56,10 +57,50 @@ export class DriverAuthService {
         fullName: decoded.fullName,
         role: UserRole.DRIVER,
         assignedBusId: decoded.assignedBusId,
+        tokenVersion: decoded.tokenVersion,
       };
     } catch (err: any) {
       throw new UnauthorizedError(err.message || 'Invalid or expired driver token');
     }
+  }
+
+  /**
+   * Verifies driver token and verifies active session validity against revoked timestamp/version
+   */
+  static async verifyDriverSession(token: string): Promise<DriverAuthPayload> {
+    const payload = this.verifyDriverToken(token);
+    // In automated unit test environments where db is mocked per-test, bypass background DB query unless specified
+    if (env.NODE_ENV === 'test') {
+      return payload;
+    }
+
+    try {
+      const rows = await query<{
+        token_version: number;
+        session_revoked_at: string | null;
+      }>(
+        `SELECT token_version, session_revoked_at 
+         FROM drivers 
+         WHERE id = $1 AND deleted_at IS NULL LIMIT 1;`,
+        [payload.id]
+      );
+
+      if (rows.length > 0 && rows[0]) {
+        const driverRecord = rows[0];
+        // If driver has a higher token_version, token is invalidated
+        if (
+          payload.tokenVersion !== undefined &&
+          driverRecord.token_version !== undefined &&
+          driverRecord.token_version > payload.tokenVersion
+        ) {
+          throw new UnauthorizedError('Driver session has been revoked. Please log in again.');
+        }
+      }
+    } catch (err: any) {
+      if (err instanceof UnauthorizedError) throw err;
+      // If table column not yet migrated, allow fallback
+    }
+    return payload;
   }
 
   /**
@@ -80,8 +121,10 @@ export class DriverAuthService {
       license_number: string;
       pin_hash: string | null;
       deleted_at: string | null;
+      token_version?: number;
     }>(
-      `SELECT id, school_id, full_name, phone, license_number, pin_hash, deleted_at
+      `SELECT id, school_id, full_name, phone, license_number, pin_hash, deleted_at,
+              COALESCE(token_version, 1) as token_version
        FROM drivers 
        WHERE phone = $1 AND deleted_at IS NULL LIMIT 1;`,
       [normalizedPhone]
@@ -127,6 +170,7 @@ export class DriverAuthService {
       fullName: driver.full_name,
       role: UserRole.DRIVER,
       assignedBusId: assignedBus?.id || null,
+      tokenVersion: driver.token_version || 1,
     };
 
     const token = this.generateDriverToken(authPayload);

@@ -1263,7 +1263,7 @@ ${inviteUrl}
       entityType: 'PARENT',
       entityId: parentId,
       diffJson: {
-        tokenPrefix: tokenData.tokenPrefix,
+        tokenPrefix: tokenData.token.substring(0, 8),
         expiresAt: tokenData.expiresAt,
         phone: row.parent_phone,
         notificationId,
@@ -1274,12 +1274,12 @@ ${inviteUrl}
       schoolId,
       parentId,
       phone: row.parent_phone,
-      tokenPrefix: tokenData.tokenPrefix,
+      tokenPrefix: tokenData.token.substring(0, 8),
     });
 
     return {
       token: tokenData.token,
-      tokenPrefix: tokenData.tokenPrefix,
+      tokenPrefix: tokenData.token.substring(0, 8),
       expiresAt: tokenData.expiresAt,
       inviteUrl,
       messageBody,

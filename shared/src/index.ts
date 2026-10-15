@@ -1366,6 +1366,7 @@ export interface DriverAuthPayload {
   fullName: string;
   role: UserRole.DRIVER;
   assignedBusId?: string | null;
+  tokenVersion?: number;
 }
 
 export interface DriverAssignedBusInfo {

@@ -105,7 +105,7 @@ export class DriverService {
         pinHash,
       ]);
 
-      createdDriverId = insertRes.rows[0].id;
+      createdDriverId = insertRes.rows[0]!.id;
 
       // If bus assignment provided, update bus default driver
       if (assignedBusId) {
@@ -217,7 +217,7 @@ export class DriverService {
       throw new NotFoundError(`Driver with ID ${driverId} not found in this school.`);
     }
 
-    return rows[0];
+    return rows[0]!;
   }
 
   /**
@@ -784,7 +784,9 @@ export class DriverService {
 
     await query(
       `UPDATE drivers 
-       SET updated_at = NOW() 
+       SET token_version = COALESCE(token_version, 1) + 1,
+           session_revoked_at = NOW(),
+           updated_at = NOW() 
        WHERE school_id = $1 AND id = $2 AND deleted_at IS NULL`,
       [schoolId, driverId]
     );
