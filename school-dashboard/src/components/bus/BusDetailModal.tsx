@@ -222,7 +222,7 @@ export function BusDetailModal({
                         </span>
                         <span className="font-medium text-slate-800 text-xs block mt-0.5">
                           {busDetail.currentLocation.bearingDegrees != null
-                            ? `${Math.round(busDetail.currentLocation.bearingDegrees)}Â°`
+                            ? `${Math.round(busDetail.currentLocation.bearingDegrees)}°`
                             : 'N/A'}
                         </span>
                       </div>

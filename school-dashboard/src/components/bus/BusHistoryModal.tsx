@@ -339,7 +339,7 @@ export function BusHistoryModal({
                                 )}
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-800">
-                                {tr.totalBoarded != null ? `${tr.totalBoarded} students` : '”'}
+                                {tr.totalBoarded != null ? `${tr.totalBoarded} students` : '—'}
                               </td>
                             </tr>
                           ))}

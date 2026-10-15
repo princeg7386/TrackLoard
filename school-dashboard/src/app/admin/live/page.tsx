@@ -60,7 +60,7 @@ export default function LiveOperationsPage() {
     loadSummary();
   }, [loadSummary]);
 
-  const fleetOnline = metrics ? `${activeTripsCount} / ${metrics.totalBuses}` : '” / ”';
+  const fleetOnline = metrics ? `${activeTripsCount} / ${metrics.totalBuses}` : '— / —';
 
   return (
     <div className="space-y-6">
