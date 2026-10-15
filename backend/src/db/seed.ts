@@ -178,10 +178,10 @@ export async function seedDatabase(): Promise<void> {
       INSERT INTO trips (
         school_id, route_id, bus_id, driver_id, status, scheduled_date, scheduled_start_time
       ) VALUES (
-        $1, $2, $3, $4, 'SCHEDULED', $5, ($5 || ' 07:00:00+05:30')::timestamptz
+        $1, $2, $3, $4, 'SCHEDULED', $5::date, $6::timestamptz
       )
       ON CONFLICT DO NOTHING;
-    `, [schoolId, routeId, bus1Id, driver1Id, today]);
+    `, [schoolId, routeId, bus1Id, driver1Id, today, `${today} 07:00:00+05:30`]);
 
     await client.query('COMMIT');
     console.log('✅ Seed data successfully inserted!');
