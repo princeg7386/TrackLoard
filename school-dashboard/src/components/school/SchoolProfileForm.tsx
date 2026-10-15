@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -449,7 +449,7 @@ export function SchoolProfileForm({
                   <input
                     type="tel"
                     name="phone"
-                    value={formData.phone.replace(/^\+91/, '')}
+                    value={(formData.phone || '').replace(/^\+91/, '')}
                     onChange={(e) => {
                       const val = e.target.value.replace(/\D/g, '');
                       setFormData((p) => ({ ...p, phone: val }));

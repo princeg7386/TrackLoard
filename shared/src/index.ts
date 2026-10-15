@@ -948,9 +948,13 @@ export const TelemetryIngestSchema = z.object({
   recordedAt: z.string().datetime(),
 });
 export type TelemetryIngestPayload = z.infer<typeof TelemetryIngestSchema>;
+export const TelemetryBatchItemSchema = TelemetryIngestSchema.extend({
+  speedKmh: z.number().min(0).max(250).default(0),
+});
+export type TelemetryBatchItemPayload = z.infer<typeof TelemetryBatchItemSchema>;
 
 export const TelemetryBatchIngestSchema = z.object({
-  locations: z.array(TelemetryIngestSchema).min(1).max(500),
+  locations: z.array(TelemetryBatchItemSchema).min(1).max(500),
 });
 export type TelemetryBatchIngestPayload = z.infer<typeof TelemetryBatchIngestSchema>;
 
