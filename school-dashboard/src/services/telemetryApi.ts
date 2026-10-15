@@ -1,11 +1,11 @@
 /**
- * Phase 12.1 — Telemetry API client for the School Admin Dashboard.
+ * Phase 12.1 & 12.2 — Telemetry API client for the School Admin Dashboard.
  *
  * All functions wrap the existing apiRequest helper and are typed against the
  * shared package interfaces. No hardcoded UUIDs or demo data.
  */
 import { apiRequest } from './api-client';
-import type { FleetGpsHealthOverview, ActiveTripStateResponse } from '@school-bus/shared';
+import type { FleetGpsHealthOverview, ActiveTripStateResponse, BusGpsHealthSummary } from '@school-bus/shared';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1';
 
@@ -25,31 +25,149 @@ export async function getBusState(schoolId: string, busId: string): Promise<Acti
   return apiRequest<ActiveTripStateResponse>(`/schools/${schoolId}/buses/${busId}/state`);
 }
 
+export type FeedConnectionStatus = 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'OFFLINE';
+
+export interface ResilientFeedSubscription {
+  close: () => void;
+  getStatus: () => FeedConnectionStatus;
+}
+
 /**
- * Open a Server-Sent Events stream for a school's fleet feed.
+ * Open a resilient Server-Sent Events stream with automatic reconnection (exponential backoff).
  *
- * Browser EventSource cannot send Authorization headers, so we pass the JWT
- * as a `?token=` query parameter (supported by authenticateToken middleware).
- *
- * @returns An EventSource instance — caller must call .close() on cleanup.
+ * @param path Relative path, e.g. `/telemetry/schools/${schoolId}/feed` or `/telemetry/buses/${busId}/feed`
+ * @param onEvent Callback on incoming message events
+ * @param onStatusChange Callback on connection status changes
+ */
+export function openResilientFeed(
+  path: string,
+  onEvent: (event: MessageEvent) => void,
+  onStatusChange?: (status: FeedConnectionStatus) => void
+): ResilientFeedSubscription {
+  let isClosed = false;
+  let eventSource: EventSource | null = null;
+  let retryTimer: NodeJS.Timeout | null = null;
+  let backoffMs = 1000;
+  const maxBackoffMs = 16000;
+
+  function connect() {
+    if (isClosed) return;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      onStatusChange?.('OFFLINE');
+      return;
+    }
+
+    onStatusChange?.(backoffMs > 1000 ? 'RECONNECTING' : 'CONNECTING');
+
+    const token =
+      typeof window !== 'undefined' ? localStorage.getItem('sb_auth_token') || '' : '';
+    const delimiter = path.includes('?') ? '&' : '?';
+    const url = `${API_BASE}${path.startsWith('/') ? path : `/${path}`}${delimiter}token=${encodeURIComponent(token)}`;
+
+    try {
+      eventSource = new EventSource(url);
+
+      eventSource.onopen = () => {
+        backoffMs = 1000;
+        onStatusChange?.('CONNECTED');
+      };
+
+      eventSource.addEventListener('initial_state', onEvent);
+      eventSource.addEventListener('location_update', onEvent);
+
+      eventSource.onerror = () => {
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+
+        if (isClosed) return;
+
+        onStatusChange?.('RECONNECTING');
+
+        // Exponential backoff
+        retryTimer = setTimeout(() => {
+          backoffMs = Math.min(backoffMs * 2, maxBackoffMs);
+          connect();
+        }, backoffMs);
+      };
+    } catch {
+      onStatusChange?.('RECONNECTING');
+      retryTimer = setTimeout(() => {
+        connect();
+      }, 2000);
+    }
+  }
+
+  // Network offline / online handling
+  const handleOnline = () => {
+    if (!isClosed && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
+      backoffMs = 1000;
+      connect();
+    }
+  };
+  const handleOffline = () => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    onStatusChange?.('OFFLINE');
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+  }
+
+  connect();
+
+  return {
+    close: () => {
+      isClosed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      }
+    },
+    getStatus: () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return 'OFFLINE';
+      if (!eventSource) return 'CONNECTING';
+      switch (eventSource.readyState) {
+        case EventSource.OPEN:
+          return 'CONNECTED';
+        case EventSource.CONNECTING:
+          return 'CONNECTING';
+        default:
+          return 'RECONNECTING';
+      }
+    },
+  };
+}
+
+/**
+ * Open a resilient Server-Sent Events stream for a school's fleet feed (Subscription by School).
  */
 export function openSchoolFeed(
   schoolId: string,
   onEvent: (event: MessageEvent) => void,
-  onError?: (event: Event) => void
-): EventSource {
-  const token =
-    typeof window !== 'undefined' ? localStorage.getItem('sb_auth_token') || '' : '';
+  onStatusChange?: (status: FeedConnectionStatus) => void
+): ResilientFeedSubscription {
+  return openResilientFeed(`/telemetry/schools/${schoolId}/feed`, onEvent, onStatusChange);
+}
 
-  const url = `${API_BASE}/telemetry/schools/${schoolId}/feed?token=${encodeURIComponent(token)}`;
-  const es = new EventSource(url);
-
-  es.addEventListener('initial_state', onEvent);
-  es.addEventListener('location_update', onEvent);
-
-  if (onError) {
-    es.onerror = onError;
-  }
-
-  return es;
+/**
+ * Open a resilient Server-Sent Events stream for a specific bus (Subscription by Bus).
+ */
+export function openBusFeed(
+  busId: string,
+  onEvent: (event: MessageEvent) => void,
+  onStatusChange?: (status: FeedConnectionStatus) => void
+): ResilientFeedSubscription {
+  return openResilientFeed(`/telemetry/buses/${busId}/feed`, onEvent, onStatusChange);
 }

@@ -19,7 +19,14 @@ import {
 import { EmptyState } from '../../../components/ui/EmptyState';
 import { StatusBadge } from '../../../components/ui/StatusBadge';
 import { fetchDashboardSummary, DashboardMetricSummary } from '../../../services/dashboardApi';
-import { getFleetHealth, getBusState, openSchoolFeed } from '../../../services/telemetryApi';
+import {
+  getFleetHealth,
+  getBusState,
+  openSchoolFeed,
+  openBusFeed,
+  FeedConnectionStatus,
+  ResilientFeedSubscription,
+} from '../../../services/telemetryApi';
 import { BusStatePanel } from '../../../components/live/BusStatePanel';
 import { useAuth } from '../../../contexts/AuthContext';
 import type {
@@ -45,9 +52,10 @@ export default function LiveOperationsPage() {
   const [viewState, setViewState] = useState<ViewState>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [feedStatus, setFeedStatus] = useState<FeedConnectionStatus>('CONNECTING');
   const [lastFeedPing, setLastFeedPing] = useState<string>('Connecting...');
 
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const feedSubRef = useRef<ResilientFeedSubscription | null>(null);
 
   // Online / offline listener
   useEffect(() => {
@@ -93,83 +101,82 @@ export default function LiveOperationsPage() {
     loadData();
   }, [loadData]);
 
-  // Real-time SSE Live Telemetry Feed
+  // Real-time SSE Live Telemetry Feed (Subscription by School with auto-reconnect)
   useEffect(() => {
     if (!schoolId || typeof window === 'undefined') return;
 
-    try {
-      const es = openSchoolFeed(
-        schoolId,
-        (msgEvent: MessageEvent) => {
-          try {
-            const data = JSON.parse(msgEvent.data);
-            if (msgEvent.type === 'initial_state') {
-              if (data?.buses) {
-                setBuses(data.buses);
-              }
-            } else if (msgEvent.type === 'location_update') {
-              const event = data as TelemetryFeedEvent;
-              setLastFeedPing(new Date().toLocaleTimeString());
+    const sub = openSchoolFeed(
+      schoolId,
+      (msgEvent: MessageEvent) => {
+        try {
+          const data = JSON.parse(msgEvent.data);
+          if (msgEvent.type === 'initial_state') {
+            if (data?.buses) {
+              setBuses(data.buses);
+            }
+          } else if (msgEvent.type === 'location_update') {
+            const event = data as TelemetryFeedEvent;
+            setLastFeedPing(new Date().toLocaleTimeString());
 
-              setBuses((prev) =>
-                prev.map((b) => {
-                  if (b.busId === event.busId) {
-                    return {
-                      ...b,
-                      lastLatitude: event.latitude,
-                      lastLongitude: event.longitude,
-                      lastSpeedKmh: event.speedKmh,
-                      lastAccuracyMeters: event.accuracyMeters ?? b.lastAccuracyMeters,
-                      lastBatteryPercentage: event.batteryPercentage ?? b.lastBatteryPercentage,
-                      lastIsCharging: event.isCharging ?? b.lastIsCharging,
-                      lastNetworkType: event.networkType ?? b.lastNetworkType,
-                      lastRecordedAt: event.recordedAt,
-                      healthStatus: event.healthStatus,
-                      activeTripId: event.tripId || b.activeTripId,
-                    };
-                  }
-                  return b;
-                })
-              );
-
-              // Update selected detail modal in real-time if selected
-              setSelectedBusState((current) => {
-                if (current && current.busId === event.busId) {
+            setBuses((prev) =>
+              prev.map((b) => {
+                if (b.busId === event.busId) {
                   return {
-                    ...current,
+                    ...b,
                     lastLatitude: event.latitude,
                     lastLongitude: event.longitude,
                     lastSpeedKmh: event.speedKmh,
-                    lastBearingDegrees: event.bearingDegrees ?? current.lastBearingDegrees,
-                    lastAccuracyMeters: event.accuracyMeters ?? current.lastAccuracyMeters,
-                    lastBatteryPercentage: event.batteryPercentage ?? current.lastBatteryPercentage,
-                    lastIsCharging: event.isCharging ?? current.lastIsCharging,
-                    lastNetworkType: event.networkType ?? current.lastNetworkType,
-                    lastGpsRecordedAt: event.recordedAt,
-                    gpsHealthStatus: event.healthStatus,
-                    gpsAgeSeconds: 0,
+                    lastAccuracyMeters: event.accuracyMeters ?? b.lastAccuracyMeters,
+                    lastBatteryPercentage: event.batteryPercentage ?? b.lastBatteryPercentage,
+                    lastIsCharging: event.isCharging ?? b.lastIsCharging,
+                    lastNetworkType: event.networkType ?? b.lastNetworkType,
+                    lastRecordedAt: event.recordedAt,
+                    healthStatus: event.healthStatus,
+                    activeTripId: event.tripId || b.activeTripId,
                   };
                 }
-                return current;
-              });
-            }
-          } catch {
-            // Ignore parse errors on heartbeat comments
+                return b;
+              })
+            );
+
+            // Update selected detail in real-time if selected
+            setSelectedBusState((current) => {
+              if (current && current.busId === event.busId) {
+                return {
+                  ...current,
+                  lastLatitude: event.latitude,
+                  lastLongitude: event.longitude,
+                  lastSpeedKmh: event.speedKmh,
+                  lastBearingDegrees: event.bearingDegrees ?? current.lastBearingDegrees,
+                  lastAccuracyMeters: event.accuracyMeters ?? current.lastAccuracyMeters,
+                  lastBatteryPercentage: event.batteryPercentage ?? current.lastBatteryPercentage,
+                  lastIsCharging: event.isCharging ?? current.lastIsCharging,
+                  lastNetworkType: event.networkType ?? current.lastNetworkType,
+                  lastGpsRecordedAt: event.recordedAt,
+                  gpsHealthStatus: event.healthStatus,
+                  gpsAgeSeconds: 0,
+                };
+              }
+              return current;
+            });
           }
-        },
-        () => {
-          setLastFeedPing('Reconnecting...');
+        } catch {
+          // Ignore parse errors on heartbeat comments
         }
-      );
+      },
+      (status) => {
+        setFeedStatus(status);
+        if (status === 'CONNECTED') {
+          setLastFeedPing(new Date().toLocaleTimeString());
+        }
+      }
+    );
 
-      eventSourceRef.current = es;
+    feedSubRef.current = sub;
 
-      return () => {
-        es.close();
-      };
-    } catch {
-      // SSE setup fallback
-    }
+    return () => {
+      sub.close();
+    };
   }, [schoolId]);
 
   const handleSelectBus = async (bus: BusGpsHealthSummary) => {
@@ -308,9 +315,29 @@ export default function LiveOperationsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-sm font-bold text-slate-800 tracking-tight">Live Fleet State &amp; Tracking</h1>
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-mono font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            SSE Stream {lastFeedPing !== 'Connecting...' ? `(${lastFeedPing})` : ''}
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-mono font-medium border ${
+              feedStatus === 'CONNECTED'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : feedStatus === 'RECONNECTING'
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : 'bg-slate-100 text-slate-600 border-slate-200'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                feedStatus === 'CONNECTED'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : feedStatus === 'RECONNECTING'
+                  ? 'bg-amber-500 animate-ping'
+                  : 'bg-slate-400'
+              }`}
+            />
+            {feedStatus === 'CONNECTED'
+              ? `Live SSE (${lastFeedPing})`
+              : feedStatus === 'RECONNECTING'
+              ? 'Reconnecting...'
+              : 'Feed Offline'}
           </span>
         </div>
         <button

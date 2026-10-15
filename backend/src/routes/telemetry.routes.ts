@@ -92,4 +92,15 @@ telemetryRouter.get(
   TelemetryController.streamTripFeed
 );
 
+// 9. Real-time SSE stream for single bus tracking (Subscription by Bus)
+//    requireTenantScope: requireActorTenantScope ensures admin is school-scoped;
+//    controller verifies bus belongs to req.user.schoolId.
+telemetryRouter.get(
+  '/buses/:busId/feed',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.streamBusFeed
+);
+
 export default telemetryRouter;

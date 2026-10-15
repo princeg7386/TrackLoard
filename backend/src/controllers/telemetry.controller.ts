@@ -206,4 +206,38 @@ export class TelemetryController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/telemetry/buses/:busId/feed
+   * Real-time SSE telemetry feed for a specific bus.
+   * Enforces tenant isolation: verifies bus belongs to the caller's school.
+   */
+  static async streamBusFeed(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { busId } = req.params;
+      const callerSchoolId = (req as any).tenantSchoolId ?? req.user?.schoolId;
+
+      // Verify bus exists and belongs to the caller's school before initiating SSE
+      const busState = await GpsHealthService.getBusGpsHealth(busId!, callerSchoolId);
+
+      RealtimeFeedService.initSseStream(res);
+      RealtimeFeedService.sendSseMessage(res, 'initial_state', busState);
+
+      const unsubscribe = RealtimeFeedService.subscribeBus(busId!, (event) => {
+        RealtimeFeedService.sendSseMessage(res, 'location_update', event);
+      });
+
+      const heartbeatInterval = setInterval(() => {
+        RealtimeFeedService.sendSseHeartbeat(res);
+      }, 20000);
+
+      req.on('close', () => {
+        clearInterval(heartbeatInterval);
+        unsubscribe();
+        res.end();
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
