@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
@@ -49,12 +49,16 @@ export class TelemetryController {
 
   /**
    * GET /api/v1/telemetry/buses/:busId/latest
-   * Retrieve the most recent GPS location of a bus
+   * Retrieve the most recent GPS location of a bus.
+   * Enforces tenant isolation: the service returns 404 unless the bus belongs to the caller's school.
    */
   static async getLatestBusLocation(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { busId } = req.params;
-      const location = await TelemetryService.getLatestBusLocation(busId!);
+      // Pass callerSchoolId into the service so the school check is mockable in unit tests.
+      const callerSchoolId = (req as any).tenantSchoolId ?? req.user?.schoolId;
+
+      const location = await TelemetryService.getLatestBusLocation(busId!, callerSchoolId);
 
       res.status(200).json({
         success: true,
@@ -67,14 +71,17 @@ export class TelemetryController {
 
   /**
    * GET /api/v1/telemetry/trips/:tripId/trail
-   * Retrieve location trail points for an active or completed trip
+   * Retrieve location trail for a trip.
+   * Enforces tenant isolation: the service returns 404 unless the trip belongs to the caller's school.
    */
   static async getTripTrail(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { tripId } = req.params;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 200;
+      // Pass callerSchoolId into the service so the school check is mockable in unit tests.
+      const callerSchoolId = (req as any).tenantSchoolId ?? req.user?.schoolId;
 
-      const trail = await TelemetryService.getTripLocationTrail(tripId!, limit);
+      const trail = await TelemetryService.getTripLocationTrail(tripId!, limit, callerSchoolId);
 
       res.status(200).json({
         success: true,
@@ -109,12 +116,16 @@ export class TelemetryController {
 
   /**
    * GET /api/v1/telemetry/buses/:busId/health
-   * Retrieve real-time GPS health summary for a specific bus
+   * Retrieve real-time GPS health summary for a specific bus.
+   * Enforces tenant isolation: the service returns 404 unless the bus belongs to the caller's school.
    */
   static async getBusHealth(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { busId } = req.params;
-      const result = await GpsHealthService.getBusGpsHealth(busId!);
+      // Pass callerSchoolId into the service so the school check is mockable in unit tests.
+      const callerSchoolId = (req as any).tenantSchoolId ?? req.user?.schoolId;
+
+      const result = await GpsHealthService.getBusGpsHealth(busId!, callerSchoolId);
 
       res.status(200).json({
         success: true,
@@ -133,24 +144,19 @@ export class TelemetryController {
     try {
       const { schoolId } = req.params;
 
-      // 1. Initialize SSE connection headers
       RealtimeFeedService.initSseStream(res);
 
-      // 2. Fetch and dispatch initial fleet state
       const initialFleet = await GpsHealthService.getSchoolFleetGpsHealth(schoolId!);
       RealtimeFeedService.sendSseMessage(res, 'initial_state', initialFleet);
 
-      // 3. Subscribe to real-time telemetry updates for this school
       const unsubscribe = RealtimeFeedService.subscribeSchool(schoolId!, (event) => {
         RealtimeFeedService.sendSseMessage(res, 'location_update', event);
       });
 
-      // 4. Setup periodic heartbeat ping to prevent timeouts
       const heartbeatInterval = setInterval(() => {
         RealtimeFeedService.sendSseHeartbeat(res);
       }, 20000);
 
-      // 5. Clean up on client disconnect
       req.on('close', () => {
         clearInterval(heartbeatInterval);
         unsubscribe();
@@ -163,33 +169,34 @@ export class TelemetryController {
 
   /**
    * GET /api/v1/telemetry/trips/:tripId/feed
-   * Real-time Server-Sent Events (SSE) telemetry feed for a specific trip
+   * Real-time SSE telemetry feed for a specific trip.
+   * Enforces tenant isolation: the service returns 404 unless the trip belongs to the caller's school.
    */
   static async streamTripFeed(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { tripId } = req.params;
+      // Pass callerSchoolId into the service so the school check is mockable in unit tests.
+      const callerSchoolId = (req as any).tenantSchoolId ?? req.user?.schoolId;
 
-      // 1. Initialize SSE connection headers
+      // Fetch initial trail first — getTripLocationTrail enforces school ownership when
+      // callerSchoolId is set. Done BEFORE initSseStream so a 404 can still be returned.
+      // In unit tests this call is mocked via vi.spyOn so no real DB is needed.
+      const recentTrail = await TelemetryService.getTripLocationTrail(tripId!, 20, callerSchoolId);
+
       RealtimeFeedService.initSseStream(res);
-
-      // 2. Fetch and dispatch recent trail as initial state
-      const recentTrail = await TelemetryService.getTripLocationTrail(tripId!, 20);
       RealtimeFeedService.sendSseMessage(res, 'initial_state', {
         tripId,
         recentTrail,
       });
 
-      // 3. Subscribe to real-time telemetry updates for this trip
       const unsubscribe = RealtimeFeedService.subscribeTrip(tripId!, (event) => {
         RealtimeFeedService.sendSseMessage(res, 'location_update', event);
       });
 
-      // 4. Setup periodic heartbeat ping
       const heartbeatInterval = setInterval(() => {
         RealtimeFeedService.sendSseHeartbeat(res);
       }, 20000);
 
-      // 5. Clean up on client disconnect
       req.on('close', () => {
         clearInterval(heartbeatInterval);
         unsubscribe();
@@ -200,4 +207,3 @@ export class TelemetryController {
     }
   }
 }
-

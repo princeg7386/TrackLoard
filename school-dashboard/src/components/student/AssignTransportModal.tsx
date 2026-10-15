@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -213,7 +213,7 @@ export function AssignTransportModal({
                 Transport & Stop Allocation
               </h2>
               <p className="text-xs text-slate-500">
-                {student.fullName} ({student.admissionNumber}) â€¢ {student.classGrade}-{student.section}
+                {student.fullName} ({student.admissionNumber}) • {student.classGrade}-{student.section}
               </p>
             </div>
           </div>
@@ -362,7 +362,7 @@ export function AssignTransportModal({
                     <span className="font-semibold text-slate-700">Linked Bus:</span>
                     {currentRoute.busNumber ? (
                       <span className="font-mono text-sky-700 font-semibold bg-sky-50 px-1.5 py-0.5 rounded border border-sky-200">
-                        {currentRoute.busNumber} â€¢ {currentRoute.busRegistrationNumber}
+                        {currentRoute.busNumber} • {currentRoute.busRegistrationNumber}
                       </span>
                     ) : (
                       <span className="text-amber-600 italic">No bus assigned to route</span>

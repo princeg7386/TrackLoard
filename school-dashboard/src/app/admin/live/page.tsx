@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Radio, Bus, Users, ShieldCheck, RefreshCw, WifiOff, AlertCircle } from 'lucide-react';
@@ -60,7 +60,7 @@ export default function LiveOperationsPage() {
     loadSummary();
   }, [loadSummary]);
 
-  const fleetOnline = metrics ? `${activeTripsCount} / ${metrics.totalBuses}` : 'â€” / â€”';
+  const fleetOnline = metrics ? `${activeTripsCount} / ${metrics.totalBuses}` : '” / ”';
 
   return (
     <div className="space-y-6">

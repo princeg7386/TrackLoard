@@ -1,4 +1,4 @@
-﻿import fs from 'fs';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { pool, query } from '../config/database.js';
@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export async function runMigrations(): Promise<void> {
-  console.log('ðŸš€ Initializing database migrations...');
+  console.log(' Initializing database migrations...');
 
   // Ensure migrations tracking table exists
   await query(`
@@ -36,7 +36,7 @@ export async function runMigrations(): Promise<void> {
     );
 
     if (existing.length === 0) {
-      console.log(`ðŸ“¦ Applying migration: ${file}...`);
+      console.log(` Applying migration: ${file}...`);
       const filePath = path.join(migrationsDir, file);
       const sql = fs.readFileSync(filePath, 'utf-8');
 
@@ -49,7 +49,7 @@ export async function runMigrations(): Promise<void> {
           [file]
         );
         await client.query('COMMIT');
-        console.log(`âœ… Applied migration: ${file}`);
+        console.log(`✅ Applied migration: ${file}`);
       } catch (err) {
         await client.query('ROLLBACK');
         console.error(`âŒ Failed applying migration ${file}:`, err);
@@ -62,7 +62,7 @@ export async function runMigrations(): Promise<void> {
     }
   }
 
-  console.log('âœ¨ All migrations completed successfully.');
+  console.log('✔¨ All migrations completed successfully.');
 }
 
 if (process.argv[1] && process.argv[1].endsWith('migrate.ts')) {

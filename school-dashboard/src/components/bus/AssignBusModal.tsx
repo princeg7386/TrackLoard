@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -181,7 +181,7 @@ export function AssignBusModal({
               <option value="">-- No driver assigned (Unassigned) --</option>
               {drivers.map((drv) => (
                 <option key={drv.id} value={drv.id}>
-                  {drv.fullName} â€¢ Phone: {drv.phone} â€¢ License: {drv.licenseNumber}
+                  {drv.fullName} • Phone: {drv.phone} • License: {drv.licenseNumber}
                 </option>
               ))}
             </select>
@@ -218,7 +218,7 @@ export function AssignBusModal({
               <option value="">-- No route assigned (Unassigned) --</option>
               {routes.map((rte) => (
                 <option key={rte.id} value={rte.id}>
-                  {rte.name} ({rte.code}) â€¢ {rte.routeType.replace('_', ' ')}
+                  {rte.name} ({rte.code}) • {rte.routeType.replace('_', ' ')}
                 </option>
               ))}
             </select>

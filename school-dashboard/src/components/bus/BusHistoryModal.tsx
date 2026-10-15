@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -339,7 +339,7 @@ export function BusHistoryModal({
                                 )}
                               </td>
                               <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-800">
-                                {tr.totalBoarded != null ? `${tr.totalBoarded} students` : 'â€”'}
+                                {tr.totalBoarded != null ? `${tr.totalBoarded} students` : '”'}
                               </td>
                             </tr>
                           ))}
@@ -490,7 +490,7 @@ export function BusHistoryModal({
                                 <div>
                                   <span className="font-bold text-slate-900 block">{sum.routeName}</span>
                                   <span className="text-[10px] text-slate-400 font-mono">
-                                    {sum.scheduledDate} â€¢ {sum.shiftType.replace('_', ' ')}
+                                    {sum.scheduledDate} • {sum.shiftType.replace('_', ' ')}
                                   </span>
                                 </div>
                                 <span className="text-[11px] text-slate-600 font-medium">

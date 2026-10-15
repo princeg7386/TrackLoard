@@ -1,4 +1,4 @@
-﻿import { query, transaction } from '../config/database.js';
+import { query, transaction } from '../config/database.js';
 import {
   TelemetryIngestPayload,
   GpsLocationRecord,
@@ -327,40 +327,44 @@ export class TelemetryService {
     const tripSchoolMap = new Map<string, string>();
 
     await transaction(async (client) => {
-      // Validate unique trips in batch â€” fetch bus_id and driver_id to enforce assignment
+      // Validate all unique trips in batch: fetch bus_id and driver_id to enforce assignment.
+      // Throw NotFoundError (not skip) when a tripId does not exist — unknown trips must be
+      // rejected so the app does not retry the same broken batch forever.
       const tripIds = Array.from(new Set(sorted.map((s) => s.tripId)));
+      const tripMap = new Map<string, { id: string; school_id: string; bus_id: string; driver_id: string; status: string }>();
+
       for (const tripId of tripIds) {
         const tripRes = await client.query<{ id: string; school_id: string; bus_id: string; driver_id: string; status: string }>(
           `SELECT id, school_id, bus_id, driver_id, status FROM trips WHERE id = $1 LIMIT 1;`,
           [tripId]
         );
         const trip = tripRes.rows[0];
-        if (trip) {
-          if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
-            throw new BadRequestError(`Cannot ingest telemetry for trip ${tripId} which is ${trip.status.toLowerCase()}`);
-          }
-          // Verify the bus and driver in the batch match the trip assignment
-          const repLoc = sorted.find((s) => s.tripId === tripId);
-          if (repLoc) {
-            if (trip.bus_id !== repLoc.busId) {
-              throw new ForbiddenError(
-                `Bus ID ${repLoc.busId} does not match trip ${tripId} assignment (assigned bus: ${trip.bus_id})`
-              );
-            }
-            if (authenticatedDriverId && trip.driver_id !== authenticatedDriverId) {
-              throw new ForbiddenError(
-                `Authenticated driver is not assigned to trip ${tripId}`
-              );
-            }
-          }
-          tripSchoolMap.set(tripId, trip.school_id);
+        if (!trip) {
+          throw new NotFoundError(`Trip ${tripId} not found — cannot ingest telemetry for an unknown trip`);
         }
+        if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
+          throw new BadRequestError(`Cannot ingest telemetry for trip ${tripId} which is ${trip.status.toLowerCase()}`);
+        }
+        if (authenticatedDriverId && trip.driver_id !== authenticatedDriverId) {
+          throw new ForbiddenError(`Authenticated driver is not assigned to trip ${tripId}`);
+        }
+        tripMap.set(tripId, trip);
+        tripSchoolMap.set(tripId, trip.school_id);
       }
-
 
       for (const loc of sorted) {
         if (authenticatedDriverId && loc.driverId !== authenticatedDriverId) {
           throw new ForbiddenError('Driver ID in batch item does not match authenticated session');
+        }
+
+        const trip = tripMap.get(loc.tripId);
+        if (!trip) {
+          throw new NotFoundError(`Trip ${loc.tripId} not found`);
+        }
+        if (trip.bus_id !== loc.busId) {
+          throw new ForbiddenError(
+            `Bus ID ${loc.busId} does not match trip ${loc.tripId} assignment (assigned bus: ${trip.bus_id})`
+          );
         }
 
         const res = await client.query(
@@ -501,9 +505,22 @@ export class TelemetryService {
   }
 
   /**
-   * Get the most recent GPS location for a bus
+   * Get the most recent GPS location for a bus.
+   * @param callerSchoolId When provided, enforces tenant isolation — throws NotFoundError
+   *   if the bus does not belong to this school (prevents cross-school data leakage).
    */
-  static async getLatestBusLocation(busId: string) {
+  static async getLatestBusLocation(busId: string, callerSchoolId?: string) {
+    // Tenant isolation: verify the bus belongs to the caller's school before returning data.
+    if (callerSchoolId) {
+      const busCheck = await query<{ school_id: string }>(
+        `SELECT school_id FROM buses WHERE id = $1 AND deleted_at IS NULL LIMIT 1;`,
+        [busId]
+      );
+      if (!busCheck[0] || busCheck[0].school_id !== callerSchoolId) {
+        throw new NotFoundError(`Bus ${busId} not found`);
+      }
+    }
+
     const rows = await query<{
       id: string;
       tripId: string;
@@ -565,9 +582,22 @@ export class TelemetryService {
   }
 
   /**
-   * Get location trail points for a trip
+   * Get location trail points for a trip.
+   * @param callerSchoolId When provided, enforces tenant isolation — throws NotFoundError
+   *   if the trip does not belong to this school (prevents cross-school data leakage).
    */
-  static async getTripLocationTrail(tripId: string, limit: number = 200) {
+  static async getTripLocationTrail(tripId: string, limit: number = 200, callerSchoolId?: string) {
+    // Tenant isolation: verify the trip belongs to the caller's school before returning data.
+    if (callerSchoolId) {
+      const tripCheck = await query<{ school_id: string }>(
+        `SELECT school_id FROM trips WHERE id = $1 LIMIT 1;`,
+        [tripId]
+      );
+      if (!tripCheck[0] || tripCheck[0].school_id !== callerSchoolId) {
+        throw new NotFoundError(`Trip ${tripId} not found`);
+      }
+    }
+
     const rows = await query<{
       id: string;
       latitude: number;
@@ -605,5 +635,18 @@ export class TelemetryService {
       recordedAt: new Date(row.recordedAt).toISOString(),
     }));
   }
-}
 
+  /**
+   * Verify a trip belongs to the given school. Used by SSE feed before streaming.
+   * Throws NotFoundError if the trip doesn't exist or belongs to a different school.
+   */
+  static async verifyTripOwnership(tripId: string, callerSchoolId: string): Promise<void> {
+    const rows = await query<{ school_id: string }>(
+      `SELECT school_id FROM trips WHERE id = $1 LIMIT 1;`,
+      [tripId]
+    );
+    if (!rows[0] || rows[0].school_id !== callerSchoolId) {
+      throw new NotFoundError(`Trip ${tripId} not found`);
+    }
+  }
+}

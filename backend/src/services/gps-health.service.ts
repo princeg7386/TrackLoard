@@ -1,4 +1,4 @@
-﻿import { query } from '../config/database.js';
+import { query } from '../config/database.js';
 import {
   GpsHealthStatus,
   GPS_THRESHOLDS,
@@ -53,9 +53,18 @@ export class GpsHealthService {
   }
 
   /**
-   * Get dynamic GPS health summary for a single bus
+   * Get dynamic GPS health summary for a single bus.
+   * @param callerSchoolId When provided, enforces tenant isolation — throws NotFoundError
+   *   if the bus does not belong to this school (prevents cross-school data leakage).
    */
-  static async getBusGpsHealth(busId: string): Promise<BusGpsHealthSummary> {
+  static async getBusGpsHealth(busId: string, callerSchoolId?: string): Promise<BusGpsHealthSummary> {
+    const params: unknown[] = [busId];
+    let schoolFilter = '';
+    if (callerSchoolId) {
+      params.push(callerSchoolId);
+      schoolFilter = ` AND b.school_id = $${params.length}`;
+    }
+
     const rows = await query<{
       id: string;
       bus_number: string;
@@ -85,9 +94,9 @@ export class GpsHealthService {
         t.id as active_trip_id
        FROM buses b
        LEFT JOIN trips t ON t.bus_id = b.id AND t.status IN ('IN_TRANSIT', 'DELAYED')
-       WHERE b.id = $1 AND b.deleted_at IS NULL
+       WHERE b.id = $1 AND b.deleted_at IS NULL${schoolFilter}
        LIMIT 1;`,
-      [busId]
+      params
     );
 
     const bus = rows[0];

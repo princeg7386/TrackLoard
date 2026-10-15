@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -269,7 +269,7 @@ export function ParentAssignmentModal({
               </div>
               <p className="text-xs text-slate-500 mt-0.5 font-mono">
                 {details?.parent.phone || parent.phone || 'No mobile linked'}
-                {details?.parent.email ? ` â€¢ ${details.parent.email}` : ''}
+                {details?.parent.email ? ` • ${details.parent.email}` : ''}
               </p>
             </div>
           </div>
@@ -406,8 +406,8 @@ export function ParentAssignmentModal({
                             </span>
                           </div>
                           <div className="text-xs text-slate-500">
-                            Class {details.student.classGrade} â€¢ Section {details.student.section}
-                            {details.student.rollNumber ? ` â€¢ Roll No: ${details.student.rollNumber}` : ''}
+                            Class {details.student.classGrade} • Section {details.student.section}
+                            {details.student.rollNumber ? ` • Roll No: ${details.student.rollNumber}` : ''}
                           </div>
                         </div>
 

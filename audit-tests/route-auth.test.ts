@@ -21,7 +21,7 @@ const PUBLIC = new Set([
 type R = { method: string; path: string; block: string };
 const routes: R[] = [];
 for (const [file, base] of Object.entries(mounts)) {
-  const src = fs.readFileSync(path.join(dir, file), 'utf8');
+  const src = fs.readFileSync(path.join(dir, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1'); // comments are not guards
   for (const block of src.split(/\n(?=\w+\.(?:get|post|put|patch|delete)\()/)) {
     const m = block.match(/^\w+\.(get|post|put|patch|delete)\(\s*'([^']+)'/);
     if (m) routes.push({ method: m[1]!.toUpperCase(), path: base + m[2], block });

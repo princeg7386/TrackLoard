@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React from 'react';
 import {
@@ -69,7 +69,7 @@ export function StudentDetailModal({
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 {student.classGrade} - Section {student.section}
-                {student.rollNumber ? ` â€¢ Roll No: #${student.rollNumber}` : ''}
+                {student.rollNumber ? ` • Roll No: #${student.rollNumber}` : ''}
               </p>
             </div>
           </div>

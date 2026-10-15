@@ -1,4 +1,4 @@
-﻿import crypto from 'crypto';
+import crypto from 'crypto';
 import { query } from '../config/database.js';
 import { env } from '../config/env.js';
 import {
@@ -481,37 +481,60 @@ export class ParentIdentityService {
    */
   public static async revokeToken(
     tokenOrId: string,
+    schoolId?: string,
     reason?: string
   ): Promise<boolean> {
     if (!tokenOrId) return false;
 
     let sql: string;
-    let param: string;
+    let params: string[];
 
     if (tokenOrId.startsWith('trk_')) {
-      sql = `
-        UPDATE parent_tracking_tokens 
-        SET revoked_at = NOW(), updated_at = NOW() 
-        WHERE token_hash = $1 AND revoked_at IS NULL
-        RETURNING id
-      `;
-      param = this.hashToken(tokenOrId);
+      const tokenHash = this.hashToken(tokenOrId);
+      if (schoolId) {
+        sql = `
+          UPDATE parent_tracking_tokens
+          SET revoked_at = NOW(), updated_at = NOW()
+          WHERE token_hash = $1 AND school_id = $2 AND revoked_at IS NULL
+          RETURNING id
+        `;
+        params = [tokenHash, schoolId];
+      } else {
+        sql = `
+          UPDATE parent_tracking_tokens
+          SET revoked_at = NOW(), updated_at = NOW()
+          WHERE token_hash = $1 AND revoked_at IS NULL
+          RETURNING id
+        `;
+        params = [tokenHash];
+      }
     } else {
-      sql = `
-        UPDATE parent_tracking_tokens 
-        SET revoked_at = NOW(), updated_at = NOW() 
-        WHERE id = $1 AND revoked_at IS NULL
-        RETURNING id
-      `;
-      param = tokenOrId;
+      if (schoolId) {
+        sql = `
+          UPDATE parent_tracking_tokens
+          SET revoked_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND school_id = $2 AND revoked_at IS NULL
+          RETURNING id
+        `;
+        params = [tokenOrId, schoolId];
+      } else {
+        sql = `
+          UPDATE parent_tracking_tokens
+          SET revoked_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND revoked_at IS NULL
+          RETURNING id
+        `;
+        params = [tokenOrId];
+      }
     }
 
-    const rows = await query<{ id: string }>(sql, [param]);
+    const rows = await query<{ id: string }>(sql, params);
     const revoked = rows.length > 0;
 
     if (revoked && rows[0]) {
       logger.info('Parent tracking token revoked', {
         tokenId: rows[0].id,
+        schoolId,
         reason: reason || 'Manual revocation',
       });
     }

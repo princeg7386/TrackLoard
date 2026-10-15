@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import {
   ParentIdentityLookupRequest,
   GenerateParentTokenRequest,
@@ -10,7 +10,9 @@ import { sendSuccess } from '../utils/response.util.js';
 
 export class ParentIdentityController {
   /**
-   * Resolve parent identity and linked students from a WhatsApp phone number
+   * Resolve parent identity and linked students from a WhatsApp phone number.
+   * School scope is always taken from the authenticated admin's JWT (req.user.schoolId),
+   * not from the request body, to prevent cross-tenant lookups.
    */
   public static async lookupByPhone(
     req: Request<{}, {}, ParentIdentityLookupRequest>,
@@ -18,7 +20,8 @@ export class ParentIdentityController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const { phone, schoolId } = req.body;
+      const { phone } = req.body;
+      const schoolId = req.user?.schoolId ?? undefined;
       const records = await ParentIdentityService.lookupParentsByPhone(phone, schoolId);
 
       sendSuccess(
@@ -54,7 +57,9 @@ export class ParentIdentityController {
   }
 
   /**
-   * Revoke a single active tracking token
+   * Revoke a single active tracking token.
+   * School scope is enforced from the authenticated admin's JWT to prevent
+   * cross-tenant token revocation.
    */
   public static async revokeToken(
     req: Request<{}, {}, RevokeParentTokenRequest>,
@@ -63,8 +68,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const tokenOrId = req.body.token || req.body.tokenId!;
+      const schoolId = req.user?.schoolId ?? undefined;
       const revoked = await ParentIdentityService.revokeToken(
         tokenOrId,
+        schoolId,
         req.body.reason
       );
 
@@ -79,7 +86,8 @@ export class ParentIdentityController {
   }
 
   /**
-   * Revoke all active tracking tokens for a given student (e.g. stop/bus changed)
+   * Revoke all active tracking tokens for a given student.
+   * School scope is always taken from the authenticated admin's JWT (req.user.schoolId).
    */
   public static async revokeStudentTokens(
     req: Request<{}, {}, RevokeStudentTokensRequest>,
@@ -87,7 +95,8 @@ export class ParentIdentityController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const { studentId, schoolId, reason } = req.body;
+      const { studentId, reason } = req.body;
+      const schoolId = req.user?.schoolId!;
       const count = await ParentIdentityService.revokeAllTokensForStudent(
         studentId,
         schoolId,
@@ -125,35 +134,7 @@ export class ParentIdentityController {
   }
 
   /**
-   * Public token consumption endpoint: validates tracking token and retrieves live trip session
-   */
-  public static async verifyToken(
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> {
-    try {
-      const token =
-        typeof req.query.token === 'string'
-          ? req.query.token
-          : typeof req.params.token === 'string'
-            ? req.params.token
-            : '';
-
-      const session = await ParentIdentityService.verifyTrackingToken(token);
-
-      sendSuccess(
-        res,
-        session,
-        'Live tracking session resolved successfully'
-      );
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * List parents with student & WhatsApp status for a school
+   * List all parents registered in a school with linked student details
    */
   public static async listParents(
     req: Request,
@@ -162,14 +143,10 @@ export class ParentIdentityController {
   ): Promise<void> {
     try {
       const { schoolId } = req.params;
-      if (!schoolId) {
-        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
-        return;
-      }
       const { search, relationship, whatsAppStatus } = req.query;
 
-      const records = await ParentIdentityService.listParentsForSchool(
-        schoolId,
+      const records = await ParentIdentityService.getSchoolParents(
+        schoolId!,
         {
           search: typeof search === 'string' ? search : undefined,
           relationship: typeof relationship === 'string' ? relationship : undefined,
@@ -489,4 +466,3 @@ export class ParentIdentityController {
     }
   }
 }
-

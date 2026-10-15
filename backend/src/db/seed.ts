@@ -1,8 +1,8 @@
-﻿import { pool, query } from '../config/database.js';
+import { pool, query } from '../config/database.js';
 import { runMigrations } from './migrate.js';
 
 export async function seedDatabase(): Promise<void> {
-  console.log('ðŸŒ± Starting database seeding for development & testing...');
+  console.log(' Starting database seeding for development & testing...');
 
   // Ensure migrations are executed first
   await runMigrations();
@@ -54,7 +54,7 @@ export async function seedDatabase(): Promise<void> {
         'DL-0420110012345',
         '2028-12-31'
       )
-      ON CONFLICT (school_id, phone) DO UPDATE SET full_name = EXCLUDED.full_name
+      ON CONFLICT (school_id, phone) WHERE deleted_at IS NULL DO UPDATE SET full_name = EXCLUDED.full_name
       RETURNING id;
     `, [schoolId]);
     const driver1Id = driver1Res.rows[0].id;
@@ -68,7 +68,7 @@ export async function seedDatabase(): Promise<void> {
         'DL-0420150098765',
         '2029-06-30'
       )
-      ON CONFLICT (school_id, phone) DO UPDATE SET full_name = EXCLUDED.full_name
+      ON CONFLICT (school_id, phone) WHERE deleted_at IS NULL DO UPDATE SET full_name = EXCLUDED.full_name
       RETURNING id;
     `, [schoolId]);
     const driver2Id = driver2Res.rows[0].id;
@@ -184,9 +184,9 @@ export async function seedDatabase(): Promise<void> {
     `, [schoolId, routeId, bus1Id, driver1Id, today]);
 
     await client.query('COMMIT');
-    console.log('âœ… Seed data successfully inserted!');
-    console.log(`ðŸ« School: DPS RKP (ID: ${schoolId})`);
-    console.log(`ðŸšŒ Bus 04 assigned to Route RTE-S04 with 4 PostGIS stops & 4 students`);
+    console.log('✅ Seed data successfully inserted!');
+    console.log(` School: DPS RKP (ID: ${schoolId})`);
+    console.log(` Bus 04 assigned to Route RTE-S04 with 4 PostGIS stops & 4 students`);
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('âŒ Error during seeding:', error);

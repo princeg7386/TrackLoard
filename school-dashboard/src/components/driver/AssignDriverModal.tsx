@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -262,7 +262,7 @@ export function AssignDriverModal({
                   <option value="">-- Choose fleet vehicle --</option>
                   {availableBuses.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.busNumber} â€¢ {b.registrationNumber}{' '}
+                      {b.busNumber} • {b.registrationNumber}{' '}
                       {b.assignedRouteName ? `(Route: ${b.assignedRouteName})` : '(No route)'}{' '}
                       {b.defaultDriverId && b.defaultDriverId !== driver.id
                         ? `[Currently with ${b.driverName || 'Another Driver'}]`

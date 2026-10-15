@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -399,7 +399,7 @@ export function AdminAccountForm({ initialUser = null }: AdminAccountFormProps) 
                 type={showPassword ? 'text' : 'password'}
                 value={passwordData.currentPassword}
                 onChange={(e) => setPasswordData((p) => ({ ...p, currentPassword: e.target.value }))}
-                placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                placeholder="••••••••"
                 className={`w-full px-3 py-2 text-xs rounded-md border ${
                   passwordErrors.currentPassword ? 'border-rose-400 bg-rose-50/20' : 'border-slate-300'
                 }`}

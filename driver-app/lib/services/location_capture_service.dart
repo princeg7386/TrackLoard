@@ -4,7 +4,11 @@ import '../models/device_status_model.dart';
 import 'device_status_service.dart';
 import 'telemetry_upload_service.dart';
 
-/// Continuous Location Capture Engine capturing high-precision GPS, Speed, Accuracy, Battery and Network
+/// Continuous Location Capture Engine.
+///
+/// Uses Geolocator with [AndroidSettings] and a [ForegroundNotificationConfig]
+/// so the OS keeps the position stream alive when the screen locks.
+/// The foreground notification is shown only while a trip is active.
 class LocationCaptureService {
   static final LocationCaptureService _instance = LocationCaptureService._internal();
   factory LocationCaptureService() => _instance;
@@ -21,7 +25,11 @@ class LocationCaptureService {
   String? _activeBusId;
   String? _activeDriverId;
 
-  /// Start continuous location capture for an active trip
+  /// Start continuous location capture for an active trip.
+  ///
+  /// Passes [AndroidSettings] with a [ForegroundNotificationConfig] so Android
+  /// keeps the stream running when the screen is locked — no separate background
+  /// isolate or flutter_background_service dependency required.
   Future<bool> startTripCapture({
     required String tripId,
     required String busId,
@@ -44,10 +52,20 @@ class LocationCaptureService {
         return false;
       }
 
-      // Configure high-frequency high-precision capture settings
-      const locationSettings = LocationSettings(
+      // AndroidSettings with foregroundNotificationConfig keeps GPS alive when
+      // the screen locks — the OS treats the stream as a foreground service.
+      const locationSettings = AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 5, // Capture update every 5 meters
+        distanceFilter: 5,
+        foregroundNotificationConfig: ForegroundNotificationConfig(
+          notificationText: 'BUSLOARD is tracking bus location',
+          notificationTitle: 'BUSLOARD GPS Active',
+          enableWakeLock: true,
+          notificationIcon: AndroidResource(
+            name: 'ic_launcher',
+            defType: 'mipmap',
+          ),
+        ),
       );
 
       _positionStreamSub?.cancel();
@@ -72,7 +90,7 @@ class LocationCaptureService {
     }
   }
 
-  /// Stop active trip capture
+  /// Stop active trip capture and dismiss the foreground notification.
   void stopTripCapture() {
     _isCapturing = false;
     _activeTripId = null;
@@ -81,29 +99,6 @@ class LocationCaptureService {
     _positionStreamSub?.cancel();
     _positionStreamSub = null;
     _uploadService.reset();
-  }
-
-  /// Called from the Android foreground service isolate to keep GPS running
-  /// when the screen locks or the app moves to the background.
-  /// Re-attaches the position stream if a trip was already active.
-  Future<void> startBackgroundCapture() async {
-    if (!_isCapturing || _activeTripId == null) return;
-
-    // Re-subscribe to position stream in the background isolate
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 5,
-    );
-
-    _positionStreamSub?.cancel();
-    _positionStreamSub = Geolocator.getPositionStream(
-      locationSettings: locationSettings,
-    ).listen(
-      _processLocationUpdate,
-      onError: (_) {
-        // Ignore transient GPS errors; background service retries automatically
-      },
-    );
   }
 
   void _processLocationUpdate(Position pos) {

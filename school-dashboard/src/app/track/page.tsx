@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -284,7 +284,7 @@ function ParentTrackContent() {
               <label className="text-xs font-semibold text-slate-700 flex items-center justify-between">
                 <span>Confirm Registered Phone</span>
                 <span className="text-[11px] font-mono text-slate-400">
-                  â€¢â€¢â€¢â€¢â€¢â€¢{verification.phoneLast4 || 'â€¢â€¢â€¢â€¢'}
+                  ••••••{verification.phoneLast4 || '••••'}
                 </span>
               </label>
               <input
@@ -383,7 +383,7 @@ function ParentTrackContent() {
               <div className="flex items-center justify-between font-semibold text-sky-900">
                 <span className="flex items-center gap-1.5">
                   <Bus className="w-4 h-4 text-sky-600" />
-                  Bus {session.activeTrip.busNumber} â€¢ {session.activeTrip.routeName}
+                  Bus {session.activeTrip.busNumber} • {session.activeTrip.routeName}
                 </span>
                 <span className="px-2 py-0.5 rounded text-[10px] bg-sky-200 text-sky-800">
                   {session.activeTrip.status}
@@ -435,7 +435,7 @@ function ParentTrackContent() {
                   {session.pickupStop.stopName}
                 </div>
                 <div className="text-[11px] text-slate-500 font-mono">
-                  Stop #{session.pickupStop.sequenceOrder} â€¢ Geofence Radius: {session.pickupStop.geofenceRadiusMeters}m
+                  Stop #{session.pickupStop.sequenceOrder} • Geofence Radius: {session.pickupStop.geofenceRadiusMeters}m
                 </div>
                 <div className="text-[10px] text-slate-400 font-mono">
                   Coordinates: {session.pickupStop.latitude.toFixed(4)}, {session.pickupStop.longitude.toFixed(4)}
@@ -477,7 +477,7 @@ function ParentTrackContent() {
 
       {/* Footer */}
       <footer className="text-center py-4 text-[10px] text-slate-400 font-mono">
-        Protected by School Transport Security â€¢ Token: {token ? `${token.slice(0, 8)}...` : 'Active'} â€¢ Expires: {new Date(session.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        Protected by School Transport Security • Token: {token ? `${token.slice(0, 8)}...` : 'Active'} • Expires: {new Date(session.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
       </footer>
     </div>
   );
