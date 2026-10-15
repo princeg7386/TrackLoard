@@ -22,12 +22,14 @@ import { fetchDashboardSummary, DashboardMetricSummary } from '../../../services
 import {
   getFleetHealth,
   getBusState,
+  getTripTrail,
   openSchoolFeed,
   openBusFeed,
   FeedConnectionStatus,
   ResilientFeedSubscription,
 } from '../../../services/telemetryApi';
 import { BusStatePanel } from '../../../components/live/BusStatePanel';
+import { SchoolMapFeedCanvas } from '../../../components/live/SchoolMapFeedCanvas';
 import { useAuth } from '../../../contexts/AuthContext';
 import type {
   BusGpsHealthSummary,
@@ -48,6 +50,7 @@ export default function LiveOperationsPage() {
   const [buses, setBuses] = useState<BusGpsHealthSummary[]>([]);
   const [selectedBusState, setSelectedBusState] = useState<ActiveTripStateResponse | null>(null);
   const [selectedBusId, setSelectedBusId] = useState<string | null>(null);
+  const [tripTrail, setTripTrail] = useState<Array<{ latitude: number; longitude: number; speedKmh: number; recordedAt: string }>>([]);
   const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(false);
   const [viewState, setViewState] = useState<ViewState>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -182,9 +185,21 @@ export default function LiveOperationsPage() {
   const handleSelectBus = async (bus: BusGpsHealthSummary) => {
     setSelectedBusId(bus.busId);
     setIsLoadingDetail(true);
+    setTripTrail([]);
     try {
       const state = await getBusState(schoolId, bus.busId);
       setSelectedBusState(state);
+
+      if (state.tripId) {
+        try {
+          const trailRes = await getTripTrail(state.tripId, 100);
+          if (trailRes?.trail) {
+            setTripTrail(trailRes.trail);
+          }
+        } catch {
+          // Trail optional
+        }
+      }
     } catch {
       // Fallback: minimal view
     } finally {
@@ -352,8 +367,18 @@ export default function LiveOperationsPage() {
 
       {/* Main Operational Canvas & Active Bus State Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Fleet Bus States */}
+        {/* Left Column: School Map Canvas & Fleet Bus States */}
         <div className="lg:col-span-2 space-y-4">
+          {/* Live School Map Feed Canvas */}
+          <SchoolMapFeedCanvas
+            buses={buses}
+            selectedBusId={selectedBusId}
+            selectedBusDetail={selectedBusState}
+            onSelectBus={handleSelectBus}
+            tripTrail={tripTrail}
+            isLoading={viewState === 'loading'}
+          />
+
           <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-2">

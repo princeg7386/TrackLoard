@@ -35,6 +35,7 @@ yarn-error.log*
 pnpm-debug.log*
 logs/
 *.log
+audit-tests/report/
 
 # IDE & OS
 .vscode/*

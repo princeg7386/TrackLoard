@@ -25,6 +25,16 @@ export async function getBusState(schoolId: string, busId: string): Promise<Acti
   return apiRequest<ActiveTripStateResponse>(`/schools/${schoolId}/buses/${busId}/state`);
 }
 
+/**
+ * Fetch historical GPS location trail for an active trip.
+ */
+export async function getTripTrail(
+  tripId: string,
+  limit: number = 200
+): Promise<{ tripId: string; count: number; trail: Array<{ latitude: number; longitude: number; speedKmh: number; recordedAt: string }> }> {
+  return apiRequest(`/telemetry/trips/${tripId}/trail?limit=${limit}`);
+}
+
 export type FeedConnectionStatus = 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'OFFLINE';
 
 export interface ResilientFeedSubscription {
