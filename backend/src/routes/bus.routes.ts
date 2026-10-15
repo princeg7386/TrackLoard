@@ -31,6 +31,11 @@ busRouter.get(
   '/:schoolId/buses',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.listBuses
 );
 
@@ -39,6 +44,11 @@ busRouter.get(
   '/:schoolId/buses/:busId',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.getBus
 );
 
@@ -84,6 +94,11 @@ busRouter.get(
   '/:schoolId/routes',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.listRoutes
 );
 
@@ -92,6 +107,11 @@ busRouter.get(
   '/:schoolId/buses/:busId/history',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.getBusHistory
 );
 
@@ -100,6 +120,11 @@ busRouter.get(
   '/:schoolId/buses/:busId/history/trips',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.getBusTripHistory
 );
 
@@ -108,6 +133,11 @@ busRouter.get(
   '/:schoolId/buses/:busId/history/incidents',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.getBusIncidentHistory
 );
 
@@ -116,6 +146,11 @@ busRouter.get(
   '/:schoolId/buses/:busId/history/attendance',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   BusController.getBusAttendanceHistory
 );
 

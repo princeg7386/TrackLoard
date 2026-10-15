@@ -293,14 +293,28 @@ export class TelemetryService {
       };
     }
 
-    // Deduplicate on client-sent timestamps in memory first
+    // Deduplicate on client-sent timestamps in memory first, filtering out invalid points
     const uniqueMap = new Map<string, TelemetryIngestPayload>();
     for (const loc of locations) {
-      this.validateTimestamp(loc.recordedAt);
-      this.validateKinematics(loc);
+      try {
+        this.validateTimestamp(loc.recordedAt);
+        this.validateKinematics(loc);
+      } catch (err: any) {
+        logger.warn('Skipping invalid telemetry point in offline batch', {
+          tripId: loc.tripId,
+          recordedAt: loc.recordedAt,
+          reason: err.message,
+        });
+        continue;
+      }
       const key = `${loc.tripId}:${loc.recordedAt}`;
       uniqueMap.set(key, loc);
     }
+
+    if (uniqueMap.size === 0 && locations.length > 0) {
+      throw new BadRequestError('All telemetry points in batch failed kinematic or timestamp validation');
+    }
+
     const deduplicated = Array.from(uniqueMap.values());
     const duplicatesSkipped = locations.length - deduplicated.length;
 

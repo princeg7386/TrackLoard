@@ -9,35 +9,39 @@ import {
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { ParentIdentityController } from '../controllers/parent-identity.controller.js';
 import { authenticateParentTrackingToken } from '../middlewares/parent-token.middleware.js';
-
+import { authenticateToken } from '../middlewares/auth.middleware.js';
 import { parentTokenRateLimiter } from '../middlewares/rate-limiter.middleware.js';
 
 const parentRouter = Router();
 
-// 1. Identity & WhatsApp Phone Lookup
+// 1. Identity & WhatsApp Phone Lookup (Staff / Admin auth required)
 parentRouter.post(
   '/identity/lookup',
   parentTokenRateLimiter,
+  authenticateToken,
   validateBody(ParentIdentityLookupRequestSchema),
   ParentIdentityController.lookupByPhone
 );
 
-// 2. Token Issuance & Revocation
+// 2. Token Issuance & Revocation (Staff / Admin auth required)
 parentRouter.post(
   '/token/generate',
   parentTokenRateLimiter,
+  authenticateToken,
   validateBody(GenerateParentTokenRequestSchema),
   ParentIdentityController.generateToken
 );
 
 parentRouter.post(
   '/token/revoke',
+  authenticateToken,
   validateBody(RevokeParentTokenRequestSchema),
   ParentIdentityController.revokeToken
 );
 
 parentRouter.post(
   '/token/revoke-student',
+  authenticateToken,
   validateBody(RevokeStudentTokensRequestSchema),
   ParentIdentityController.revokeStudentTokens
 );

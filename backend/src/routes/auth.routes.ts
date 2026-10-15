@@ -28,6 +28,7 @@ authRouter.post('/logout', AuthController.logout);
 // 3. Forgot Password Request
 authRouter.post(
   '/forgot-password',
+  authRateLimiter,
   validateRequest({ body: ForgotPasswordRequestSchema }),
   AuthController.forgotPassword
 );
@@ -35,6 +36,7 @@ authRouter.post(
 // 4. Reset Password with Token
 authRouter.post(
   '/reset-password',
+  authRateLimiter,
   validateRequest({ body: ResetPasswordRequestSchema }),
   AuthController.resetPassword
 );

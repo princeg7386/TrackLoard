@@ -5,7 +5,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createApp } from '../src/app.js';
 import { ParentIdentityService } from '../src/services/parent-identity.service.js';
-import { normalizeIndianPhoneNumber, TripStatus, RouteType } from '@school-bus/shared';
+import { AuthService } from '../src/services/auth.service.js';
+import { normalizeIndianPhoneNumber, TripStatus, RouteType, UserRole } from '@school-bus/shared';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,13 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
   const mockStudentId = '333e4567-e89b-12d3-a456-426614174003';
   const mockStopId = '444e4567-e89b-12d3-a456-426614174004';
   const mockTripId = '555e4567-e89b-12d3-a456-426614174005';
+
+  const adminToken = AuthService.generateToken({
+    id: '999e4567-e89b-12d3-a456-426614174099',
+    schoolId: mockSchoolId,
+    email: 'admin@school.com',
+    role: UserRole.SCHOOL_ADMIN,
+  });
 
   const mockParentRecord = {
     id: mockParentId,
@@ -130,7 +138,10 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
 
   describe('2. WhatsApp Phone Identity Resolution', () => {
     it('POST /api/v1/parent/identity/lookup validates phone requirement', async () => {
-      const res = await request(app).post('/api/v1/parent/identity/lookup').send({});
+      const res = await request(app)
+        .post('/api/v1/parent/identity/lookup')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({});
       expect(res.status).toBe(422);
       expect(res.body.success).toBe(false);
       expect(res.body.error.code).toBe('VALIDATION_ERROR');
@@ -143,6 +154,7 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
 
       const res = await request(app)
         .post('/api/v1/parent/identity/lookup')
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ phone: '9876543210', schoolId: mockSchoolId });
 
       expect(res.status).toBe(200);
@@ -158,9 +170,12 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
 
   describe('3. Token Generation & Revocation Lifecycle', () => {
     it('POST /api/v1/parent/token/generate validates required fields', async () => {
-      const res = await request(app).post('/api/v1/parent/token/generate').send({
-        parentId: 'not-a-uuid',
-      });
+      const res = await request(app)
+        .post('/api/v1/parent/token/generate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          parentId: 'not-a-uuid',
+        });
       expect(res.status).toBe(422);
       expect(res.body.success).toBe(false);
     });
@@ -183,6 +198,7 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
 
       const res = await request(app)
         .post('/api/v1/parent/token/generate')
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({
           parentId: mockParentId,
           studentId: mockStudentId,
@@ -207,6 +223,7 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
 
       const res = await request(app)
         .post('/api/v1/parent/token/revoke')
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ token: 'trk_sample_to_revoke', reason: 'Driver route reassigned' });
 
       expect(res.status).toBe(200);
@@ -223,6 +240,7 @@ describe('Parent Identity & Secure Tracking Tokens (Micro-phase 4.3)', () => {
 
       const res = await request(app)
         .post('/api/v1/parent/token/revoke-student')
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({
           studentId: mockStudentId,
           schoolId: mockSchoolId,

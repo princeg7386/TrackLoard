@@ -1,6 +1,16 @@
 import app from './app.js';
 import { env } from './config/env.js';
 import { pool } from './config/database.js';
+import { SecurityUtil } from './utils/security.util.js';
+
+// Enforce production secrets check at startup
+const secretCheck = SecurityUtil.validateProductionSecrets();
+if (!secretCheck.valid) {
+  console.error('❌ Production secrets verification failed:', secretCheck.issues);
+  if (env.NODE_ENV === 'production') {
+    process.exit(1);
+  }
+}
 
 const PORT = env.PORT;
 

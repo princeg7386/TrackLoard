@@ -136,6 +136,18 @@ export class DriverAuthService {
       throw new UnauthorizedError('Driver phone number is not registered in the system');
     }
 
+    // Driver must provide a secret: either PIN or license number
+    if (!pin && !licenseNumber) {
+      logger.warn('Driver login failed: neither PIN nor license number provided', { driverId: driver.id });
+      throw new UnauthorizedError('Security credential missing: PIN or license number is required');
+    }
+
+    // If driver account has a PIN set, PIN must be provided
+    if (driver.pin_hash && !pin) {
+      logger.warn('Driver login failed: PIN required but not provided', { driverId: driver.id });
+      throw new UnauthorizedError('Security PIN is required for this driver account');
+    }
+
     // Verify PIN if driver has a pin_hash set and PIN is supplied
     if (driver.pin_hash && pin) {
       const isPinMatch = await bcrypt.compare(pin, driver.pin_hash);
@@ -149,6 +161,8 @@ export class DriverAuthService {
         logger.warn('Driver login failed: license mismatch', { driverId: driver.id });
         throw new UnauthorizedError('Driver license number does not match');
       }
+    } else {
+      throw new UnauthorizedError('Invalid authentication credentials');
     }
 
     // Fetch default assigned bus

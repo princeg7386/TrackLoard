@@ -114,9 +114,9 @@ describe('GPS Health Monitoring & Location Cache (Micro-phase 11.3)', () => {
         .spyOn(GpsHealthService, 'getBusGpsHealth')
         .mockResolvedValueOnce(mockBusHealth);
 
-      const res = await request(app).get(
-        `/api/v1/telemetry/buses/${mockBusHealth.busId}/health`
-      );
+      const res = await request(app)
+        .get(`/api/v1/telemetry/buses/${mockBusHealth.busId}/health`)
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);

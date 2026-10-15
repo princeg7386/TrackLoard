@@ -12,6 +12,7 @@ schoolProfileRouter.get(
   '/:schoolId/profile',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
   SchoolProfileController.getProfile
 );
 

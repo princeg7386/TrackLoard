@@ -256,7 +256,7 @@ export const IndianVehicleRegistrationRegex =
 
 export function normalizeIndianRegistrationNumber(reg: string): string {
   if (!reg) return '';
-  return reg.trim().toUpperCase().replace(/[\s-]+/g, '-');
+  return reg.trim().toUpperCase().replace(/[\s-]+/g, '');
 }
 
 export const BusSchema = z.object({
@@ -939,7 +939,7 @@ export const TelemetryIngestSchema = z.object({
   driverId: z.string().uuid(),
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  speedKmh: z.number().min(0).max(180).default(0),
+  speedKmh: z.number().min(0).max(160).default(0),
   bearingDegrees: z.number().min(0).max(360).optional(),
   accuracyMeters: z.number().min(0).optional(),
   batteryPercentage: z.number().min(0).max(100).optional(),

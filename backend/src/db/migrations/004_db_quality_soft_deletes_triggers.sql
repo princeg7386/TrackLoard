@@ -11,6 +11,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Backward compatibility alias
+CREATE OR REPLACE FUNCTION update_timestamp_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- 2. Soft-Delete Columns (`deleted_at`) for Core Entities
 ALTER TABLE schools ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE admins ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;

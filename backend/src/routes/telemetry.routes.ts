@@ -30,12 +30,14 @@ telemetryRouter.post(
 // 3. Get latest bus location
 telemetryRouter.get(
   '/buses/:busId/latest',
+  authenticateToken,
   TelemetryController.getLatestBusLocation
 );
 
 // 4. Get location trail for a trip
 telemetryRouter.get(
   '/trips/:tripId/trail',
+  authenticateToken,
   TelemetryController.getTripTrail
 );
 
@@ -50,6 +52,7 @@ telemetryRouter.get(
 // 6. Get single bus GPS health summary
 telemetryRouter.get(
   '/buses/:busId/health',
+  authenticateToken,
   TelemetryController.getBusHealth
 );
 
@@ -64,6 +67,7 @@ telemetryRouter.get(
 // 8. Real-time SSE stream for trip tracking
 telemetryRouter.get(
   '/trips/:tripId/feed',
+  authenticateToken,
   TelemetryController.streamTripFeed
 );
 

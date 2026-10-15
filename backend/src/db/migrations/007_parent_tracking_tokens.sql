@@ -35,4 +35,4 @@ DROP TRIGGER IF EXISTS trg_parent_tracking_tokens_updated_at ON parent_tracking_
 CREATE TRIGGER trg_parent_tracking_tokens_updated_at
 BEFORE UPDATE ON parent_tracking_tokens
 FOR EACH ROW
-EXECUTE FUNCTION update_timestamp_column();
+EXECUTE FUNCTION trigger_set_timestamp();

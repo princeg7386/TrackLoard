@@ -32,6 +32,11 @@ driverRouter.get(
   '/:schoolId/drivers',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   DriverController.listDrivers
 );
 
@@ -40,6 +45,11 @@ driverRouter.get(
   '/:schoolId/drivers/:driverId',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   DriverController.getDriver
 );
 
@@ -62,6 +72,11 @@ driverRouter.get(
   '/:schoolId/drivers/:driverId/history',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   DriverController.getDriverHistory
 );
 

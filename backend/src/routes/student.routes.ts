@@ -38,6 +38,11 @@ studentRouter.get(
   '/:schoolId/students/transport-options',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   StudentController.getTransportOptions
 );
 
@@ -46,6 +51,11 @@ studentRouter.get(
   '/:schoolId/students',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   StudentController.listStudents
 );
 
@@ -134,6 +144,11 @@ studentRouter.get(
   '/:schoolId/parents/:parentId/notification-status',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   ParentIdentityController.getNotificationStatus
 );
 
@@ -170,6 +185,11 @@ studentRouter.get(
   '/:schoolId/students/:studentId/transport-history',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   StudentController.getTransportHistory
 );
 
@@ -178,6 +198,11 @@ studentRouter.get(
   '/:schoolId/students/:studentId',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   StudentController.getStudent
 );
 
@@ -227,6 +252,11 @@ studentRouter.get(
   '/:schoolId/students/:studentId/parents',
   authenticateToken,
   requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
   StudentController.getParents
 );
 

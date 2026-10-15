@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createApp } from '../src/app.js';
 import { DriverAuthService } from '../src/services/driver-auth.service.js';
+import { AuthService } from '../src/services/auth.service.js';
 import { TelemetryService } from '../src/services/telemetry.service.js';
 import { UserRole } from '@school-bus/shared';
 
@@ -24,6 +25,12 @@ describe('GPS Telemetry Capture & Ingestion (Micro-phase 11.1)', () => {
   };
 
   const driverToken = DriverAuthService.generateDriverToken(mockDriver);
+  const adminToken = AuthService.generateToken({
+    id: '999e4567-e89b-12d3-a456-426614174099',
+    schoolId: '223e4567-e89b-12d3-a456-426614174001',
+    email: 'admin@school.com',
+    role: UserRole.SCHOOL_ADMIN,
+  });
 
   const validPingPayload = {
     tripId: '423e4567-e89b-12d3-a456-426614174003',
@@ -192,7 +199,9 @@ describe('GPS Telemetry Capture & Ingestion (Micro-phase 11.1)', () => {
           recordedAt: new Date().toISOString(),
         });
 
-      const res = await request(app).get(`/api/v1/telemetry/buses/${busId}/latest`);
+      const res = await request(app)
+        .get(`/api/v1/telemetry/buses/${busId}/latest`)
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -214,7 +223,9 @@ describe('GPS Telemetry Capture & Ingestion (Micro-phase 11.1)', () => {
           { id: 2, latitude: 28.62, longitude: 77.21, speedKmh: 35, recordedAt: '2026-10-10T10:00:10Z' },
         ]);
 
-      const res = await request(app).get(`/api/v1/telemetry/trips/${tripId}/trail`);
+      const res = await request(app)
+        .get(`/api/v1/telemetry/trips/${tripId}/trail`)
+        .set('Authorization', `Bearer ${adminToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
