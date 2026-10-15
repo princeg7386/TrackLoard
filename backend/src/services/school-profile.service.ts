@@ -1,4 +1,4 @@
-﻿import { query } from '../config/database.js';
+import { query } from '../config/database.js';
 import {
   School,
   UpdateSchoolProfileRequest,
@@ -53,12 +53,18 @@ export class SchoolProfileService {
     ipAddress?: string
   ): Promise<School> {
     const current = await this.getSchoolProfile(schoolId);
-
-    const normalizedPhone = normalizeIndianPhoneNumber(updateData.phone);
-    const cleanedLogo = updateData.logoUrl || null;
-    const cleanedWebsite = updateData.website || null;
-    const cleanedAffiliation = updateData.affiliationNumber || null;
-    const cleanedPostal = updateData.postalCode || null;
+ 
+    const name = updateData.name !== undefined ? updateData.name.trim() : current.name;
+    const address = updateData.address !== undefined ? updateData.address.trim() : (current.address ?? '');
+    const city = updateData.city !== undefined ? updateData.city.trim() : current.city;
+    const state = updateData.state !== undefined ? updateData.state.trim() : current.state;
+    const cleanedPostal = updateData.postalCode !== undefined ? (updateData.postalCode || null) : (current.postalCode ?? null);
+    const normalizedPhone = updateData.phone ? normalizeIndianPhoneNumber(updateData.phone) : (current.phone ?? '');
+    const email = updateData.email !== undefined ? updateData.email.trim().toLowerCase() : current.email;
+    const cleanedLogo = updateData.logoUrl !== undefined ? (updateData.logoUrl || null) : (current.logoUrl ?? null);
+    const cleanedAffiliation = updateData.affiliationNumber !== undefined ? (updateData.affiliationNumber || null) : (current.affiliationNumber ?? null);
+    const cleanedWebsite = updateData.website !== undefined ? (updateData.website || null) : (current.website ?? null);
+    const timezone = updateData.timezone || current.timezone || 'Asia/Kolkata';
 
     const sql = `
       UPDATE schools
@@ -95,17 +101,17 @@ export class SchoolProfileService {
     `;
 
     const rows = await query<School>(sql, [
-      updateData.name.trim(),
-      updateData.address.trim(),
-      updateData.city.trim(),
-      updateData.state.trim(),
+      name,
+      address,
+      city,
+      state,
       cleanedPostal,
       normalizedPhone,
-      updateData.email.trim().toLowerCase(),
+      email,
       cleanedLogo,
       cleanedAffiliation,
       cleanedWebsite,
-      updateData.timezone || 'Asia/Kolkata',
+      timezone,
       schoolId,
     ]);
 

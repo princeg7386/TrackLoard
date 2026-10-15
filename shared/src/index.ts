@@ -172,17 +172,17 @@ export const SchoolSchema = z.object({
 export type School = z.infer<typeof SchoolSchema>;
 
 export const UpdateSchoolProfileRequestSchema = z.object({
-  name: z.string().min(2, 'School name must be at least 2 characters').max(255),
-  address: z.string().min(5, 'Full street address is required').max(500),
-  city: z.string().min(2, 'City is required').max(100),
-  state: z.string().min(2, 'State is required').max(100),
-  postalCode: z.string().regex(/^\d{6}$/, 'Valid 6-digit Indian PIN code required').optional().or(z.literal('')),
-  phone: z.string().min(10, 'Valid contact phone required'),
-  email: z.string().email('Please enter a valid official email address'),
+  name: z.string().min(2, 'School name must be at least 2 characters').max(255).optional(),
+  address: z.string().min(5, 'Full street address is required').max(500).optional().or(z.literal('')),
+  city: z.string().min(2, 'City is required').max(100).optional(),
+  state: z.string().min(2, 'State is required').max(100).optional(),
+  postalCode: z.string().regex(/^\d{6}$/, 'Valid 6-digit Indian PIN code required').optional().nullable().or(z.literal('')),
+  phone: z.string().min(10, 'Valid contact phone required').optional().or(z.literal('')),
+  email: z.string().email('Please enter a valid official email address').optional(),
   logoUrl: z.string().url('Please provide a valid logo image URL').optional().nullable().or(z.literal('')),
   affiliationNumber: z.string().max(100).optional().nullable().or(z.literal('')),
   website: z.string().url('Please provide a valid website URL').optional().nullable().or(z.literal('')),
-  timezone: z.string().default('Asia/Kolkata'),
+  timezone: z.string().default('Asia/Kolkata').optional(),
 });
 export type UpdateSchoolProfileRequest = z.infer<typeof UpdateSchoolProfileRequestSchema>;
 
