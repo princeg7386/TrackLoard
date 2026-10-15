@@ -36,7 +36,6 @@ class AppTheme {
         primary: primaryNavy,
         secondary: accentSky,
         surface: surfaceLight,
-        background: surfaceLight,
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: primaryNavy,

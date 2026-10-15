@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:geolocator/geolocator.dart';
 import 'telemetry_queue_service.dart';
 

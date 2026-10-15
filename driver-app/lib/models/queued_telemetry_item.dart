@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 /// Model representing a single pending telemetry ping stored in SQLite
 class QueuedTelemetryItem {
   final int? id;

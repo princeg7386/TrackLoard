@@ -38,7 +38,7 @@ class DeviceStatusService {
     try {
       final isServiceEnabled = await Geolocator.isLocationServiceEnabled();
       if (isServiceEnabled) {
-        final locationSettings = const LocationSettings(
+        const locationSettings = LocationSettings(
           accuracy: LocationAccuracy.high,
           distanceFilter: 5, // update every 5 meters
         );

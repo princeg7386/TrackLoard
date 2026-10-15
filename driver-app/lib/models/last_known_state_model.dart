@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'driver_profile.dart';
 
 /// Snapshot of the last-known driver, bus, and trip state saved locally in SQLite

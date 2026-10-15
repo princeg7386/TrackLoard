@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/app_formatters.dart';
 import '../models/assigned_trip.dart';
-import '../models/device_status_model.dart';
 import '../models/driver_profile.dart';
 import '../models/permission_status_model.dart';
 import '../models/trip_state_model.dart';
@@ -35,7 +34,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final AppLifecycleManager _lifecycleManager = AppLifecycleManager();
 
   bool _isLoading = true;
-  bool _isRefreshing = false;
   String? _errorMessage;
   bool _isOffline = false;
 
@@ -112,7 +110,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     setState(() {
       _isLoading = false;
-      _isRefreshing = false;
       if (result.success && result.data != null) {
         _profileData = result.data;
         _errorMessage = null;
@@ -133,9 +130,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _handleRefresh() async {
-    setState(() {
-      _isRefreshing = true;
-    });
     await Future.wait([
       _fetchProfile(),
       _checkPermissionsStatus(),

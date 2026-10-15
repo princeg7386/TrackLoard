@@ -28,6 +28,7 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
 
     final loggedIn = await _authService.isLoggedIn();
+    if (!mounted) return;
     if (loggedIn) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
