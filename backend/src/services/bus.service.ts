@@ -1,4 +1,4 @@
-﻿import { query } from '../config/database.js';
+import { query } from '../config/database.js';
 import {
   CreateBusRequest,
   UpdateBusRequest,
@@ -16,6 +16,8 @@ import {
   Driver,
   Route,
   normalizeIndianRegistrationNumber,
+  ActiveTripStateResponse,
+  GpsHealthStatus,
 } from '@school-bus/shared';
 import {
   ConflictError,
@@ -1003,6 +1005,150 @@ export class BusService {
       trips,
       incidents,
       attendance,
+    };
+  }
+
+  /**
+   * Phase 12.1 — Current Bus State
+   * Returns a full snapshot of bus + driver + active trip + route + live GPS cache.
+   * Uses the O(1) buses.last_* location cache; no gps_locations table scan.
+   *
+   * @param callerSchoolId Enforces tenant isolation — throws NotFoundError if bus
+   *   does not belong to this school.
+   */
+  static async getActiveBusState(
+    busId: string,
+    callerSchoolId: string
+  ): Promise<ActiveTripStateResponse> {
+    const rows = await query<{
+      bus_id: string;
+      bus_number: string;
+      registration_number: string;
+      make_model: string | null;
+      last_latitude: number | null;
+      last_longitude: number | null;
+      last_speed_kmh: number | null;
+      last_bearing_degrees: number | null;
+      last_accuracy_meters: number | null;
+      last_battery_percentage: number | null;
+      last_is_charging: boolean | null;
+      last_network_type: string | null;
+      last_gps_recorded_at: string | null;
+      gps_health_status: string | null;
+      driver_id: string | null;
+      driver_name: string | null;
+      driver_phone: string | null;
+      trip_id: string | null;
+      trip_status: string | null;
+      route_id: string | null;
+      route_name: string | null;
+      route_code: string | null;
+      route_type: string | null;
+      scheduled_start_time: string | null;
+      actual_start_time: string | null;
+      current_stop_sequence: number | null;
+      delay_minutes: number | null;
+    }>(
+      `SELECT
+        b.id                        AS bus_id,
+        b.bus_number,
+        b.registration_number,
+        b.make_model,
+        b.last_latitude,
+        b.last_longitude,
+        b.last_speed_kmh,
+        b.last_bearing_degrees,
+        b.last_accuracy_meters,
+        b.last_battery_percentage,
+        b.last_is_charging,
+        b.last_network_type,
+        b.last_gps_recorded_at,
+        b.gps_health_status,
+        d.id                        AS driver_id,
+        d.full_name                 AS driver_name,
+        d.phone                     AS driver_phone,
+        t.id                        AS trip_id,
+        t.status                    AS trip_status,
+        r.id                        AS route_id,
+        r.name                      AS route_name,
+        r.code                      AS route_code,
+        r.route_type,
+        t.scheduled_start_time,
+        t.actual_start_time,
+        t.current_stop_sequence,
+        t.delay_minutes
+       FROM buses b
+       LEFT JOIN drivers d
+         ON d.id = b.default_driver_id AND d.deleted_at IS NULL
+       LEFT JOIN trips t
+         ON t.bus_id = b.id
+        AND t.status IN ('IN_TRANSIT', 'DELAYED', 'SCHEDULED', 'EMERGENCY')
+        AND t.deleted_at IS NULL
+       LEFT JOIN routes r
+         ON r.id = t.route_id AND r.deleted_at IS NULL
+       WHERE b.id = $1
+         AND b.school_id = $2
+         AND b.deleted_at IS NULL
+       ORDER BY
+         CASE t.status
+           WHEN 'IN_TRANSIT'  THEN 1
+           WHEN 'DELAYED'     THEN 2
+           WHEN 'EMERGENCY'   THEN 3
+           WHEN 'SCHEDULED'   THEN 4
+           ELSE 5
+         END ASC
+       LIMIT 1;`,
+      [busId, callerSchoolId]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      throw new NotFoundError(`Bus ${busId} not found`);
+    }
+
+    const gpsAge =
+      row.last_gps_recorded_at
+        ? Math.max(0, Math.floor((Date.now() - new Date(row.last_gps_recorded_at).getTime()) / 1000))
+        : null;
+
+    return {
+      busId: row.bus_id,
+      busNumber: row.bus_number,
+      registrationNumber: row.registration_number,
+      makeModel: row.make_model ?? null,
+
+      driverId: row.driver_id ?? null,
+      driverName: row.driver_name ?? null,
+      driverPhone: row.driver_phone ?? null,
+
+      tripId: row.trip_id ?? null,
+      tripStatus: row.trip_status ?? null,
+      routeId: row.route_id ?? null,
+      routeName: row.route_name ?? null,
+      routeCode: row.route_code ?? null,
+      routeType: row.route_type ?? null,
+      scheduledStartTime: row.scheduled_start_time
+        ? new Date(row.scheduled_start_time).toISOString()
+        : null,
+      actualStartTime: row.actual_start_time
+        ? new Date(row.actual_start_time).toISOString()
+        : null,
+      currentStopSequence: row.current_stop_sequence ?? null,
+      delayMinutes: row.delay_minutes ?? null,
+
+      lastLatitude: row.last_latitude != null ? Number(row.last_latitude) : null,
+      lastLongitude: row.last_longitude != null ? Number(row.last_longitude) : null,
+      lastSpeedKmh: row.last_speed_kmh != null ? Number(row.last_speed_kmh) : null,
+      lastBearingDegrees: row.last_bearing_degrees != null ? Number(row.last_bearing_degrees) : null,
+      lastAccuracyMeters: row.last_accuracy_meters != null ? Number(row.last_accuracy_meters) : null,
+      lastBatteryPercentage: row.last_battery_percentage != null ? Number(row.last_battery_percentage) : null,
+      lastIsCharging: row.last_is_charging != null ? Boolean(row.last_is_charging) : null,
+      lastNetworkType: row.last_network_type ?? null,
+      lastGpsRecordedAt: row.last_gps_recorded_at
+        ? new Date(row.last_gps_recorded_at).toISOString()
+        : null,
+      gpsHealthStatus: (row.gps_health_status as GpsHealthStatus) ?? 'OFFLINE',
+      gpsAgeSeconds: gpsAge,
     };
   }
 }

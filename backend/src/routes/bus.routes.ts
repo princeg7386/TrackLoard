@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import {
   CreateBusRequestSchema,
   UpdateBusRequestSchema,
@@ -152,6 +152,20 @@ busRouter.get(
     UserRole.SUPER_ADMIN
   ),
   BusController.getBusAttendanceHistory
+);
+
+// 13. Phase 12.1 — Current bus state: live GPS + active trip + route + driver
+//     Tenant-isolated via requireTenantScope; bus must belong to the caller's school.
+busRouter.get(
+  '/:schoolId/buses/:busId/state',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  BusController.getActiveBusState
 );
 
 export default busRouter;

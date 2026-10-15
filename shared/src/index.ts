@@ -1037,6 +1037,46 @@ export const TelemetryFeedQuerySchema = z.object({
 });
 export type TelemetryFeedQuery = z.infer<typeof TelemetryFeedQuerySchema>;
 
+/**
+ * Phase 12.1 — Current Bus State
+ * Full snapshot joining bus + driver + route + active trip + live GPS cache.
+ * Returned by GET /api/v1/telemetry/buses/:busId/state
+ */
+export interface ActiveTripStateResponse {
+  busId: string;
+  busNumber: string;
+  registrationNumber: string;
+  makeModel: string | null;
+
+  driverId: string | null;
+  driverName: string | null;
+  driverPhone: string | null;
+
+  tripId: string | null;
+  tripStatus: string | null; // TripStatus vocab: SCHEDULED | IN_TRANSIT | DELAYED | COMPLETED | CANCELLED | EMERGENCY
+  routeId: string | null;
+  routeName: string | null;
+  routeCode: string | null;
+  routeType: string | null;
+  scheduledStartTime: string | null;
+  actualStartTime: string | null;
+  currentStopSequence: number | null;
+  delayMinutes: number | null;
+
+  // Live GPS (from buses.last_* cache — O(1), always fresh)
+  lastLatitude: number | null;
+  lastLongitude: number | null;
+  lastSpeedKmh: number | null;
+  lastBearingDegrees: number | null;
+  lastAccuracyMeters: number | null;
+  lastBatteryPercentage: number | null;
+  lastIsCharging: boolean | null;
+  lastNetworkType: string | null;
+  lastGpsRecordedAt: string | null;
+  gpsHealthStatus: GpsHealthStatus;
+  gpsAgeSeconds: number | null;
+}
+
 
 // 12. Boarding & Drop Attendance Events
 export const BoardingEventSchema = z.object({

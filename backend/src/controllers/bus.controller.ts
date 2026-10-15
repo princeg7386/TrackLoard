@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { BusService } from '../services/bus.service.js';
 
 export class BusController {
@@ -315,6 +315,30 @@ export class BusController {
       res.status(200).json({
         success: true,
         data: attendance,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/schools/:schoolId/buses/:busId/state
+   * Phase 12.1 — Returns current bus state: live GPS + active trip + route + driver.
+   * Tenant isolated: bus must belong to the caller's school.
+   */
+  public static async getActiveBusState(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId, busId } = req.params;
+      if (!schoolId || !busId) {
+        res.status(400).json({ success: false, error: { message: 'School ID and Bus ID are required' } });
+        return;
+      }
+
+      const state = await BusService.getActiveBusState(busId, schoolId);
+
+      res.status(200).json({
+        success: true,
+        data: state,
       });
     } catch (error) {
       next(error);
