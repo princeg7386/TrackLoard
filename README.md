@@ -73,7 +73,7 @@ BUSLOARD/
 │   │   ├── middlewares/      # Auth, rate limiting, validation
 │   │   ├── routes/           # Express route definitions
 │   │   └── types/            # TypeScript types and interfaces
-│   ├── migrations/           # PostgreSQL migration files (001–014)
+│   ├── migrations/           # PostgreSQL migration files (001–015)
 │   └── tests/                # Vitest unit + integration tests (268 tests)
 │
 ├── driver-app/               # Flutter Android app
@@ -140,8 +140,8 @@ npm install          # Installs all workspace packages (backend, shared, dashboa
 ### 4. Run database migrations
 
 ```bash
-# Apply all 14 migrations in order
-npm --prefix backend run migrate
+# Apply all 15 migrations in order
+npm --prefix backend run db:migrate
 ```
 
 ### 5. Start the backend
@@ -239,8 +239,11 @@ To keep the system lean and reliable, these are **permanently out of scope** unl
 ## 🧪 Testing
 
 ```bash
-# Run all backend tests
+# Run all backend tests (268 tests, 35 files)
 npm test -w backend
+
+# Run security audit tests (25 tests)
+npm run test:audit
 
 # Type check backend
 npx tsc --noEmit -p backend/tsconfig.json
@@ -249,7 +252,7 @@ npx tsc --noEmit -p backend/tsconfig.json
 npx tsc --noEmit -p school-dashboard/tsconfig.json
 ```
 
-**Current status: 268 tests, 35 files — all passing ✅**
+**Current status: 268 backend tests + 25 audit tests, all passing ✅**
 
 ---
 
