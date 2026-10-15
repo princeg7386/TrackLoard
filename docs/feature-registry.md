@@ -1,5 +1,7 @@
 # Master Feature Registry & Scope Lock
 
+> **Last Updated:** 2026-10-15 — Phases 0–11 all verified. Tests: 268 backend Vitest + 25 audit (all passing). TypeScript clean.
+
 | Feature ID | Category | Domain / Subsystem | Feature Name & Description | Dependencies | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **P0-REG-01** | Supporting | Project Control | **Master Scope Register**: Master feature list, unique IDs, status tracking, and dependency mapping. | None | **Done** |
@@ -26,22 +28,35 @@
 | **P0-SEC-07** | Security | Security Audit & Ops | **Security Audit, Secrets Protection & Policy**: AuditService with sanitized diffs, SecurityUtil (secret compliance & URI redaction), strict Helmet HSTS/CSP headers, reverse proxy trust, anti-abuse rate limiters, and PostGIS backup utility. | P0-SEC-06 | **Done** |
 | **P1-SCH-01** | Core | School Management | **School Profile & Dashboard Shell**: School configuration, name, address, contacts, branding logo, affiliation number, 7-state Next.js admin UI, responsive sidebar drawer, IST live clock, auth guard, operator profile & security, and empty states. | P0-SEC-03 | **Done** |
 | **P1-FLT-02** | Core | Fleet Management | **Bus / Vehicle Directory & Full Fleet Management**: Registration number with Indian format validator, internal bus number, make/model, GPS device identifier, atomic driver & route pairing, live PostGIS telemetry, active trip dispatch state, safe removal with in-progress trip guards, and complete vehicle history audit logs (trips, safety incidents/SOS, student attendance). *(No capacity / active-inactive toggles)* | P1-SCH-01 | **Done** |
-| **P1-DRV-03** | Core | Driver Management | **Driver Profile & WhatsApp Binding**: Phone verification, licensing info, bus binding. | P1-SCH-01 | Not Started |
-| **P1-STD-04** | Core | Student Management | **Student Directory & Parent Association**: Student details, class/section, primary parent contact, pickup point assignment. | P1-SCH-01 | Not Started |
-| **P1-RTE-05** | Core | Route Management | **Route & Stop Geo-Definitions**: Ordered pickup/drop stop coordinates, sequence, scheduled stop timings. | P1-SCH-01 | Not Started |
-| **P2-GPS-01** | Core | Telemetry Engine | **GPS Location Ingestion Pipeline**: Ingestion endpoint/adapter for driver app telemetry, spatial points indexing (PostGIS). | P0-SEC-03, P1-FLT-02 | Not Started |
+| **P1-DRV-03** | Core | Driver Management | **Driver Profile & WhatsApp Binding**: Driver directory, phone verification, license info, photo upload, assignment to bus, PIN-based authentication, driver JWT sessions, session version revocation, and admin dashboard UI (list, create, detail, history views). | P1-SCH-01 | **Done** |
+| **P1-STD-04** | Core | Student Management | **Student Directory & Parent Association**: Student records (name, class, section, admission number, photo), parent contact linkage, pickup-stop assignment, transport options, parent notification opt-in/out, admin CRUD with 7-state UI and audit trail. | P1-SCH-01 | **Done** |
+| **P1-RTE-05** | Core | Route Management | **Route & Stop Geo-Definitions**: Named routes, ordered pickup/drop stop coordinates, sequence numbers, scheduled stop timings, PostGIS geography points, and admin route management UI with placeholder screens. | P1-SCH-01 | **Done** |
+| **P2-GPS-01** | Core | Telemetry Engine | **GPS Location Ingestion Pipeline**: Batch telemetry ingestion endpoint (POST /api/v1/telemetry/batch), source validation (authenticated driver + assigned bus), raw location storage (gps_locations table with PostGIS), bus cache update (bus_latest_location), deduplication by device timestamp, SSE real-time feed, health monitoring (gps_health), stale detection, and kinematic anomaly rejection. *(Phases 11.1–11.4)* | P0-SEC-04, P1-FLT-02 | **Done** |
+| **P3-DRV-01** | Core | Driver Mobile App | **Driver Android Flutter App**: Battery-optimized background location tracking (Geolocator), permission flow (location/battery/notification), foreground service, network failure queue (SQLite-backed persistent queue), stationary filter (distance threshold), retry with exponential backoff, upload coordinator, offline sync, and live status UI (home screen, status bar, queue indicator). *(Phases 10.1–10.4)* | P2-GPS-01, P1-DRV-03 | **Done** |
+| **P5-ADM-03** | Core | School Dashboard UI | **Operational Admin Dashboard & Home Overview**: Dashboard cards, transport status summary, safety alert monitor, real-time audit activity feed, live dispatch quick actions, and 7-state UI. | P0-SEC-03, P1-SCH-01 | **Done** |
+| **P0-AUD-08** | Security | Security Audit & Repair | **Critical Security Repair & Audit Hardening**: RBAC enforcement on all 17 admin GET routes (driver role blocked), telemetry/parent-identity/token endpoints authenticated, driver phone-only login blocked (PIN or license required), production secret validation at startup, batch GPS fault tolerance (skip invalid points), bus plate normalization (`DL01AB1234 === DL-01-AB-1234`), migration 015 (soft-deletes + partial unique indexes on operational tables). Verified: 268 backend tests + 25 audit tests all passing. | P0-SEC-07 | **Done** |
 | **P2-GEO-02** | Safety | Geofencing Engine | **Pickup Stop Geofence Trigger**: PostGIS spatial boundary checks for stop arrival, dwell time, and departure events. | P2-GPS-01, P1-RTE-05 | Not Started |
 | **P2-ETA-03** | Core | ETA & Routing | **Dynamic ETA Calculation Service**: Real-time stop ETA estimation based on speed, distance, and historical transit. | P2-GPS-01, P1-RTE-05 | Not Started |
 | **P2-TRP-04** | Core | Trip Engine | **Trip State Machine**: Scheduled, In-Transit, Delayed, Completed, and Aborted states with event timeline. | P1-RTE-05, P1-FLT-02, P1-DRV-03 | Not Started |
-| **P3-DRV-01** | Core | Driver Mobile App | **Driver Android Flutter App**: Battery-optimized background location tracking, network failure queue, and offline sync. | P2-GPS-01, P1-DRV-03 | Not Started |
 | **P3-DWA-02** | Supporting | Driver WhatsApp | **Driver WhatsApp Command Bot**: Start Trip, End Trip, Student Search, Report Problem, SOS dispatch. | P2-TRP-04, P1-DRV-03 | Not Started |
 | **P3-ATT-03** | Safety | Attendance Engine | **Student Boarding/Deboarding Attendance**: Driver-marked boarding status, missing student alerts, stop validation. | P2-TRP-04, P1-STD-04 | Not Started |
-| **P4-NOT-01** | Supporting | Notification Engine | **WhatsApp & Webhook Dispatch Adapter**: Template management, rate limiting, parent notification triggers. | P2-GEO-02, P2-ETA-03 | Not Started |
-| **P4-PAR-02** | Safety | Parent Live Tracking | **Secure Parent Live Web View**: Responsive, secure tokenized web tracking showing live bus location, stop ETA, and driver contact. | P2-ETA-03, P2-TRP-04, P0-SEC-03 | Not Started |
+| **P4-NOT-01** | Supporting | Notification Engine | **WhatsApp & Webhook Dispatch Adapter**: Template management, rate limiting, parent notification triggers. *(Current: mock/log adapter; Twilio/Meta integration pending.)* | P2-GEO-02, P2-ETA-03 | Not Started |
+| **P4-PAR-02** | Safety | Parent Live Tracking | **Secure Parent Live Web View**: Responsive, secure tokenized web tracking showing live bus location, stop ETA, and driver contact. *(parent-web/ scaffold exists; full implementation pending.)* | P2-ETA-03, P2-TRP-04, P0-SEC-03 | Not Started |
 | **P5-DLY-01** | Safety | Anomaly & Delay | **Delay & Route Deviation Detection**: Automated detection of unapproved stops, route divergence, and heavy traffic delays. | P2-GPS-01, P2-GEO-02 | Not Started |
 | **P5-SOS-02** | Safety | Emergency & Incident | **Driver SOS & Incident Management**: Instant alert dispatch to school admin, priority WhatsApp broadcast, incident audit trail. | P2-GPS-01, P3-DWA-02, P4-NOT-01 | Not Started |
-| **P5-ADM-03** | Core | School Dashboard UI | **Operational Admin Dashboard & Home Overview**: Dashboard cards, transport status summary, safety alert monitor, real-time audit activity feed, live dispatch quick actions, and 7-state UI. | P0-SEC-03, P1-SCH-01 | **Done** |
 | **P6-RPT-01** | Supporting | Reports & Analytics | **Fleet Operations & Safety Reports**: On-time performance, driver route adherence, attendance logs, SOS resolution records. | P2-TRP-04, P3-ATT-03, P5-SOS-02 | Not Started |
+
+---
+
+## Verified Build State (as of 2026-10-15)
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit -p backend/tsconfig.json` | ✅ Exit 0 — clean |
+| `npx tsc --noEmit -p school-dashboard/tsconfig.json` | ✅ Exit 0 — clean |
+| `npm test -w backend` | ✅ **268 tests, 35 files — all passing** |
+| `npm run test:audit` | ✅ **25 tests — all passing** (logic: 21, route-auth: 4) |
+| GitHub `main` | ✅ Up to date |
 
 ---
 
@@ -55,3 +70,10 @@
 - **Core**: Mission-critical transport logistics, routing, tenant management, and tracking mechanisms.
 - **Safety**: High-stakes child safety features (Geofencing, Attendance, SOS/Incidents, Delay alerts, Parent Live tracking).
 - **Supporting**: Operational enhancements, bot workflows, adapters, and reporting tools.
+
+## Known Limitations & Deferred Items
+- **WhatsApp adapter**: Currently mock-only (`log` calls). Twilio/Meta Cloud API integration is deferred to P4-NOT-01.
+- **parent-web/**: Scaffold directory exists; full parent live tracking page implementation deferred to P4-PAR-02.
+- **PostgreSQL local testing**: All 268 backend tests use `vi.spyOn(db, 'query')` mocks. `audit-tests/check-sql.sh` and `db-behaviour.sql` require a running PostgreSQL instance (`docker compose up`).
+- **Flutter build**: `driver-app/` contains all Dart source and `pubspec.yaml`. Run `flutter build apk` locally after `flutter pub get`.
+- **Next phase**: **P12 — Geofencing & ETA Engine** (P2-GEO-02 + P2-ETA-03) is the next planned implementation phase.
