@@ -78,7 +78,7 @@ export async function seedDatabase(): Promise<void> {
       INSERT INTO buses (school_id, registration_number, bus_number, default_driver_id, make_model)
       VALUES (
         $1,
-        'DL-01-AB-1234',
+        'DL-04-AB-0011',
         'Bus 04 (South Route)',
         $2,
         'Tata Starbus Ultra 32'
