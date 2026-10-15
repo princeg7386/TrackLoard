@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 
 export interface RateLimiterOptions {
   windowMs: number; // Duration of window in milliseconds (e.g. 60,000 for 1 minute)
@@ -17,6 +17,10 @@ export interface IRateLimiterStore {
  */
 export class InMemoryRateLimiterStore implements IRateLimiterStore {
   private hits = new Map<string, { count: number; resetTimeMs: number }>();
+
+  constructor() {
+    setInterval(() => this.cleanup(), 5 * 60 * 1000).unref();
+  }
 
   async increment(
     key: string,
@@ -50,14 +54,11 @@ export class InMemoryRateLimiterStore implements IRateLimiterStore {
   }
 }
 
-const defaultStore = new InMemoryRateLimiterStore();
-// Cleanup every 5 minutes
-setInterval(() => defaultStore.cleanup(), 5 * 60 * 1000).unref();
-
 /**
  * Creates an Express Rate Limiter Middleware
  */
-export function createRateLimiter(options: RateLimiterOptions, store: IRateLimiterStore = defaultStore) {
+export function createRateLimiter(options: RateLimiterOptions, store?: IRateLimiterStore) {
+  const activeStore = store ?? new InMemoryRateLimiterStore();
   const {
     windowMs,
     maxRequests,
@@ -69,7 +70,7 @@ export function createRateLimiter(options: RateLimiterOptions, store: IRateLimit
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const key = keyGenerator(req);
-      const { count, resetTimeMs } = await store.increment(key, windowMs);
+      const { count, resetTimeMs } = await activeStore.increment(key, windowMs);
 
       const remaining = Math.max(0, maxRequests - count);
       const resetSeconds = Math.ceil((resetTimeMs - Date.now()) / 1000);

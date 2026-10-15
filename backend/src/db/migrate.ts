@@ -9,8 +9,10 @@ const __dirname = path.dirname(__filename);
 export async function runMigrations(): Promise<void> {
   console.log(' Initializing database migrations...');
 
-  // Ensure migrations tracking table exists
+  // Ensure extensions and migrations tracking table exist
   await query(`
+    CREATE EXTENSION IF NOT EXISTS postgis;
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id SERIAL PRIMARY KEY,
       filename VARCHAR(255) UNIQUE NOT NULL,
