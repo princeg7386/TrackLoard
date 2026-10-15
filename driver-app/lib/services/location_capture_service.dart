@@ -54,7 +54,7 @@ class LocationCaptureService {
 
       // AndroidSettings with foregroundNotificationConfig keeps GPS alive when
       // the screen locks — the OS treats the stream as a foreground service.
-      const locationSettings = AndroidSettings(
+      final locationSettings = AndroidSettings(
         accuracy: LocationAccuracy.high,
         distanceFilter: 5,
         foregroundNotificationConfig: ForegroundNotificationConfig(

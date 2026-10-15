@@ -35,10 +35,12 @@ class RetryHelper {
         await Future.delayed(Duration(milliseconds: actualDelayMs.toInt()));
 
         delay = Duration(
-          milliseconds: (delay.inMilliseconds * backoffMultiplier).clamp(
-            0,
-            maxDelay.inMilliseconds,
-          ),
+          milliseconds: (delay.inMilliseconds * backoffMultiplier)
+              .clamp(
+                0,
+                maxDelay.inMilliseconds,
+              )
+              .toInt(),
         );
       }
     }
