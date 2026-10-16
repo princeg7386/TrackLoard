@@ -10,6 +10,7 @@ import {
   SnapToRoadQuerySchema,
   GeocodeQuerySchema,
   ReverseGeocodeQuerySchema,
+  SelectMapOptionRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 
@@ -113,4 +114,31 @@ routingRouter.get(
   RoutingController.getRouteDirections
 );
 
+// 8. Free-First Map & Routing Configuration Options
+routingRouter.get(
+  '/options',
+  authenticateToken,
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  RoutingController.getFreeMapOptions
+);
+
+// 9. Select / Update Active Map, Geocoding or Routing Option
+routingRouter.post(
+  '/options/select',
+  authenticateToken,
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(SelectMapOptionRequestSchema),
+  RoutingController.selectFreeMapOption
+);
+
 export default routingRouter;
+

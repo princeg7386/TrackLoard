@@ -1860,6 +1860,127 @@ export interface IRoutingProvider {
   isHealthy(): Promise<boolean>;
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 13.2 — Free-First Maps (OpenStreetMap, Tile Layers, Routing & Geocoding Options)
+ * -----------------------------------------------------------------------------
+ */
+
+export const MapTileLayerOptionSchema = z.enum(['osm_standard', 'carto_light', 'canvas']);
+export type MapTileLayerOption = z.infer<typeof MapTileLayerOptionSchema>;
+
+export const GeocodingOptionSchema = z.enum(['osm_nominatim', 'mock']);
+export type GeocodingOption = z.infer<typeof GeocodingOptionSchema>;
+
+export const RoutingOptionSchema = z.enum(['osrm', 'mock']);
+export type RoutingOption = z.infer<typeof RoutingOptionSchema>;
+
+export const MapTileLayerConfigSchema = z.object({
+  id: MapTileLayerOptionSchema,
+  name: z.string(),
+  urlTemplate: z.string(),
+  subdomains: z.array(z.string()).default([]),
+  attribution: z.string(),
+  maxZoom: z.number().int().default(19),
+  minZoom: z.number().int().default(1),
+  isVectorCanvas: z.boolean().default(false),
+});
+export type MapTileLayerConfig = z.infer<typeof MapTileLayerConfigSchema>;
+
+export const FREE_MAP_TILE_PROVIDERS: Record<MapTileLayerOption, MapTileLayerConfig> = {
+  osm_standard: {
+    id: 'osm_standard',
+    name: 'OpenStreetMap Standard',
+    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: [],
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    maxZoom: 19,
+    minZoom: 1,
+    isVectorCanvas: false,
+  },
+  carto_light: {
+    id: 'carto_light',
+    name: 'CartoDB Positron (Open)',
+    urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+    subdomains: ['a', 'b', 'c', 'd'],
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    maxZoom: 20,
+    minZoom: 1,
+    isVectorCanvas: false,
+  },
+  canvas: {
+    id: 'canvas',
+    name: 'Operational Vector Canvas (Offline/Low-Bandwidth)',
+    urlTemplate: '',
+    subdomains: [],
+    attribution: 'BUSLOARD Operational Vector Canvas',
+    maxZoom: 22,
+    minZoom: 1,
+    isVectorCanvas: true,
+  },
+};
+
+export const FreeMapOptionsResponseSchema = z.object({
+  activeTileLayer: MapTileLayerOptionSchema,
+  activeGeocodingProvider: GeocodingOptionSchema,
+  activeRoutingProvider: RoutingOptionSchema,
+  availableTileLayers: z.array(MapTileLayerConfigSchema),
+  availableGeocodingProviders: z.array(z.string()),
+  availableRoutingProviders: z.array(z.string()),
+  defaultCenter: GeoCoordinatesSchema,
+  defaultZoom: z.number().int(),
+  isFreeFirst: z.literal(true),
+});
+export type FreeMapOptionsResponse = z.infer<typeof FreeMapOptionsResponseSchema>;
+
+export const SelectMapOptionRequestSchema = z.object({
+  tileLayer: MapTileLayerOptionSchema.optional(),
+  geocodingProvider: GeocodingOptionSchema.optional(),
+  routingProvider: RoutingOptionSchema.optional(),
+});
+export type SelectMapOptionRequest = z.infer<typeof SelectMapOptionRequestSchema>;
+
+/**
+ * OpenStreetMap Spherical Mercator tile projection helpers
+ */
+export function latLngToTile(lat: number, lng: number, zoom: number): { x: number; y: number } {
+  const n = Math.pow(2, zoom);
+  const rad = (lat * Math.PI) / 180;
+  const x = Math.floor(((lng + 180) / 360) * n);
+  const y = Math.floor(
+    ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n
+  );
+  return { x: Math.max(0, Math.min(n - 1, x)), y: Math.max(0, Math.min(n - 1, y)) };
+}
+
+export function tileToLatLng(x: number, y: number, zoom: number): { lat: number; lng: number } {
+  const n = Math.pow(2, zoom);
+  const lng = (x / n) * 360 - 180;
+  const latRad = Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n)));
+  const lat = (latRad * 180) / Math.PI;
+  return { lat, lng };
+}
+
+export function getOsmTileUrl(
+  template: string,
+  x: number,
+  y: number,
+  z: number,
+  subdomains: string[] = []
+): string {
+  let sub = '';
+  if (subdomains.length > 0) {
+    const idx = Math.abs((x + y) % subdomains.length);
+    sub = subdomains[idx] ?? '';
+  }
+  return template
+    .replace('{s}', sub)
+    .replace('{z}', String(z))
+    .replace('{x}', String(x))
+    .replace('{y}', String(y));
+}
+
+
 
 
 

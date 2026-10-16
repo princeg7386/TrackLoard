@@ -276,8 +276,11 @@ describe('Phase 13.1: Map & Routing Layer Abstraction', () => {
   describe('4. Real-DB Route Directions & Polyline Persistence (Rule 8)', () => {
     it('retrieves sequenced stops from database, computes polyline, and persists to routes table', async () => {
       const dbStatus = await db.verifyPostGisConnection();
+      const tablesExist = dbStatus.connected
+        ? await db.query<{ tbl: string | null }>(`SELECT to_regclass('public.pickup_locations') as tbl;`).catch(() => [{ tbl: null }])
+        : [{ tbl: null }];
 
-      if (dbStatus.connected) {
+      if (dbStatus.connected && tablesExist[0]?.tbl) {
         // Real DB is active: test against actual PostGIS database
         // 1. Create temporary school, route, and 3 pickup stops
         const testSchool = await db.query<{ id: string }>(

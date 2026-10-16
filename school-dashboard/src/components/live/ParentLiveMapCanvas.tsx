@@ -1,8 +1,16 @@
 'use client';
 
-import React, { useMemo } from 'react';
-import { WifiOff, RefreshCw, MapPin, Bus } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { WifiOff, RefreshCw, MapPin, Bus, Layers } from 'lucide-react';
 import type { FeedConnectionStatus } from '../../services/telemetryApi';
+import {
+  type MapTileLayerOption,
+  FREE_MAP_TILE_PROVIDERS,
+  latLngToTile,
+  tileToLatLng,
+  getOsmTileUrl,
+} from '@school-bus/shared';
+
 
 // ---------------------------------------------------------------------------
 // Types
@@ -140,6 +148,70 @@ export function ParentLiveMapCanvas({
   const isReconnecting = feedStatus === 'RECONNECTING';
   const showOverlay = isLoading || isOffline || isReconnecting;
 
+  const [mapLayer, setMapLayer] = useState<MapTileLayerOption>('osm_standard');
+
+  const cycleMapLayer = () => {
+    setMapLayer((prev) => (prev === 'osm_standard' ? 'canvas' : 'osm_standard'));
+  };
+
+  const tiles = useMemo(() => {
+    if (mapLayer === 'canvas') return [];
+    const latSpan = bounds.maxLat - bounds.minLat;
+    const lngSpan = bounds.maxLng - bounds.minLng;
+    const maxSpan = Math.max(latSpan, lngSpan);
+
+    let z = 14;
+    if (maxSpan > 0.1) z = 12;
+    else if (maxSpan > 0.04) z = 13;
+    else if (maxSpan > 0.015) z = 14;
+    else z = 15;
+
+    const minTile = latLngToTile(bounds.maxLat, bounds.minLng, z);
+    const maxTile = latLngToTile(bounds.minLat, bounds.maxLng, z);
+
+    const result: Array<{
+      key: string;
+      url: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> = [];
+
+    const providerConfig = FREE_MAP_TILE_PROVIDERS[mapLayer];
+    if (!providerConfig || !providerConfig.urlTemplate) return [];
+
+    const xStart = Math.min(minTile.x, maxTile.x);
+    const xEnd = Math.min(Math.max(minTile.x, maxTile.x), xStart + 4);
+    const yStart = Math.min(minTile.y, maxTile.y);
+    const yEnd = Math.min(Math.max(minTile.y, maxTile.y), yStart + 4);
+
+    for (let tx = xStart; tx <= xEnd; tx++) {
+      for (let ty = yStart; ty <= yEnd; ty++) {
+        const nw = tileToLatLng(tx, ty, z);
+        const se = tileToLatLng(tx + 1, ty + 1, z);
+
+        const pNw = project(nw.lat, nw.lng);
+        const pSe = project(se.lat, se.lng);
+
+        const width = Math.abs(pSe.x - pNw.x);
+        const height = Math.abs(pSe.y - pNw.y);
+        const url = getOsmTileUrl(providerConfig.urlTemplate, tx, ty, z, providerConfig.subdomains);
+
+        result.push({
+          key: `${z}-${tx}-${ty}`,
+          url,
+          x: Math.min(pNw.x, pSe.x),
+          y: Math.min(pNw.y, pSe.y),
+          width,
+          height,
+        });
+      }
+    }
+
+    return result;
+  }, [mapLayer, bounds]);
+
   // Grid lines (4 horizontal + 4 vertical)
   const gridLines = useMemo(() => {
     const lines: React.ReactNode[] = [];
@@ -165,6 +237,28 @@ export function ParentLiveMapCanvas({
       aria-label="Live bus location map"
       role="img"
     >
+      {/* Top right map layer toggle button */}
+      <div className="absolute top-2 right-2 z-10 pointer-events-auto">
+        <button
+          type="button"
+          onClick={cycleMapLayer}
+          title={`Switch map layer (Current: ${mapLayer === 'osm_standard' ? 'OpenStreetMap' : 'Vector Canvas'})`}
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-900/80 hover:bg-slate-800 text-[9px] font-mono text-slate-300 border border-slate-700 transition-colors"
+        >
+          <Layers className="w-2.5 h-2.5 text-sky-400" />
+          <span>{mapLayer === 'osm_standard' ? 'OSM' : 'Grid'}</span>
+        </button>
+      </div>
+
+      {/* Legal OSM Attribution */}
+      <div className="absolute bottom-1 right-2 z-10 text-[8px] text-slate-400 bg-slate-900/80 px-1.5 py-0.2 rounded border border-slate-800 pointer-events-auto">
+        {mapLayer === 'osm_standard' ? (
+          <span>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-sky-300">OpenStreetMap</a></span>
+        ) : (
+          <span>BUSLOARD</span>
+        )}
+      </div>
+
       <svg
         viewBox={`0 0 ${SVG_W} ${SVG_H}`}
         className="w-full h-full"
@@ -173,8 +267,26 @@ export function ParentLiveMapCanvas({
         {/* Background */}
         <rect x={0} y={0} width={SVG_W} height={SVG_H} fill={COLORS.bg} />
 
+        {/* OpenStreetMap Tile Layer (if active) */}
+        {mapLayer !== 'canvas' && tiles.length > 0 && (
+          <g className="osm-tiles" opacity="0.6">
+            {tiles.map((t) => (
+              <image
+                key={t.key}
+                href={t.url}
+                x={t.x}
+                y={t.y}
+                width={t.width}
+                height={t.height}
+                preserveAspectRatio="none"
+              />
+            ))}
+          </g>
+        )}
+
         {/* Grid */}
-        {gridLines}
+        {mapLayer === 'canvas' && gridLines}
+
 
         {/* Connector line between bus and stop when both visible */}
         {busPos && stopPos && (

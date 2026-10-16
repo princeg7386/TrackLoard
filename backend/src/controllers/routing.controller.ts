@@ -6,6 +6,7 @@ import {
   SnapToRoadQuery,
   GeocodeQuery,
   ReverseGeocodeQuery,
+  SelectMapOptionRequest,
 } from '@school-bus/shared';
 import { RoutingService } from '../services/routing/routing.service.js';
 import { MapService } from '../services/maps/map.service.js';
@@ -139,4 +140,50 @@ export class RoutingController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/routing/options
+   * Retrieve active and available free-first map and routing configurations
+   */
+  public static async getFreeMapOptions(
+    _req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const options = MapService.getFreeMapOptions();
+      sendSuccess(res, options, 'Free-first map options retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/routing/options/select
+   * Dynamically switch active free-first tile layer, geocoding or routing options
+   */
+  public static async selectFreeMapOption(
+    req: Request<{}, {}, SelectMapOptionRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { tileLayer, geocodingProvider, routingProvider } = req.body;
+      if (tileLayer) {
+        MapService.setTileLayerOption(tileLayer);
+      }
+      if (geocodingProvider) {
+        MapService.setGeocodingOption(geocodingProvider);
+      }
+      if (routingProvider) {
+        RoutingService.setRoutingOption(routingProvider);
+      }
+
+      const updated = MapService.getFreeMapOptions();
+      sendSuccess(res, updated, 'Free-first map configuration updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

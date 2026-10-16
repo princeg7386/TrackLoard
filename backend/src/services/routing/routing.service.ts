@@ -8,6 +8,7 @@ import {
   EtaCalculationQuery,
   EtaCalculationResult,
   SnapToRoadResult,
+  RoutingOption,
 } from '@school-bus/shared';
 import { query } from '../../config/database.js';
 import { NotFoundError } from '../../middlewares/error.middleware.js';
@@ -31,6 +32,8 @@ export interface RouteStopCalculationResult {
  * Pluggable provider architecture with built-in database persistence for school routes.
  */
 export class RoutingService {
+  private static activeOption: RoutingOption =
+    process.env.NODE_ENV === 'test' ? 'mock' : 'osrm';
   private static provider: IRoutingProvider =
     process.env.NODE_ENV === 'test' ? new MockRoutingAdapter() : new OsrmRoutingAdapter();
 
@@ -39,6 +42,25 @@ export class RoutingService {
    */
   public static setProvider(newProvider: IRoutingProvider): void {
     RoutingService.provider = newProvider;
+  }
+
+  /**
+   * Switch routing option
+   */
+  public static setRoutingOption(option: RoutingOption): void {
+    RoutingService.activeOption = option;
+    if (option === 'osrm') {
+      RoutingService.provider = new OsrmRoutingAdapter();
+    } else {
+      RoutingService.provider = new MockRoutingAdapter();
+    }
+  }
+
+  /**
+   * Get active routing option
+   */
+  public static getRoutingOption(): RoutingOption {
+    return RoutingService.activeOption;
   }
 
   /**
@@ -52,6 +74,7 @@ export class RoutingService {
    * Reset provider to default configuration
    */
   public static resetProvider(): void {
+    RoutingService.activeOption = process.env.NODE_ENV === 'test' ? 'mock' : 'osrm';
     RoutingService.provider =
       process.env.NODE_ENV === 'test' ? new MockRoutingAdapter() : new OsrmRoutingAdapter();
   }

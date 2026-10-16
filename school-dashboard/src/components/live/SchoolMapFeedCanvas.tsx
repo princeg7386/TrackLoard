@@ -15,8 +15,17 @@ import {
   AlertTriangle,
   User,
   Layers,
+  Map as MapIcon,
 } from 'lucide-react';
-import type { BusGpsHealthSummary, ActiveTripStateResponse } from '@school-bus/shared';
+import {
+  type BusGpsHealthSummary,
+  type ActiveTripStateResponse,
+  type MapTileLayerOption,
+  FREE_MAP_TILE_PROVIDERS,
+  latLngToTile,
+  tileToLatLng,
+  getOsmTileUrl,
+} from '@school-bus/shared';
 
 interface SchoolMapFeedProps {
   buses: BusGpsHealthSummary[];
@@ -39,6 +48,15 @@ export function SchoolMapFeedCanvas({
   const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [hoveredBus, setHoveredBus] = useState<BusGpsHealthSummary | null>(null);
   const [showTrail, setShowTrail] = useState<boolean>(true);
+  const [mapLayer, setMapLayer] = useState<MapTileLayerOption>('osm_standard');
+
+  const cycleMapLayer = () => {
+    setMapLayer((prev) => {
+      if (prev === 'osm_standard') return 'carto_light';
+      if (prev === 'carto_light') return 'canvas';
+      return 'osm_standard';
+    });
+  };
 
   // Filter vehicles that have actual coordinates
   const locatedBuses = useMemo(() => {
@@ -121,6 +139,72 @@ export function SchoolMapFeedCanvas({
     setZoomLevel((prev) => Math.min(Math.max(prev + delta, 0.7), 3));
   };
 
+  // Compute OpenStreetMap tiles for the active viewport
+  const tiles = useMemo(() => {
+    if (mapLayer === 'canvas') return [];
+
+    const latSpan = bounds.maxLat - bounds.minLat;
+    const lngSpan = bounds.maxLng - bounds.minLng;
+    const maxSpan = Math.max(latSpan, lngSpan);
+
+    let baseZoom = 13;
+    if (maxSpan > 0.5) baseZoom = 11;
+    else if (maxSpan > 0.2) baseZoom = 12;
+    else if (maxSpan > 0.08) baseZoom = 13;
+    else if (maxSpan > 0.03) baseZoom = 14;
+    else baseZoom = 15;
+
+    const z = Math.min(Math.max(baseZoom + Math.round((zoomLevel - 1) * 2), 1), 18);
+
+    const minTile = latLngToTile(bounds.maxLat, bounds.minLng, z);
+    const maxTile = latLngToTile(bounds.minLat, bounds.maxLng, z);
+
+    const result: Array<{
+      key: string;
+      url: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }> = [];
+
+    const providerConfig = FREE_MAP_TILE_PROVIDERS[mapLayer];
+    if (!providerConfig || !providerConfig.urlTemplate) return [];
+
+    const xStart = Math.min(minTile.x, maxTile.x);
+    const xEnd = Math.max(minTile.x, maxTile.x);
+    const yStart = Math.min(minTile.y, maxTile.y);
+    const yEnd = Math.max(minTile.y, maxTile.y);
+
+    const clampedXEnd = Math.min(xEnd, xStart + 6);
+    const clampedYEnd = Math.min(yEnd, yStart + 6);
+
+    for (let tx = xStart; tx <= clampedXEnd; tx++) {
+      for (let ty = yStart; ty <= clampedYEnd; ty++) {
+        const nw = tileToLatLng(tx, ty, z);
+        const se = tileToLatLng(tx + 1, ty + 1, z);
+
+        const pNw = projectPoint(nw.lat, nw.lng);
+        const pSe = projectPoint(se.lat, se.lng);
+
+        const width = Math.abs(pSe.x - pNw.x);
+        const height = Math.abs(pSe.y - pNw.y);
+        const url = getOsmTileUrl(providerConfig.urlTemplate, tx, ty, z, providerConfig.subdomains);
+
+        result.push({
+          key: `${z}-${tx}-${ty}`,
+          url,
+          x: Math.min(pNw.x, pSe.x),
+          y: Math.min(pNw.y, pSe.y),
+          width,
+          height,
+        });
+      }
+    }
+
+    return result;
+  }, [mapLayer, bounds, zoomLevel, panOffset]);
+
   return (
     <div className="relative bg-slate-900 border border-slate-800 rounded-lg overflow-hidden shadow-inner flex flex-col h-[460px] select-none">
       {/* Map Header Overlay */}
@@ -133,8 +217,18 @@ export function SchoolMapFeedCanvas({
           </span>
         </div>
 
-        {/* Zoom & View Controls */}
-        <div className="flex items-center gap-1 bg-slate-900/85 backdrop-blur-xs p-1 rounded-md border border-slate-800 pointer-events-auto shadow-md">
+        {/* Layer Switcher & Zoom Controls */}
+        <div className="flex items-center gap-1.5 bg-slate-900/85 backdrop-blur-xs p-1 rounded-md border border-slate-800 pointer-events-auto shadow-md">
+          <button
+            type="button"
+            onClick={cycleMapLayer}
+            title={`Active Map: ${FREE_MAP_TILE_PROVIDERS[mapLayer].name} (Click to switch)`}
+            className="flex items-center gap-1 px-2 py-1 text-2xs font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded transition-colors"
+          >
+            <MapIcon className="w-3.5 h-3.5 text-sky-400" />
+            <span>{mapLayer === 'osm_standard' ? 'OSM Free' : mapLayer === 'carto_light' ? 'Carto' : 'Canvas'}</span>
+          </button>
+          <div className="w-[1px] h-4 bg-slate-700 mx-0.5" />
           <button
             type="button"
             onClick={() => handleZoom(0.25)}
@@ -174,7 +268,7 @@ export function SchoolMapFeedCanvas({
         </div>
       </div>
 
-      {/* SVG Vector Canvas */}
+      {/* SVG Vector Canvas with OpenStreetMap Tiles */}
       <div className="w-full h-full relative cursor-grab active:cursor-grabbing overflow-hidden">
         {isLoading && (
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-2xs flex items-center justify-center z-20">
@@ -184,6 +278,17 @@ export function SchoolMapFeedCanvas({
             </span>
           </div>
         )}
+
+        {/* Legal Attribution Pill */}
+        <div className="absolute bottom-1.5 right-2 z-10 text-[9px] text-slate-400 bg-slate-900/85 backdrop-blur-xs px-2 py-0.5 rounded border border-slate-800 pointer-events-auto">
+          {mapLayer === 'osm_standard' ? (
+            <span>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-sky-300">OpenStreetMap</a> contributors</span>
+          ) : mapLayer === 'carto_light' ? (
+            <span>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="underline hover:text-sky-300">OpenStreetMap</a>, © <a href="https://carto.com/attributions" target="_blank" rel="noreferrer" className="underline hover:text-sky-300">CARTO</a></span>
+          ) : (
+            <span>BUSLOARD Vector Canvas</span>
+          )}
+        </div>
 
         <svg
           viewBox="0 0 800 500"
@@ -198,6 +303,23 @@ export function SchoolMapFeedCanvas({
           </defs>
           <rect width="100%" height="100%" fill="#0f172a" />
           <rect width="100%" height="100%" fill="url(#grid)" />
+
+          {/* OpenStreetMap Tile Layer Rendering */}
+          {mapLayer !== 'canvas' && tiles.length > 0 && (
+            <g className="osm-tiles" opacity="0.65">
+              {tiles.map((t) => (
+                <image
+                  key={t.key}
+                  href={t.url}
+                  x={t.x}
+                  y={t.y}
+                  width={t.width}
+                  height={t.height}
+                  preserveAspectRatio="none"
+                />
+              ))}
+            </g>
+          )}
 
           {/* Historical GPS Trail (if active trip selected) */}
           {showTrail && tripTrail && tripTrail.length > 1 && (
