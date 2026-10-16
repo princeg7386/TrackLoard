@@ -1,4 +1,4 @@
-﻿import { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import authRouter from './auth.routes.js';
 import driverAuthRouter from './driver-auth.routes.js';
 import parentRouter from './parent-identity.routes.js';
@@ -8,6 +8,7 @@ import busRouter from './bus.routes.js';
 import driverRouter from './driver.routes.js';
 import studentRouter from './student.routes.js';
 import telemetryRouter from './telemetry.routes.js';
+import routingRouter from './routing.routes.js';
 
 const apiRouter = Router();
 
@@ -16,6 +17,7 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use('/driver/auth', driverAuthRouter);
 apiRouter.use('/parent', parentRouter);
 apiRouter.use('/telemetry', telemetryRouter);
+apiRouter.use('/routing', routingRouter);
 apiRouter.use('/schools', schoolProfileRouter);
 apiRouter.use('/schools', dashboardRouter);
 apiRouter.use('/schools', busRouter);

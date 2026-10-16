@@ -50,3 +50,7 @@ audit-tests/report/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Scratch & Prompts
+plans-entitlements-master-prompt.md
+

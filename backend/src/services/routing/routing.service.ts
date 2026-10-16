@@ -1,0 +1,181 @@
+import {
+  IRoutingProvider,
+  GeoCoordinates,
+  RouteOptions,
+  RouteCalculationResult,
+  DistanceMatrixQuery,
+  DistanceMatrixResult,
+  EtaCalculationQuery,
+  EtaCalculationResult,
+  SnapToRoadResult,
+} from '@school-bus/shared';
+import { query } from '../../config/database.js';
+import { NotFoundError } from '../../middlewares/error.middleware.js';
+import { OsrmRoutingAdapter } from './osrm-routing.adapter.js';
+import { MockRoutingAdapter } from './mock-routing.adapter.js';
+
+export interface RouteStopCalculationResult {
+  routeId: string;
+  routeName: string;
+  schoolId: string;
+  stopsCount: number;
+  totalDistanceMeters: number;
+  estimatedDurationMinutes: number;
+  pathPolyline: string;
+  legs: RouteCalculationResult['legs'];
+  provider: string;
+}
+
+/**
+ * Domain Service for Routing, Matrix, ETA, and Stop Path Management.
+ * Pluggable provider architecture with built-in database persistence for school routes.
+ */
+export class RoutingService {
+  private static provider: IRoutingProvider =
+    process.env.NODE_ENV === 'test' ? new MockRoutingAdapter() : new OsrmRoutingAdapter();
+
+  /**
+   * Set custom or test routing provider adapter
+   */
+  public static setProvider(newProvider: IRoutingProvider): void {
+    RoutingService.provider = newProvider;
+  }
+
+  /**
+   * Get current active provider
+   */
+  public static getProvider(): IRoutingProvider {
+    return RoutingService.provider;
+  }
+
+  /**
+   * Reset provider to default configuration
+   */
+  public static resetProvider(): void {
+    RoutingService.provider =
+      process.env.NODE_ENV === 'test' ? new MockRoutingAdapter() : new OsrmRoutingAdapter();
+  }
+
+  /**
+   * Calculate point-to-point or multi-waypoint route
+   */
+  public static async calculateRoute(
+    waypoints: GeoCoordinates[],
+    options?: RouteOptions
+  ): Promise<RouteCalculationResult> {
+    return RoutingService.provider.calculateRoute(waypoints, options);
+  }
+
+  /**
+   * Calculate distance & duration matrix
+   */
+  public static async calculateDistanceMatrix(
+    matrixQuery: DistanceMatrixQuery
+  ): Promise<DistanceMatrixResult> {
+    return RoutingService.provider.calculateDistanceMatrix(matrixQuery);
+  }
+
+  /**
+   * Calculate estimated time of arrival between two points
+   */
+  public static async calculateEta(
+    etaQuery: EtaCalculationQuery
+  ): Promise<EtaCalculationResult> {
+    return RoutingService.provider.calculateEta(etaQuery);
+  }
+
+  /**
+   * Snap raw GPS telemetry coordinates to realistic road network
+   */
+  public static async snapToRoad(points: GeoCoordinates[]): Promise<SnapToRoadResult> {
+    return RoutingService.provider.snapToRoad(points);
+  }
+
+  /**
+   * Health check for active routing provider
+   */
+  public static async isHealthy(): Promise<boolean> {
+    return RoutingService.provider.isHealthy();
+  }
+
+  /**
+   * Real-DB integration:
+   * Retrieves sequenced pickup stops for a school's route, computes the driving path,
+   * and persists the polyline and estimated duration directly into the routes table.
+   */
+  public static async calculateAndPersistRouteForStops(
+    schoolId: string,
+    routeId: string
+  ): Promise<RouteStopCalculationResult> {
+    // 1. Fetch route verifying school ownership
+    const routeRows = await query<{ id: string; name: string; school_id: string }>(
+      `SELECT id, name, school_id FROM routes WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [routeId, schoolId]
+    );
+
+    if (routeRows.length === 0) {
+      throw new NotFoundError(`Route ${routeId} not found in this school`);
+    }
+
+    const routeRecord = routeRows[0]!;
+
+    // 2. Fetch sequenced pickup locations
+    const stopRows = await query<{
+      id: string;
+      stop_name: string;
+      sequence_order: number;
+      latitude: number;
+      longitude: number;
+    }>(
+      `SELECT id, stop_name, sequence_order, latitude, longitude
+       FROM pickup_locations
+       WHERE route_id = $1 AND school_id = $2 AND deleted_at IS NULL
+       ORDER BY sequence_order ASC`,
+      [routeId, schoolId]
+    );
+
+    if (stopRows.length < 2) {
+      return {
+        routeId: routeRecord.id,
+        routeName: routeRecord.name,
+        schoolId: routeRecord.school_id,
+        stopsCount: stopRows.length,
+        totalDistanceMeters: 0,
+        estimatedDurationMinutes: 0,
+        pathPolyline: '[]',
+        legs: [],
+        provider: RoutingService.provider.providerName,
+      };
+    }
+
+    // 3. Map stops to waypoints
+    const waypoints: GeoCoordinates[] = stopRows.map((s) => ({
+      latitude: s.latitude,
+      longitude: s.longitude,
+    }));
+
+    // 4. Calculate route through provider
+    const routeResult = await RoutingService.calculateRoute(waypoints);
+    const durationMinutes = Math.max(1, Math.round(routeResult.durationSeconds / 60));
+
+    // 5. Persist calculated polyline and duration in routes table
+    await query(
+      `UPDATE routes
+       SET path_polyline = $1, estimated_duration_minutes = $2, updated_at = NOW()
+       WHERE id = $3 AND school_id = $4`,
+      [routeResult.geometryPolyline, durationMinutes, routeId, schoolId]
+    );
+
+    return {
+      routeId: routeRecord.id,
+      routeName: routeRecord.name,
+      schoolId: routeRecord.school_id,
+      stopsCount: stopRows.length,
+      totalDistanceMeters: routeResult.distanceMeters,
+      estimatedDurationMinutes: durationMinutes,
+      pathPolyline: routeResult.geometryPolyline,
+      legs: routeResult.legs,
+      provider: routeResult.provider,
+    };
+  }
+}

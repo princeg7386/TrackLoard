@@ -1675,6 +1675,191 @@ export function hasRolePermission(
   return false;
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 13.1 — Map & Routing Layer Abstractions & Schemas
+ * -----------------------------------------------------------------------------
+ */
+
+export const GeocodeQuerySchema = z.object({
+  query: z.string().min(2).max(500),
+  limit: z.number().int().min(1).max(20).optional().default(5),
+  countryCode: z.string().optional().default('in'),
+});
+export type GeocodeQuery = z.infer<typeof GeocodeQuerySchema>;
+
+export const GeocodeResultSchema = z.object({
+  formattedAddress: z.string(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  placeId: z.string().optional(),
+  displayName: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  postalCode: z.string().optional(),
+  country: z.string().optional(),
+  boundingBox: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+});
+export type GeocodeResult = z.infer<typeof GeocodeResultSchema>;
+
+export const ReverseGeocodeQuerySchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+});
+export type ReverseGeocodeQuery = z.infer<typeof ReverseGeocodeQuerySchema>;
+
+export const ReverseGeocodeResultSchema = z.object({
+  formattedAddress: z.string(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  displayName: z.string().optional(),
+  street: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  postalCode: z.string().optional(),
+  country: z.string().optional(),
+});
+export type ReverseGeocodeResult = z.infer<typeof ReverseGeocodeResultSchema>;
+
+export const RouteWaypointSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  name: z.string().optional(),
+  stopId: z.string().optional(),
+});
+export type RouteWaypoint = z.infer<typeof RouteWaypointSchema>;
+
+export const RouteOptionsSchema = z.object({
+  mode: z.enum(['driving', 'bus']).optional().default('bus'),
+  avoidTolls: z.boolean().optional().default(false),
+  overview: z.enum(['full', 'simplified', 'none']).optional().default('full'),
+});
+export type RouteOptions = z.infer<typeof RouteOptionsSchema>;
+
+export const CalculateRouteRequestSchema = z.object({
+  waypoints: z.array(RouteWaypointSchema).min(2),
+  options: RouteOptionsSchema.optional(),
+});
+export type CalculateRouteRequest = z.infer<typeof CalculateRouteRequestSchema>;
+
+export const RouteStepSchema = z.object({
+  instruction: z.string(),
+  distanceMeters: z.number(),
+  durationSeconds: z.number(),
+  startLocation: GeoCoordinatesSchema,
+  endLocation: GeoCoordinatesSchema,
+});
+export type RouteStep = z.infer<typeof RouteStepSchema>;
+
+export const RouteLegSchema = z.object({
+  distanceMeters: z.number(),
+  durationSeconds: z.number(),
+  startLocation: GeoCoordinatesSchema,
+  endLocation: GeoCoordinatesSchema,
+  startAddress: z.string().optional(),
+  endAddress: z.string().optional(),
+  steps: z.array(RouteStepSchema).optional(),
+});
+export type RouteLeg = z.infer<typeof RouteLegSchema>;
+
+export const RouteCalculationResultSchema = z.object({
+  distanceMeters: z.number(),
+  durationSeconds: z.number(),
+  geometryPolyline: z.string(),
+  coordinates: z.array(z.tuple([z.number(), z.number()])),
+  legs: z.array(RouteLegSchema),
+  provider: z.string(),
+});
+export type RouteCalculationResult = z.infer<typeof RouteCalculationResultSchema>;
+
+export const DistanceMatrixQuerySchema = z.object({
+  origins: z.array(GeoCoordinatesSchema).min(1),
+  destinations: z.array(GeoCoordinatesSchema).min(1),
+});
+export type DistanceMatrixQuery = z.infer<typeof DistanceMatrixQuerySchema>;
+
+export const DistanceMatrixElementSchema = z.object({
+  distanceMeters: z.number(),
+  durationSeconds: z.number(),
+  status: z.enum(['OK', 'ZERO_RESULTS', 'NOT_FOUND', 'FAIL']),
+});
+export type DistanceMatrixElement = z.infer<typeof DistanceMatrixElementSchema>;
+
+export const DistanceMatrixResultSchema = z.object({
+  rows: z.array(
+    z.object({
+      elements: z.array(DistanceMatrixElementSchema),
+    })
+  ),
+  provider: z.string(),
+});
+export type DistanceMatrixResult = z.infer<typeof DistanceMatrixResultSchema>;
+
+export const EtaCalculationQuerySchema = z.object({
+  origin: GeoCoordinatesSchema,
+  destination: GeoCoordinatesSchema,
+  averageSpeedKmh: z.number().min(5).max(120).optional(),
+});
+export type EtaCalculationQuery = z.infer<typeof EtaCalculationQuerySchema>;
+
+export const EtaCalculationResultSchema = z.object({
+  distanceMeters: z.number(),
+  durationSeconds: z.number(),
+  estimatedArrival: z.string(),
+  provider: z.string(),
+});
+export type EtaCalculationResult = z.infer<typeof EtaCalculationResultSchema>;
+
+export const SnapToRoadQuerySchema = z.object({
+  points: z.array(GeoCoordinatesSchema).min(1),
+});
+export type SnapToRoadQuery = z.infer<typeof SnapToRoadQuerySchema>;
+
+export const SnappedPointSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  originalIndex: z.number(),
+  confidence: z.number().optional(),
+});
+export type SnappedPoint = z.infer<typeof SnappedPointSchema>;
+
+export const SnapToRoadResultSchema = z.object({
+  snappedPoints: z.array(SnappedPointSchema),
+  provider: z.string(),
+});
+export type SnapToRoadResult = z.infer<typeof SnapToRoadResultSchema>;
+
+/**
+ * Map Service Provider Contract (Geocoding & Map Utilities)
+ */
+export interface IMapProvider {
+  readonly providerName: string;
+  geocode(query: GeocodeQuery): Promise<GeocodeResult[]>;
+  reverseGeocode(query: ReverseGeocodeQuery): Promise<ReverseGeocodeResult>;
+  isHealthy(): Promise<boolean>;
+}
+
+/**
+ * Routing Service Provider Contract (Routing, Matrix, ETA, Road Snapping)
+ */
+export interface IRoutingProvider {
+  readonly providerName: string;
+  calculateRoute(
+    waypoints: GeoCoordinates[],
+    options?: RouteOptions
+  ): Promise<RouteCalculationResult>;
+  calculateDistanceMatrix(
+    query: DistanceMatrixQuery
+  ): Promise<DistanceMatrixResult>;
+  calculateEta(
+    query: EtaCalculationQuery
+  ): Promise<EtaCalculationResult>;
+  snapToRoad(
+    points: GeoCoordinates[]
+  ): Promise<SnapToRoadResult>;
+  isHealthy(): Promise<boolean>;
+}
+
 
 
 
