@@ -6,7 +6,9 @@ import {
   RevokeStudentTokensRequest,
 } from '@school-bus/shared';
 import { ParentIdentityService } from '../services/parent-identity.service.js';
+import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { sendSuccess } from '../utils/response.util.js';
+
 
 export class ParentIdentityController {
   /**
@@ -128,6 +130,70 @@ export class ParentIdentityController {
         session,
         'Parent live tracking session retrieved successfully'
       );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/parent/track/:token/feed
+   * Real-time SSE stream for parent live bus tracking.
+   * Auth: authenticateParentTrackingToken (parent tracking token, no admin JWT).
+   * Scoped strictly to the single bus/trip linked to the token — no discovery possible.
+   */
+  public static async streamParentBusFeed(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      if (!session.activeTrip) {
+        res.status(404).json({
+          success: false,
+          error: {
+            message: 'No trip currently in progress for your student. Live tracking activates automatically when a trip begins.',
+            code: 'NO_ACTIVE_TRIP',
+          },
+        });
+        return;
+      }
+
+      const { id: tripId, busNumber } = session.activeTrip;
+
+      // Set SSE headers
+      RealtimeFeedService.initSseStream(res);
+
+      // Send initial state with the last known GPS location from the session
+      RealtimeFeedService.sendSseMessage(res, 'initial_state', {
+        tripId,
+        busNumber,
+        studentName: session.student.fullName,
+        pickupStop: session.pickupStop ?? null,
+        lastGpsLocation: session.activeTrip.lastGpsLocation ?? null,
+        tripStatus: session.activeTrip.status,
+        delayMinutes: session.activeTrip.delayMinutes,
+      });
+
+      // Subscribe to trip channel — only this trip's events will be forwarded
+      const unsubscribe = RealtimeFeedService.subscribeTrip(tripId, (event) => {
+        RealtimeFeedService.sendSseMessage(res, 'location_update', event);
+      });
+
+      const heartbeatInterval = setInterval(() => {
+        RealtimeFeedService.sendSseHeartbeat(res);
+      }, 20000);
+
+      req.on('close', () => {
+        clearInterval(heartbeatInterval);
+        unsubscribe();
+        res.end();
+      });
     } catch (error) {
       next(error);
     }

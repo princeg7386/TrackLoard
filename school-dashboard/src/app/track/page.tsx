@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Bus,
@@ -19,6 +19,7 @@ import {
   ExternalLink,
   School,
   AlertTriangle,
+  Signal,
 } from 'lucide-react';
 import {
   ParentLiveTrackingSession,
@@ -28,6 +29,15 @@ import {
   verifyOnboardToken,
   confirmOnboardActivation,
 } from '../../services/studentApi';
+import {
+  openParentBusFeed,
+  type FeedConnectionStatus,
+  type ResilientFeedSubscription,
+} from '../../services/telemetryApi';
+import {
+  ParentLiveMapCanvas,
+  type BusLocationSnapshot,
+} from '../../components/live/ParentLiveMapCanvas';
 
 function ParentTrackContent() {
   const searchParams = useSearchParams();
@@ -44,6 +54,11 @@ function ParentTrackContent() {
   const [isActivated, setIsActivated] = useState(false);
 
   const [isOffline, setIsOffline] = useState(false);
+
+  // Phase 12.4 — Live bus feed state
+  const [busLocation, setBusLocation] = useState<BusLocationSnapshot | null>(null);
+  const [feedStatus, setFeedStatus] = useState<FeedConnectionStatus>('CONNECTING');
+  const feedSubRef = useRef<ResilientFeedSubscription | null>(null);
 
   // Monitor connectivity
   useEffect(() => {
@@ -97,6 +112,61 @@ function ParentTrackContent() {
   useEffect(() => {
     checkToken();
   }, [token]);
+
+  // Phase 12.4 — Open live SSE feed when activated AND a trip is running
+  useEffect(() => {
+    if (!isActivated || !token || !session?.activeTrip) {
+      // Close existing feed if trip ended or user deactivated
+      if (feedSubRef.current) {
+        feedSubRef.current.close();
+        feedSubRef.current = null;
+      }
+      return;
+    }
+
+    // Open (or re-open) parent bus feed
+    const sub = openParentBusFeed(
+      token,
+      (event: MessageEvent) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (event.type === 'initial_state' && payload.lastGpsLocation) {
+            setBusLocation(payload.lastGpsLocation as BusLocationSnapshot);
+          } else if (event.type === 'location_update') {
+            // location_update payload may be wrapped or flat depending on the service
+            const loc = payload.latitude !== undefined ? payload : payload.location;
+            if (loc?.latitude !== undefined) {
+              setBusLocation({
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+                speedKmh: loc.speedKmh ?? 0,
+                bearingDegrees: loc.bearingDegrees,
+                recordedAt: loc.recordedAt ?? new Date().toISOString(),
+              });
+            }
+          }
+        } catch {
+          // Malformed SSE data — ignore
+        }
+      },
+      (status) => setFeedStatus(status)
+    );
+
+    feedSubRef.current = sub;
+
+    // Poll for trip start if no active trip was initially present (auto-refresh)
+    const refreshInterval = setInterval(() => {
+      if (!session?.activeTrip) {
+        checkToken();
+      }
+    }, 60_000);
+
+    return () => {
+      sub.close();
+      feedSubRef.current = null;
+      clearInterval(refreshInterval);
+    };
+  }, [isActivated, token, session?.activeTrip?.id]);
 
   const handleConfirmActivation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -366,8 +436,77 @@ function ParentTrackContent() {
             <span>Connection interrupted. Reconnecting to live bus telemetry...</span>
           </div>
         )}
+        {/* Feed Reconnecting Banner */}
+        {!isOffline && feedStatus === 'RECONNECTING' && session?.activeTrip && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 text-amber-900 text-xs">
+            <RefreshCw className="w-4 h-4 text-amber-600 shrink-0 animate-spin" />
+            <span>Reconnecting to live bus feed…</span>
+          </div>
+        )}
+
+        {/* Phase 12.4 — Live Map Canvas (shown only when trip is active) */}
+        {session?.activeTrip && (
+          <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-xs space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold uppercase tracking-wider text-slate-500">
+                Live Location
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                  feedStatus === 'CONNECTED'
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : feedStatus === 'RECONNECTING'
+                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : feedStatus === 'OFFLINE'
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}
+              >
+                {feedStatus === 'CONNECTED' && (
+                  <Signal className="w-2.5 h-2.5" />
+                )}
+                {feedStatus === 'RECONNECTING' && (
+                  <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                )}
+                {feedStatus === 'OFFLINE' && (
+                  <WifiOff className="w-2.5 h-2.5" />
+                )}
+                {feedStatus === 'CONNECTING' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-pulse" />
+                )}
+                {feedStatus.charAt(0) + feedStatus.slice(1).toLowerCase()}
+              </span>
+            </div>
+            <ParentLiveMapCanvas
+              busLocation={busLocation}
+              pickupStop={
+                session.pickupStop
+                  ? {
+                      latitude: session.pickupStop.latitude,
+                      longitude: session.pickupStop.longitude,
+                      stopName: session.pickupStop.stopName,
+                    }
+                  : null
+              }
+              feedStatus={feedStatus}
+              isLoading={feedStatus === 'CONNECTING' && !busLocation}
+              tripStatus={session.activeTrip.status}
+            />
+            {busLocation && (
+              <div className="text-[10px] font-mono text-slate-400 text-right">
+                Last fix: {new Date(busLocation.recordedAt).toLocaleTimeString('en-IN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+                {busLocation.speedKmh > 0 && ` · ${Math.round(busLocation.speedKmh)} km/h`}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Live Commute Status Card */}
+
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500">

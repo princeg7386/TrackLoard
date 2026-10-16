@@ -181,3 +181,28 @@ export function openBusFeed(
 ): ResilientFeedSubscription {
   return openResilientFeed(`/telemetry/buses/${busId}/feed`, onEvent, onStatusChange);
 }
+
+/**
+ * Phase 12.4 — Open a resilient SSE stream for a parent's authorized bus feed.
+ *
+ * The parent tracking token is embedded in the URL path segment so that the
+ * Browser's native EventSource (which cannot send custom headers) can authenticate.
+ * authenticateParentTrackingToken reads req.params.token first, so the empty
+ * ?token= query param appended by openResilientFeed is safely ignored.
+ *
+ * @param rawToken  The full parent tracking token (e.g. `trk_abc123…`)
+ * @param onEvent   Called for each `initial_state` or `location_update` SSE event
+ * @param onStatusChange  Optional callback on connection lifecycle changes
+ */
+export function openParentBusFeed(
+  rawToken: string,
+  onEvent: (event: MessageEvent) => void,
+  onStatusChange?: (status: FeedConnectionStatus) => void
+): ResilientFeedSubscription {
+  // Token is in the path — no admin Bearer needed on the parent web page.
+  return openResilientFeed(
+    `/parent/feed/${encodeURIComponent(rawToken)}`,
+    onEvent,
+    onStatusChange
+  );
+}

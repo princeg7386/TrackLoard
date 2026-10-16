@@ -75,6 +75,21 @@ parentRouter.get(
   ParentIdentityController.getLiveTrackingSession
 );
 
+// 5a. Parent Real-time SSE Live Bus Feed (parent token auth only — scoped to the session's trip)
+//     Browser EventSource cannot send headers: token can be passed as URL path param or ?token= query param.
+//     authenticateParentTrackingToken reads req.params.token or req.query.token → no unauthenticated stream possible.
+parentRouter.get(
+  '/feed/:token',
+  authenticateParentTrackingToken,
+  ParentIdentityController.streamParentBusFeed
+);
+
+parentRouter.get(
+  '/feed',
+  authenticateParentTrackingToken,
+  ParentIdentityController.streamParentBusFeed
+);
+
 // 6. Public Onboarding Verification & Activation (handles valid/expired/revoked/invalid tokens)
 parentRouter.get(
   '/onboard/verify',
