@@ -16,7 +16,9 @@ import { query } from '../../config/database.js';
 import { NotFoundError } from '../../middlewares/error.middleware.js';
 import { OsrmRoutingAdapter } from './osrm-routing.adapter.js';
 import { ValhallaRoutingAdapter } from './valhalla-routing.adapter.js';
+import { GoogleMapsRoutingAdapter } from './google-maps-routing.adapter.js';
 import { MockRoutingAdapter } from './mock-routing.adapter.js';
+import { MapUsageTracker } from '../maps/map-usage-tracker.service.js';
 
 export interface RouteStopCalculationResult {
   routeId: string;
@@ -56,6 +58,8 @@ export class RoutingService {
       RoutingService.provider = new OsrmRoutingAdapter();
     } else if (option === 'valhalla') {
       RoutingService.provider = new ValhallaRoutingAdapter();
+    } else if (option === 'google_maps') {
+      RoutingService.provider = new GoogleMapsRoutingAdapter();
     } else {
       RoutingService.provider = new MockRoutingAdapter();
     }
@@ -90,34 +94,132 @@ export class RoutingService {
    */
   public static async calculateRoute(
     waypoints: GeoCoordinates[],
-    options?: RouteOptions
+    options?: RouteOptions,
+    schoolId: string = 'system'
   ): Promise<RouteCalculationResult> {
-    return RoutingService.provider.calculateRoute(waypoints, options);
+    const start = Date.now();
+    try {
+      const result = await RoutingService.provider.calculateRoute(waypoints, options);
+      const isPaid = RoutingService.activeOption === 'google_maps';
+      MapUsageTracker.record({
+        schoolId,
+        provider: result.provider || RoutingService.provider.providerName,
+        operation: 'route_calculate',
+        status: result.provider.includes('FALLBACK') ? 'fallback' : 'success',
+        latencyMs: Date.now() - start,
+        isPaidProvider: isPaid && !result.provider.includes('FALLBACK'),
+      });
+      return result;
+    } catch (err: any) {
+      MapUsageTracker.record({
+        schoolId,
+        provider: RoutingService.provider.providerName,
+        operation: 'route_calculate',
+        status: 'failed',
+        latencyMs: Date.now() - start,
+        isPaidProvider: RoutingService.activeOption === 'google_maps',
+      });
+      throw err;
+    }
   }
 
   /**
    * Calculate distance & duration matrix
    */
   public static async calculateDistanceMatrix(
-    matrixQuery: DistanceMatrixQuery
+    matrixQuery: DistanceMatrixQuery,
+    schoolId: string = 'system'
   ): Promise<DistanceMatrixResult> {
-    return RoutingService.provider.calculateDistanceMatrix(matrixQuery);
+    const start = Date.now();
+    try {
+      const result = await RoutingService.provider.calculateDistanceMatrix(matrixQuery);
+      const isPaid = RoutingService.activeOption === 'google_maps';
+      MapUsageTracker.record({
+        schoolId,
+        provider: result.provider || RoutingService.provider.providerName,
+        operation: 'distance_matrix',
+        status: result.provider.includes('FALLBACK') ? 'fallback' : 'success',
+        latencyMs: Date.now() - start,
+        isPaidProvider: isPaid && !result.provider.includes('FALLBACK'),
+      });
+      return result;
+    } catch (err: any) {
+      MapUsageTracker.record({
+        schoolId,
+        provider: RoutingService.provider.providerName,
+        operation: 'distance_matrix',
+        status: 'failed',
+        latencyMs: Date.now() - start,
+        isPaidProvider: RoutingService.activeOption === 'google_maps',
+      });
+      throw err;
+    }
   }
 
   /**
    * Calculate estimated time of arrival between two points
    */
   public static async calculateEta(
-    etaQuery: EtaCalculationQuery
+    etaQuery: EtaCalculationQuery,
+    schoolId: string = 'system'
   ): Promise<EtaCalculationResult> {
-    return RoutingService.provider.calculateEta(etaQuery);
+    const start = Date.now();
+    try {
+      const result = await RoutingService.provider.calculateEta(etaQuery);
+      const isPaid = RoutingService.activeOption === 'google_maps';
+      MapUsageTracker.record({
+        schoolId,
+        provider: result.provider || RoutingService.provider.providerName,
+        operation: 'eta',
+        status: result.provider.includes('FALLBACK') ? 'fallback' : 'success',
+        latencyMs: Date.now() - start,
+        isPaidProvider: isPaid && !result.provider.includes('FALLBACK'),
+      });
+      return result;
+    } catch (err: any) {
+      MapUsageTracker.record({
+        schoolId,
+        provider: RoutingService.provider.providerName,
+        operation: 'eta',
+        status: 'failed',
+        latencyMs: Date.now() - start,
+        isPaidProvider: RoutingService.activeOption === 'google_maps',
+      });
+      throw err;
+    }
   }
 
   /**
    * Snap raw GPS telemetry coordinates to realistic road network
    */
-  public static async snapToRoad(points: GeoCoordinates[]): Promise<SnapToRoadResult> {
-    return RoutingService.provider.snapToRoad(points);
+  public static async snapToRoad(
+    points: GeoCoordinates[],
+    schoolId: string = 'system'
+  ): Promise<SnapToRoadResult> {
+    const start = Date.now();
+    try {
+      const result = await RoutingService.provider.snapToRoad(points);
+      const isPaid = RoutingService.activeOption === 'google_maps';
+      MapUsageTracker.record({
+        schoolId,
+        provider: result.provider || RoutingService.provider.providerName,
+        operation: 'snap_to_road',
+        status: result.provider.includes('FALLBACK') ? 'fallback' : 'success',
+        latencyMs: Date.now() - start,
+        isPaidProvider: isPaid && !result.provider.includes('FALLBACK'),
+      });
+      return result;
+    } catch (err: any) {
+      MapUsageTracker.record({
+        schoolId,
+        provider: RoutingService.provider.providerName,
+        operation: 'snap_to_road',
+        status: 'failed',
+        latencyMs: Date.now() - start,
+        isPaidProvider: RoutingService.activeOption === 'google_maps',
+      });
+      throw err;
+    }
   }
 
   /**
@@ -234,6 +336,12 @@ export class RoutingService {
         option: 'valhalla',
         name: 'Valhalla Multi-Modal Routing Engine',
         adapter: new ValhallaRoutingAdapter(),
+        features: { turnByTurn: true, matrix: true, roadSnapping: true, customCosting: true },
+      },
+      {
+        option: 'google_maps',
+        name: 'Google Maps Directions Platform (Commercial Fallback)',
+        adapter: new GoogleMapsRoutingAdapter(),
         features: { turnByTurn: true, matrix: true, roadSnapping: true, customCosting: true },
       },
       {

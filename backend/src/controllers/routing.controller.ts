@@ -10,6 +10,7 @@ import {
 } from '@school-bus/shared';
 import { RoutingService } from '../services/routing/routing.service.js';
 import { MapService } from '../services/maps/map.service.js';
+import { MapUsageTracker } from '../services/maps/map-usage-tracker.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 import { ForbiddenError } from '../middlewares/error.middleware.js';
 
@@ -25,7 +26,8 @@ export class RoutingController {
   ): Promise<void> {
     try {
       const { waypoints, options } = req.body;
-      const result = await RoutingService.calculateRoute(waypoints, options);
+      const schoolId = req.user?.schoolId || 'system';
+      const result = await RoutingService.calculateRoute(waypoints, options, schoolId);
       sendSuccess(res, result, 'Route directions calculated successfully');
     } catch (error) {
       next(error);
@@ -42,7 +44,8 @@ export class RoutingController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const result = await RoutingService.calculateEta(req.body);
+      const schoolId = req.user?.schoolId || 'system';
+      const result = await RoutingService.calculateEta(req.body, schoolId);
       sendSuccess(res, result, 'Estimated arrival calculated successfully');
     } catch (error) {
       next(error);
@@ -59,7 +62,8 @@ export class RoutingController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const result = await RoutingService.calculateDistanceMatrix(req.body);
+      const schoolId = req.user?.schoolId || 'system';
+      const result = await RoutingService.calculateDistanceMatrix(req.body, schoolId);
       sendSuccess(res, result, 'Distance matrix computed successfully');
     } catch (error) {
       next(error);
@@ -76,7 +80,8 @@ export class RoutingController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const result = await RoutingService.snapToRoad(req.body.points);
+      const schoolId = req.user?.schoolId || 'system';
+      const result = await RoutingService.snapToRoad(req.body.points, schoolId);
       sendSuccess(res, result, 'Coordinates snapped to road successfully');
     } catch (error) {
       next(error);
@@ -93,7 +98,8 @@ export class RoutingController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const results = await MapService.geocode(req.body);
+      const schoolId = req.user?.schoolId || 'system';
+      const results = await MapService.geocode(req.body, schoolId);
       sendSuccess(res, results, 'Geocoding completed successfully');
     } catch (error) {
       next(error);
@@ -110,7 +116,8 @@ export class RoutingController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const result = await MapService.reverseGeocode(req.body);
+      const schoolId = req.user?.schoolId || 'system';
+      const result = await MapService.reverseGeocode(req.body, schoolId);
       sendSuccess(res, result, 'Reverse geocoding completed successfully');
     } catch (error) {
       next(error);
@@ -202,6 +209,67 @@ export class RoutingController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/routing/policy
+   * Retrieve machine-readable paid map trigger policy, guidelines, and fallback hierarchy
+   */
+  public static async getPaidMapPolicy(
+    _req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const policy = MapService.getPaidMapPolicy();
+      sendSuccess(res, policy, 'Paid map & provider fallback policy retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/routing/usage
+   * Retrieve tenant-isolated map and routing API usage, latency metrics, and Free-First cost savings
+   */
+  public static async getMapUsage(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const userSchoolId = req.user?.schoolId;
+      const requestedSchoolId = req.query.schoolId as string | undefined;
+      const targetSchoolId = userSchoolId || requestedSchoolId || 'all';
+
+      const summary = MapUsageTracker.getSummary(
+        targetSchoolId,
+        RoutingService.getRoutingOption(),
+        MapService.getGeocodingOption(),
+        MapService.getTileLayerOption()
+      );
+      sendSuccess(res, summary, 'Map API usage and cost savings retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/routing/usage/reset
+   * Reset in-memory usage tracking counters
+   */
+  public static async resetMapUsage(
+    _req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      MapUsageTracker.reset();
+      sendSuccess(res, { reset: true }, 'Map usage counters reset successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
 
 

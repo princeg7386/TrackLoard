@@ -1868,13 +1868,13 @@ export interface IRoutingProvider {
  * -----------------------------------------------------------------------------
  */
 
-export const MapTileLayerOptionSchema = z.enum(['osm_standard', 'carto_light', 'canvas']);
+export const MapTileLayerOptionSchema = z.enum(['osm_standard', 'carto_light', 'google_streets', 'canvas']);
 export type MapTileLayerOption = z.infer<typeof MapTileLayerOptionSchema>;
 
-export const GeocodingOptionSchema = z.enum(['osm_nominatim', 'mock']);
+export const GeocodingOptionSchema = z.enum(['osm_nominatim', 'google_maps', 'mock']);
 export type GeocodingOption = z.infer<typeof GeocodingOptionSchema>;
 
-export const RoutingOptionSchema = z.enum(['osrm', 'valhalla', 'mock']);
+export const RoutingOptionSchema = z.enum(['osrm', 'valhalla', 'google_maps', 'mock']);
 export type RoutingOption = z.infer<typeof RoutingOptionSchema>;
 
 
@@ -1908,6 +1908,16 @@ export const FREE_MAP_TILE_PROVIDERS: Record<MapTileLayerOption, MapTileLayerCon
     subdomains: ['a', 'b', 'c', 'd'],
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
     maxZoom: 20,
+    minZoom: 1,
+    isVectorCanvas: false,
+  },
+  google_streets: {
+    id: 'google_streets',
+    name: 'Google Streets (Commercial / Fallback Enabled)',
+    urlTemplate: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    subdomains: [],
+    attribution: '&copy; Google Maps',
+    maxZoom: 21,
     minZoom: 1,
     isVectorCanvas: false,
   },
@@ -2072,9 +2082,83 @@ export function decodePolyline(encoded: string, precision: number = 5): [number,
   return coordinates;
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 13.4 — Provider Fallback & Map API Usage Tracking
+ * -----------------------------------------------------------------------------
+ */
 
+export const MapUsageOperationSchema = z.enum([
+  'geocode',
+  'reverse_geocode',
+  'route_calculate',
+  'eta',
+  'distance_matrix',
+  'snap_to_road',
+  'tile_request',
+]);
+export type MapUsageOperation = z.infer<typeof MapUsageOperationSchema>;
 
+export const MapUsageStatusSchema = z.enum(['success', 'failed', 'fallback']);
+export type MapUsageStatus = z.infer<typeof MapUsageStatusSchema>;
 
+export const MapUsageRecordSchema = z.object({
+  id: z.string(),
+  schoolId: z.string(),
+  provider: z.string(),
+  operation: MapUsageOperationSchema,
+  status: MapUsageStatusSchema,
+  fallbackProvider: z.string().optional(),
+  latencyMs: z.number().min(0),
+  estimatedCostUsd: z.number().min(0),
+  estimatedCostInr: z.number().min(0),
+  savedCostInr: z.number().min(0),
+  timestamp: z.string(),
+});
+export type MapUsageRecord = z.infer<typeof MapUsageRecordSchema>;
 
+export const MapUsageSummarySchema = z.object({
+  schoolId: z.string(),
+  totalRequests: z.number().int().min(0),
+  successfulRequests: z.number().int().min(0),
+  failedRequests: z.number().int().min(0),
+  fallbackCount: z.number().int().min(0),
+  averageLatencyMs: z.number().min(0),
+  totalCostInr: z.number().min(0),
+  totalCostUsd: z.number().min(0),
+  totalSavedInr: z.number().min(0),
+  requestsByProvider: z.record(z.string(), z.number()),
+  requestsByOperation: z.record(z.string(), z.number()),
+  activeProviders: z.object({
+    routing: RoutingOptionSchema,
+    geocoding: GeocodingOptionSchema,
+    tileLayer: MapTileLayerOptionSchema,
+  }),
+  lastUpdated: z.string(),
+});
+export type MapUsageSummary = z.infer<typeof MapUsageSummarySchema>;
 
+export const PaidMapTriggerConditionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  triggerCategory: z.enum(['address_ambiguity', 'traffic_congestion', 'rate_limit', 'safety_audit']),
+  isActive: z.boolean(),
+  thresholdDetail: z.string(),
+  actionSummary: z.string(),
+});
+export type PaidMapTriggerCondition = z.infer<typeof PaidMapTriggerConditionSchema>;
 
+export const PaidMapPolicyResponseSchema = z.object({
+  policyName: z.string(),
+  version: z.string(),
+  isFreeFirstDefault: z.literal(true),
+  triggers: z.array(PaidMapTriggerConditionSchema),
+  supportedCommercialProviders: z.array(z.string()),
+  activeRoutingOption: RoutingOptionSchema,
+  activeGeocodingOption: GeocodingOptionSchema,
+  hasCommercialKeyConfigured: z.boolean(),
+  fallbackHierarchy: z.array(z.string()),
+  dailyQuotaBudget: z.number().int(),
+});
+export type PaidMapPolicyResponse = z.infer<typeof PaidMapPolicyResponseSchema>;

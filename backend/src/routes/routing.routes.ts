@@ -152,6 +152,43 @@ routingRouter.get(
   RoutingController.evaluateRoutingEngines
 );
 
+// 11. Paid Map Trigger Policy & Guidelines
+routingRouter.get(
+  '/policy',
+  authenticateToken,
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  RoutingController.getPaidMapPolicy
+);
+
+// 12. Map API Usage, Latency & Free-First Savings
+routingRouter.get(
+  '/usage',
+  authenticateToken,
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RoutingController.getMapUsage
+);
+
+// 13. Reset Map Usage Counters (Test & Admin)
+routingRouter.post(
+  '/usage/reset',
+  authenticateToken,
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RoutingController.resetMapUsage
+);
+
 export default routingRouter;
 
 
