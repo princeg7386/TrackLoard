@@ -16,12 +16,15 @@ import {
   School,
   Flag,
   Layers,
+  Lock,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '../../../contexts/AuthContext';
 import {
   type TripDetailResponse,
   type CreateTripRequest,
   type RouteDetail,
+  type TripSummaryResponse,
   TripStatus,
   TripLifecycleStage,
 } from '@school-bus/shared';
@@ -62,6 +65,10 @@ export default function TripsManagementPage() {
   const [cancelTripId, setCancelTripId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState<string>('');
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
+
+  // Summary Modal State
+  const [summaryTrip, setSummaryTrip] = useState<TripSummaryResponse | null>(null);
+  const [isLoadingSummary, setIsLoadingSummary] = useState<boolean>(false);
 
   // Active operating trip ID (spinner state)
   const [operatingTripId, setOperatingTripId] = useState<string | null>(null);
@@ -207,12 +214,25 @@ export default function TripsManagementPage() {
     }
   };
 
+  const handleViewSummary = async (tripId: string) => {
+    try {
+      setIsLoadingSummary(true);
+      const summary = await TripApiService.getTripSummary(schoolId, tripId);
+      setSummaryTrip(summary);
+    } catch (err: any) {
+      setActionMessage({ text: err?.message || 'Failed to load trip summary', type: 'error' });
+    } finally {
+      setIsLoadingSummary(false);
+    }
+  };
+
   const handleCompleteTrip = async (tripId: string) => {
     try {
       setOperatingTripId(tripId);
       await TripApiService.completeTrip(schoolId, tripId);
-      setActionMessage({ text: 'Trip completed successfully', type: 'success' });
+      setActionMessage({ text: 'Trip completed successfully. Attendance ledger locked.', type: 'success' });
       await loadTrips();
+      handleViewSummary(tripId);
     } catch (err: any) {
       setActionMessage({ text: err?.message || 'Failed to complete trip', type: 'error' });
     } finally {
@@ -453,6 +473,11 @@ export default function TripsManagementPage() {
                             Started: {new Date(trip.actualStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </div>
                         )}
+                        {trip.actualEndTime && (
+                          <div className="text-[10px] text-slate-600 font-medium mt-0.5">
+                            Ended: {new Date(trip.actualEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        )}
                       </td>
 
                       <td className="px-4 py-3">
@@ -485,11 +510,30 @@ export default function TripsManagementPage() {
                               Tracking Active
                             </div>
                           )}
+                          {trip.attendanceLocked && (
+                            <div className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                              <Lock className="w-2.5 h-2.5 text-slate-500" />
+                              Attendance Locked
+                            </div>
+                          )}
                         </div>
                       </td>
 
                       <td className="px-4 py-3 text-right">
                         <div className="inline-flex items-center gap-1.5">
+                          {/* Trip Summary Action */}
+                          {isCompleted && (
+                            <button
+                              onClick={() => handleViewSummary(trip.id)}
+                              disabled={isLoadingSummary}
+                              className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded transition-colors inline-flex items-center gap-1 shadow-xs"
+                              title="View operational trip summary"
+                            >
+                              <FileText className="w-3 h-3 text-slate-500" />
+                              Summary
+                            </button>
+                          )}
+
                           {/* Start Trip Action */}
                           {isScheduled && !isCancelled && (
                             <button
@@ -722,6 +766,119 @@ export default function TripsManagementPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Trip Summary Modal */}
+      {summaryTrip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Operational Trip Summary</h3>
+                  <p className="text-[11px] text-slate-500 font-mono">
+                    Trip #{summaryTrip.tripId.substring(0, 8)} • {summaryTrip.scheduledDate}
+                  </p>
+                </div>
+              </div>
+              <TripLifecycleBadge stage={summaryTrip.lifecycleStage} status={summaryTrip.status} />
+            </div>
+
+            {/* Core Info Grid */}
+            <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-3 rounded-lg border border-slate-100">
+              <div>
+                <span className="text-[11px] text-slate-500 block">Route:</span>
+                <span className="font-semibold text-slate-900">
+                  {summaryTrip.routeName || 'Transit Route'} ({summaryTrip.routeCode || '—'})
+                </span>
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-500 block">Bus & Driver:</span>
+                <span className="font-semibold text-slate-900">
+                  {summaryTrip.busNumber || 'Bus'} • {summaryTrip.driverName || 'Driver'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-500 block">Duration & Delays:</span>
+                <span className="font-semibold text-slate-900">
+                  {summaryTrip.durationMinutes} mins • {summaryTrip.delayMinutes > 0 ? `+${summaryTrip.delayMinutes}m delay` : 'On Time'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[11px] text-slate-500 block">Stops Completed:</span>
+                <span className="font-semibold text-slate-900">
+                  {summaryTrip.stopsCompleted} of {summaryTrip.totalStops} stops
+                </span>
+              </div>
+            </div>
+
+            {/* Attendance Ledger Summary */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs font-semibold text-slate-800">
+                <span>Trip Attendance Ledger</span>
+                {summaryTrip.attendanceLocked && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <Lock className="w-2.5 h-2.5" />
+                    Locked & Verified
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-md">
+                  <div className="text-base font-bold text-slate-900">{summaryTrip.attendance.totalExpected}</div>
+                  <div className="text-[10px] text-slate-500">Expected</div>
+                </div>
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-md">
+                  <div className="text-base font-bold text-emerald-800">{summaryTrip.attendance.totalBoarded}</div>
+                  <div className="text-[10px] text-emerald-700">Boarded</div>
+                </div>
+                <div className="p-2.5 bg-sky-50 border border-sky-200 rounded-md">
+                  <div className="text-base font-bold text-sky-800">{summaryTrip.attendance.totalDeboarded}</div>
+                  <div className="text-[10px] text-sky-700">Deboarded</div>
+                </div>
+                <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-md">
+                  <div className="text-base font-bold text-amber-800">{summaryTrip.attendance.totalAbsent}</div>
+                  <div className="text-[10px] text-amber-700">Absent / Skipped</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Timestamps */}
+            <div className="text-[11px] text-slate-500 space-y-1 border-t border-slate-100 pt-3">
+              <div className="flex justify-between">
+                <span>Scheduled Start:</span>
+                <span className="font-mono text-slate-700">{summaryTrip.scheduledStartTime}</span>
+              </div>
+              {summaryTrip.actualStartTime && (
+                <div className="flex justify-between">
+                  <span>Actual Departure:</span>
+                  <span className="font-mono text-slate-700">
+                    {new Date(summaryTrip.actualStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              )}
+              {summaryTrip.actualEndTime && (
+                <div className="flex justify-between">
+                  <span>Trip Concluded:</span>
+                  <span className="font-mono text-slate-700">
+                    {new Date(summaryTrip.actualEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setSummaryTrip(null)}
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-md transition-colors"
+              >
+                Close Summary
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -4,6 +4,7 @@ import {
   CreateTodayTripRequestSchema,
   GenerateDailyTripsRequestSchema,
   StartTripRequestSchema,
+  EndTripRequestSchema,
   UpdateTripProgressRequestSchema,
   CancelTripRequestSchema,
   UserRole,
@@ -129,7 +130,7 @@ tripRouter.post(
   TripController.arriveAtSchool
 );
 
-// 7. Complete Trip -> COMPLETED (Admin, Coordinator, Driver)
+// 7. Complete / End Trip -> COMPLETED (Admin, Coordinator, Driver)
 tripRouter.post(
   '/:schoolId/trips/:tripId/complete',
   authenticateToken,
@@ -140,7 +141,37 @@ tripRouter.post(
     UserRole.DRIVER,
     UserRole.SUPER_ADMIN
   ),
+  validateBody(EndTripRequestSchema.optional()),
   TripController.completeTrip
+);
+
+// 7b. End Trip alias -> COMPLETED (Admin, Coordinator, Driver)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/end',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(EndTripRequestSchema.optional()),
+  TripController.completeTrip
+);
+
+// 7c. Trip Summary (Admin, Coordinator, Driver)
+tripRouter.get(
+  '/:schoolId/trips/:tripId/summary',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.getTripSummary
 );
 
 // 8. Cancel Trip (Admin, Coordinator)

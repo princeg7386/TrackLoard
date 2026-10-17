@@ -5,6 +5,8 @@ import {
   GenerateDailyTripsRequest,
   GenerateDailyTripsResponse,
   StartTripRequest,
+  EndTripRequest,
+  TripSummaryResponse,
   UpdateTripProgressRequest,
   CancelTripRequest,
   TripStatus,
@@ -129,11 +131,23 @@ export class TripApiService {
    */
   public static async completeTrip(
     schoolId: string,
-    tripId: string
+    tripId: string,
+    payload?: EndTripRequest
   ): Promise<TripDetailResponse> {
     return apiRequest<TripDetailResponse>(`/schools/${schoolId}/trips/${tripId}/complete`, {
       method: 'POST',
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
+  }
+
+  /**
+   * Get comprehensive operational trip summary
+   */
+  public static async getTripSummary(
+    schoolId: string,
+    tripId: string
+  ): Promise<TripSummaryResponse> {
+    return apiRequest<TripSummaryResponse>(`/schools/${schoolId}/trips/${tripId}/summary`);
   }
 
   /**

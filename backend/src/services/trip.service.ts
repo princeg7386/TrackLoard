@@ -7,6 +7,8 @@ import {
   GenerateDailyTripsResponse,
   TripDetailResponse,
   StartTripRequest,
+  EndTripRequest,
+  TripSummaryResponse,
   UpdateTripProgressRequest,
   GpsHealthStatus,
 } from '@school-bus/shared';
@@ -470,6 +472,7 @@ export class TripService {
       delayMinutes: Number(r.delay_minutes),
       totalStops: Number(r.total_stops),
       trackingSessionActive: r.status === TripStatus.IN_TRANSIT,
+      attendanceLocked: r.status === TripStatus.COMPLETED,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -588,6 +591,7 @@ export class TripService {
       delayMinutes: Number(r.delay_minutes),
       totalStops: Number(r.total_stops),
       trackingSessionActive: r.status === TripStatus.IN_TRANSIT,
+      attendanceLocked: r.status === TripStatus.COMPLETED,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
@@ -888,27 +892,39 @@ export class TripService {
   }
 
   /**
-   * Micro-phase 16.1: Conclude and finalize a trip (Lifecycle: COMPLETED)
+   * Micro-phase 16.4: Conclude and finalize a trip (Lifecycle: COMPLETED)
+   * Records end timestamp, stops tracking session, locks attendance ledger, and publishes real-time broadcast.
    */
   public static async completeTrip(
     schoolId: string,
     tripId: string,
-    actor?: TripActorContext
+    actor?: TripActorContext,
+    payload?: EndTripRequest
   ): Promise<TripDetailResponse> {
     if (actor?.schoolId && actor.schoolId !== schoolId) {
       throw new ForbiddenError('Cross-tenant trip completion attempt');
     }
 
+    // 1. Fetch current trip state and attached bus cache
     const currentRows = await query<{
       id: string;
+      route_id: string;
+      bus_id: string;
       driver_id: string;
       status: TripStatus;
       actual_start_time: string | null;
       actual_end_time: string | null;
+      last_latitude: number | null;
+      last_longitude: number | null;
+      last_speed_kmh: number | null;
+      last_bearing_degrees: number | null;
+      gps_health_status: string | null;
     }>(
-      `SELECT id, driver_id, status, actual_start_time, actual_end_time
-       FROM trips
-       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+      `SELECT t.id, t.route_id, t.bus_id, t.driver_id, t.status, t.actual_start_time, t.actual_end_time,
+              b.last_latitude, b.last_longitude, b.last_speed_kmh, b.last_bearing_degrees, b.gps_health_status
+       FROM trips t
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
        LIMIT 1`,
       [tripId, schoolId]
     );
@@ -919,12 +935,12 @@ export class TripService {
 
     const current = currentRows[0];
 
-    // Driver verification
+    // 2. Driver verification
     if (actor?.isDriver && actor.userId && current.driver_id !== actor.userId) {
       throw new ForbiddenError('You are not authorized to complete another driver\'s trip');
     }
 
-    // State machine: cannot complete an already completed or cancelled trip
+    // 3. State machine validation
     if (current.status === TripStatus.COMPLETED) {
       throw new BadRequestError('Trip is already completed');
     }
@@ -935,37 +951,230 @@ export class TripService {
       throw new BadRequestError('Cannot complete a trip that has not been started');
     }
 
-    // Update status to COMPLETED and record actual_end_time
+    // 4. Update status to COMPLETED and record actual_end_time (client payload or NOW())
+    const explicitEndTime = payload?.endedAt || null;
     await query(
       `UPDATE trips
        SET status = 'COMPLETED',
-           actual_end_time = COALESCE(actual_end_time, NOW()),
+           actual_end_time = COALESCE($3::timestamptz, actual_end_time, NOW()),
            updated_at = NOW()
        WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [tripId, schoolId, explicitEndTime]
+    );
+
+    // 5. Inactivate tracking session: unlink parent tracking tokens
+    await query(
+      `UPDATE parent_tracking_tokens
+       SET trip_id = NULL,
+           updated_at = NOW()
+       WHERE trip_id = $1 AND school_id = $2 AND deleted_at IS NULL`,
       [tripId, schoolId]
     );
 
-    logger.info(`[TripService] Trip ${tripId} COMPLETED`);
+    logger.info(`[TripService] Trip ${tripId} COMPLETED and tracking session detached`);
 
-    // Audit log
+    // 6. Broadcast real-time feed update indicating trip concluded
+    const effectiveEndTime = explicitEndTime || new Date().toISOString();
+    RealtimeFeedService.publish({
+      type: 'LOCATION_UPDATE',
+      schoolId,
+      busId: current.bus_id,
+      tripId,
+      latitude: current.last_latitude != null ? Number(current.last_latitude) : 0,
+      longitude: current.last_longitude != null ? Number(current.last_longitude) : 0,
+      speedKmh: 0,
+      bearingDegrees: current.last_bearing_degrees != null ? Number(current.last_bearing_degrees) : 0,
+      accuracyMeters: null,
+      batteryPercentage: null,
+      isCharging: null,
+      networkType: null,
+      healthStatus: 'OFFLINE',
+      recordedAt: effectiveEndTime,
+      timestamp: new Date().toISOString(),
+    });
+
+    // 7. Audit log: TRIP_COMPLETED
     await this.recordTripAudit({
       schoolId,
       tripId,
       action: 'TRIP_COMPLETED',
       userId: actor?.userId,
       userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
-      changeSummary: 'Trip successfully finished and marked COMPLETED',
+      changeSummary: payload?.summaryNotes
+        ? `Trip finished and marked COMPLETED. Notes: ${payload.summaryNotes}`
+        : 'Trip successfully finished and marked COMPLETED',
       previousState: {
         status: current.status,
       },
       newState: {
         status: TripStatus.COMPLETED,
         stage: TripLifecycleStage.COMPLETED,
-        actualEndTime: new Date().toISOString(),
+        actualEndTime: effectiveEndTime,
+        summaryNotes: payload?.summaryNotes || null,
       },
     });
 
+    // 8. Audit log: TRIP_ATTENDANCE_LOCKED (Locks attendance ledger permanently)
+    await this.recordTripAudit({
+      schoolId,
+      tripId,
+      action: 'TRIP_ATTENDANCE_LOCKED',
+      userId: actor?.userId,
+      userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
+      changeSummary: 'Trip attendance ledger permanently locked upon trip conclusion',
+      previousState: { attendanceLocked: false },
+      newState: { attendanceLocked: true, lockedAt: effectiveEndTime },
+    });
+
     return this.getTripById(schoolId, tripId, actor);
+  }
+
+  /**
+   * Micro-phase 16.4: Retrieve comprehensive trip operational summary
+   */
+  public static async getTripSummary(
+    schoolId: string,
+    tripId: string,
+    actor?: TripActorContext
+  ): Promise<TripSummaryResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip summary access attempt');
+    }
+
+    const rows = await query<{
+      trip_id: string;
+      school_id: string;
+      route_id: string;
+      bus_id: string;
+      driver_id: string;
+      status: TripStatus;
+      scheduled_date: string;
+      scheduled_start_time: string;
+      actual_start_time: string | null;
+      actual_end_time: string | null;
+      current_stop_sequence: number;
+      delay_minutes: number;
+      route_name: string | null;
+      route_code: string | null;
+      bus_number: string | null;
+      registration_number: string | null;
+      driver_name: string | null;
+      driver_phone: string | null;
+      total_stops: number;
+      total_expected: number;
+      total_boarded: number;
+      total_deboarded: number;
+      total_absent: number;
+      completed_at: string | null;
+    }>(
+      `SELECT 
+         t.id AS trip_id,
+         t.school_id,
+         t.route_id,
+         t.bus_id,
+         t.driver_id,
+         t.status,
+         t.scheduled_date::text AS scheduled_date,
+         t.scheduled_start_time::text AS scheduled_start_time,
+         t.actual_start_time::text AS actual_start_time,
+         t.actual_end_time::text AS actual_end_time,
+         t.current_stop_sequence,
+         t.delay_minutes,
+         r.name AS route_name,
+         r.code AS route_code,
+         b.bus_number,
+         b.registration_number,
+         d.full_name AS driver_name,
+         d.phone AS driver_phone,
+         (SELECT COUNT(*)::int FROM pickup_locations pl WHERE pl.route_id = t.route_id AND pl.deleted_at IS NULL) AS total_stops,
+         (SELECT COUNT(DISTINCT ssa.student_id)::int FROM student_stop_assignments ssa JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id) WHERE pl.route_id = t.route_id AND ssa.deleted_at IS NULL AND pl.deleted_at IS NULL) AS total_expected,
+         (SELECT COUNT(DISTINCT be.student_id)::int FROM boarding_events be WHERE be.trip_id = t.id AND be.status = 'BOARDED') AS total_boarded,
+         (SELECT COUNT(DISTINCT de.student_id)::int FROM drop_events de WHERE de.trip_id = t.id AND de.status = 'DEBOARDED') AS total_deboarded,
+         (SELECT COUNT(DISTINCT be.student_id)::int FROM boarding_events be WHERE be.trip_id = t.id AND be.status = 'ABSENT') AS total_absent,
+         (SELECT al.created_at::text FROM audit_logs al WHERE al.school_id = t.school_id AND al.entity_type = 'TRIP' AND al.entity_id = t.id AND al.action = 'TRIP_COMPLETED' ORDER BY al.created_at DESC LIMIT 1) AS completed_at
+       FROM trips t
+       LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+       WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (rows.length === 0 || !rows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+
+    const r = rows[0];
+
+    // Compute duration in minutes
+    let durationMinutes = 0;
+    if (r.actual_start_time && r.actual_end_time) {
+      const startMs = new Date(r.actual_start_time).getTime();
+      const endMs = new Date(r.actual_end_time).getTime();
+      durationMinutes = Math.max(0, Math.round((endMs - startMs) / 60000));
+    }
+
+    const totalExpected = Number(r.total_expected) || 0;
+    const totalBoarded = Number(r.total_boarded) || 0;
+    const totalDeboarded = Number(r.total_deboarded) || 0;
+    const directAbsent = Number(r.total_absent) || 0;
+    const totalAbsent = directAbsent > 0 ? directAbsent : Math.max(0, totalExpected - totalBoarded);
+
+    const lifecycleStage = this.computeLifecycleStage({
+      status: r.status,
+      actualStartTime: r.actual_start_time,
+      actualEndTime: r.actual_end_time,
+      currentStopSequence: Number(r.current_stop_sequence),
+    });
+
+    return {
+      tripId: r.trip_id,
+      schoolId: r.school_id,
+      routeId: r.route_id,
+      routeName: r.route_name || undefined,
+      routeCode: r.route_code || undefined,
+      busId: r.bus_id,
+      busNumber: r.bus_number || undefined,
+      busRegistrationNumber: r.registration_number || undefined,
+      driverId: r.driver_id,
+      driverName: r.driver_name || undefined,
+      driverPhone: r.driver_phone || undefined,
+      status: r.status,
+      lifecycleStage,
+      scheduledDate: r.scheduled_date,
+      scheduledStartTime: r.scheduled_start_time,
+      actualStartTime: r.actual_start_time || null,
+      actualEndTime: r.actual_end_time || null,
+      durationMinutes,
+      totalStops: Number(r.total_stops) || 0,
+      stopsCompleted: Number(r.current_stop_sequence) || 0,
+      delayMinutes: Number(r.delay_minutes) || 0,
+      attendanceLocked: r.status === TripStatus.COMPLETED,
+      attendance: {
+        totalExpected,
+        totalBoarded,
+        totalDeboarded,
+        totalAbsent,
+      },
+      completedAt: r.completed_at || undefined,
+    };
+  }
+
+  /**
+   * Micro-phase 16.4: Guard preventing modifications to attendance ledger once trip is completed
+   */
+  public static async assertAttendanceNotLocked(schoolId: string, tripId: string): Promise<void> {
+    const rows = await query<{ status: TripStatus }>(
+      `SELECT status FROM trips WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [tripId, schoolId]
+    );
+    if (rows.length === 0 || !rows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+    if (rows[0].status === TripStatus.COMPLETED) {
+      throw new BadRequestError('Trip attendance is locked because trip has completed');
+    }
   }
 
   /**

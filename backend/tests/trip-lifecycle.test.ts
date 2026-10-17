@@ -495,11 +495,15 @@ describe('Phase 16.1: Trip Engine — Trip Lifecycle State Machine', () => {
 
       // 2. Update trip to COMPLETED
       querySpy.mockResolvedValueOnce([{ id: tripAId }] as any);
-      // 3. Audit log
+      // 3. Inactivate parent tracking tokens
+      querySpy.mockResolvedValueOnce([] as any);
+      // 4. Audit log: TRIP_COMPLETED
       querySpy.mockResolvedValueOnce([{ id: 'audit-complete' }] as any);
+      // 5. Audit log: TRIP_ATTENDANCE_LOCKED
+      querySpy.mockResolvedValueOnce([{ id: 'audit-locked' }] as any);
 
       const endTime = new Date().toISOString();
-      // 4. getTripById
+      // 6. getTripById
       querySpy.mockResolvedValueOnce([
         {
           id: tripAId,

@@ -4,6 +4,7 @@ import {
   CreateTodayTripRequest,
   GenerateDailyTripsRequest,
   StartTripRequest,
+  EndTripRequest,
   UpdateTripProgressRequest,
   CancelTripRequest,
   TripStatus,
@@ -192,6 +193,25 @@ export class TripController {
    * Transitions trip to COMPLETED and sets actual_end_time
    */
   public static async completeTrip(
+    req: Request<{ schoolId: string; tripId: string }, {}, EndTripRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, tripId } = req.params;
+      const actor = extractTripActor(req);
+      const trip = await TripService.completeTrip(schoolId, tripId, actor, req.body);
+      sendSuccess(res, trip, 'Trip completed successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/schools/:schoolId/trips/:tripId/summary
+   * Retrieves operational summary of completed or active trip
+   */
+  public static async getTripSummary(
     req: Request<{ schoolId: string; tripId: string }>,
     res: Response,
     next: NextFunction
@@ -199,8 +219,8 @@ export class TripController {
     try {
       const { schoolId, tripId } = req.params;
       const actor = extractTripActor(req);
-      const trip = await TripService.completeTrip(schoolId, tripId, actor);
-      sendSuccess(res, trip, 'Trip completed successfully');
+      const summary = await TripService.getTripSummary(schoolId, tripId, actor);
+      sendSuccess(res, summary, 'Trip summary retrieved successfully');
     } catch (error) {
       next(error);
     }

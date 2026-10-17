@@ -1086,6 +1086,49 @@ export const StartTripRequestSchema = z.object({
 });
 export type StartTripRequest = z.infer<typeof StartTripRequestSchema>;
 
+export const EndTripRequestSchema = z.object({
+  endedAt: z.string().datetime().optional(),
+  summaryNotes: z.string().max(500).optional(),
+});
+export type EndTripRequest = z.infer<typeof EndTripRequestSchema>;
+
+export const TripSummaryAttendanceSchema = z.object({
+  totalExpected: z.number().int().min(0),
+  totalBoarded: z.number().int().min(0),
+  totalDeboarded: z.number().int().min(0),
+  totalAbsent: z.number().int().min(0),
+});
+export type TripSummaryAttendance = z.infer<typeof TripSummaryAttendanceSchema>;
+
+export const TripSummaryResponseSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  routeName: z.string().optional(),
+  routeCode: z.string().optional(),
+  busId: z.string().uuid(),
+  busNumber: z.string().optional(),
+  busRegistrationNumber: z.string().optional(),
+  driverId: z.string().uuid(),
+  driverName: z.string().optional(),
+  driverPhone: z.string().optional(),
+  status: z.nativeEnum(TripStatus),
+  lifecycleStage: z.nativeEnum(TripLifecycleStage),
+  scheduledDate: z.string(),
+  scheduledStartTime: z.string(),
+  actualStartTime: z.string().nullable().optional(),
+  actualEndTime: z.string().nullable().optional(),
+  durationMinutes: z.number().min(0),
+  totalStops: z.number().int(),
+  stopsCompleted: z.number().int(),
+  delayMinutes: z.number().int(),
+  attendanceLocked: z.boolean(),
+  attendance: TripSummaryAttendanceSchema,
+  summaryNotes: z.string().nullable().optional(),
+  completedAt: z.string().optional(),
+});
+export type TripSummaryResponse = z.infer<typeof TripSummaryResponseSchema>;
+
 export const UpdateTripProgressRequestSchema = z.object({
   currentStopSequence: z.number().int().min(0),
   delayMinutes: z.number().int().min(0).optional(),
@@ -1121,6 +1164,7 @@ export const TripDetailResponseSchema = z.object({
   totalStops: z.number().int().optional(),
   trackingSessionActive: z.boolean().optional(),
   activatedTrackingTokens: z.number().int().optional(),
+  attendanceLocked: z.boolean().optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });
