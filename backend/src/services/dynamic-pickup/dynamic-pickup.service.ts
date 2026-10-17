@@ -3,12 +3,17 @@ import {
   ParentLocationValidationResult,
   ValidateCoordinatesQuery,
   RequestParentLocation,
+  FindNearestRoadQuery,
+  NearestRoadResult,
+  CreatePickupPointRequest,
+  PickupPointCreationResult,
+  formatIndianTransportAddress,
   calculateHaversineDistanceMeters,
   normalizeIndianPhoneNumber,
   GeoCoordinates,
 } from '@school-bus/shared';
 import { query } from '../../config/database.js';
-import { NotFoundError, ValidationError } from '../../middlewares/error.middleware.js';
+import { NotFoundError, ValidationError, ForbiddenError } from '../../middlewares/error.middleware.js';
 import { MessagingService } from '../messaging/messaging.service.js';
 import { MapService } from '../maps/map.service.js';
 import { RoutingService } from '../routing/routing.service.js';
@@ -349,4 +354,310 @@ export class DynamicPickupService {
 
     return { handled: false };
   }
+
+  /**
+   * Micro-phase 14.2 Task 1: Find nearest suitable vehicle road and accessibility metrics
+   */
+  public static async findNearestSuitableRoad(
+    input: FindNearestRoadQuery
+  ): Promise<NearestRoadResult> {
+    const { latitude, longitude, schoolId, landmark } = input;
+
+    let snappedCoordinates: GeoCoordinates = { latitude, longitude };
+    let distanceToRoadMeters = 0;
+    let provider = 'mock';
+
+    try {
+      const snapResult = await RoutingService.snapToRoad([{ latitude, longitude }], schoolId || 'system');
+      if (snapResult.snappedPoints.length > 0 && snapResult.snappedPoints[0]) {
+        const pt = snapResult.snappedPoints[0];
+        snappedCoordinates = { latitude: pt.latitude, longitude: pt.longitude };
+        distanceToRoadMeters = calculateHaversineDistanceMeters({ latitude, longitude }, snappedCoordinates);
+        provider = snapResult.provider;
+      }
+    } catch (err: any) {
+      logger.warn(`[DynamicPickup] Road snapping failed, using provided coordinates: ${err.message}`);
+    }
+
+    const isAccessible = distanceToRoadMeters <= 300;
+
+    // Micro-phase 14.2 Task 2 & 3: Reverse geocode & create readable address
+    const addressInfo = await DynamicPickupService.createReadableAddress(snappedCoordinates, {
+      schoolId,
+      landmark,
+    });
+
+    return {
+      originalCoordinates: { latitude, longitude },
+      snappedCoordinates,
+      distanceToRoadMeters: Math.round(distanceToRoadMeters),
+      isAccessible,
+      formattedAddress: addressInfo.formattedAddress,
+      suggestedStopName: landmark || addressInfo.suggestedStopName,
+      provider,
+    };
+  }
+
+  /**
+   * Micro-phase 14.2 Task 2 & 3: Reverse geocode & synthesize Indian readable transport address
+   */
+  public static async createReadableAddress(
+    coords: GeoCoordinates,
+    options?: { schoolId?: string; landmark?: string; customName?: string }
+  ): Promise<{ formattedAddress: string; suggestedStopName: string }> {
+    const { schoolId = 'system', landmark, customName } = options || {};
+
+    let street: string | undefined;
+    let sublocality: string | undefined;
+    let city: string | undefined;
+    let state: string | undefined;
+    let postalCode: string | undefined;
+    let fallbackAddress = `${coords.latitude.toFixed(4)}, ${coords.longitude.toFixed(4)}`;
+
+    try {
+      const geoResult = await MapService.reverseGeocode(
+        { latitude: coords.latitude, longitude: coords.longitude },
+        schoolId
+      );
+      if (geoResult.formattedAddress) {
+        fallbackAddress = geoResult.formattedAddress;
+        street = geoResult.street;
+        city = geoResult.city;
+        state = geoResult.state;
+        postalCode = geoResult.postalCode;
+        if (geoResult.displayName && !street) {
+          sublocality = geoResult.displayName.split(',')[0]?.trim();
+        }
+      }
+    } catch {
+      // Fallback to coordinates
+    }
+
+    const formatted = formatIndianTransportAddress({
+      landmark,
+      street,
+      sublocality,
+      city,
+      state,
+      postalCode,
+      fallbackAddress,
+    });
+
+    if (customName) {
+      formatted.suggestedStopName = customName;
+    }
+
+    return formatted;
+  }
+
+  /**
+   * Micro-phase 14.2 Task 4: Store coordinates, check nearby cluster deduplication, and assign student stop
+   */
+  public static async createOrAssignPickupPoint(
+    payload: CreatePickupPointRequest,
+    actorSchoolId?: string
+  ): Promise<PickupPointCreationResult> {
+    const {
+      schoolId,
+      routeId,
+      latitude,
+      longitude,
+      studentId,
+      stopName,
+      landmark,
+      scheduledTime = '07:30:00',
+      geofenceRadiusMeters = 300,
+      snapToRoad = true,
+      clusterThresholdMeters = 50,
+    } = payload;
+
+    // 1. Tenant validation
+    if (actorSchoolId && actorSchoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant stop creation attempt: actor school does not match payload school');
+    }
+
+    // 2. Verify route exists and belongs to school
+    const routeRows = await query<{ id: string; name: string; code: string }>(
+      `SELECT id, name, code FROM routes WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [routeId, schoolId]
+    );
+    if (routeRows.length === 0) {
+      throw new NotFoundError(`Route ${routeId} not found in this school context`);
+    }
+
+    // 3. Verify student if provided
+    if (studentId) {
+      const studentRows = await query<{ id: string; full_name: string }>(
+        `SELECT id, full_name FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [studentId, schoolId]
+      );
+      if (studentRows.length === 0) {
+        throw new NotFoundError(`Student ${studentId} not found in this school context`);
+      }
+    }
+
+    // 4. Snapping & address formatting
+    let targetCoords: GeoCoordinates = { latitude, longitude };
+    let distanceToRoadMeters = 0;
+
+    if (snapToRoad) {
+      try {
+        const roadInfo = await DynamicPickupService.findNearestSuitableRoad({
+          latitude,
+          longitude,
+          schoolId,
+          landmark,
+        });
+        if (roadInfo.isAccessible) {
+          targetCoords = roadInfo.snappedCoordinates;
+          distanceToRoadMeters = roadInfo.distanceToRoadMeters;
+        }
+      } catch (err: any) {
+        logger.warn(`[DynamicPickup] Snapping failed in createOrAssignPickupPoint: ${err.message}`);
+      }
+    }
+
+    const addressInfo = await DynamicPickupService.createReadableAddress(targetCoords, {
+      schoolId,
+      landmark,
+      customName: stopName,
+    });
+
+    const finalStopName = stopName || addressInfo.suggestedStopName;
+
+    // 5. Check if an existing stop exists within clusterThresholdMeters on this route
+    const nearbyStopRows = await query<{
+      id: string;
+      stop_name: string;
+      sequence_order: number;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
+      created_at: string;
+    }>(
+      `SELECT id, stop_name, sequence_order, latitude, longitude, scheduled_time, geofence_radius_meters, created_at
+       FROM pickup_locations
+       WHERE route_id = $1 AND school_id = $2 AND deleted_at IS NULL
+         AND ST_DWithin(location, ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography, $5)
+       ORDER BY ST_Distance(location, ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography) ASC
+       LIMIT 1`,
+      [routeId, schoolId, targetCoords.longitude, targetCoords.latitude, clusterThresholdMeters]
+    );
+
+    let stopRecord: {
+      id: string;
+      school_id: string;
+      route_id: string;
+      stop_name: string;
+      sequence_order: number;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
+      created_at?: string;
+    };
+    let reusedExistingStop = false;
+
+    if (nearbyStopRows.length > 0 && nearbyStopRows[0]) {
+      // Reuse nearby stop
+      const existing = nearbyStopRows[0];
+      reusedExistingStop = true;
+      stopRecord = {
+        id: existing.id,
+        school_id: schoolId,
+        route_id: routeId,
+        stop_name: existing.stop_name,
+        sequence_order: existing.sequence_order,
+        latitude: existing.latitude,
+        longitude: existing.longitude,
+        scheduled_time: existing.scheduled_time,
+        geofence_radius_meters: existing.geofence_radius_meters,
+        created_at: existing.created_at,
+      };
+      logger.info(
+        `[DynamicPickup] Reusing nearby stop ${existing.id} (${existing.stop_name}) within ${clusterThresholdMeters}m threshold`
+      );
+    } else {
+      // Calculate next sequence order
+      const seqRows = await query<{ next_seq: number }>(
+        `SELECT COALESCE(MAX(sequence_order), 0) + 1 AS next_seq
+         FROM pickup_locations
+         WHERE route_id = $1 AND deleted_at IS NULL`,
+        [routeId]
+      );
+      const sequenceOrder = Number(seqRows[0]?.next_seq || 1);
+
+      // Insert into pickup_locations
+      const insertRows = await query<{
+        id: string;
+        school_id: string;
+        route_id: string;
+        stop_name: string;
+        sequence_order: number;
+        latitude: number;
+        longitude: number;
+        scheduled_time: string;
+        geofence_radius_meters: number;
+        created_at: string;
+      }>(
+        `INSERT INTO pickup_locations (
+           school_id, route_id, stop_name, sequence_order, latitude, longitude, location, scheduled_time, geofence_radius_meters
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7, $8
+         )
+         RETURNING id, school_id, route_id, stop_name, sequence_order, latitude, longitude, scheduled_time, geofence_radius_meters, created_at`,
+        [
+          schoolId,
+          routeId,
+          finalStopName,
+          sequenceOrder,
+          targetCoords.latitude,
+          targetCoords.longitude,
+          scheduledTime,
+          geofenceRadiusMeters,
+        ]
+      );
+
+      stopRecord = insertRows[0]!;
+      logger.info(
+        `[DynamicPickup] Created new pickup stop ${stopRecord.id} (${finalStopName}) for route ${routeId}`
+      );
+    }
+
+    // 6. Assign student to stop if studentId provided
+    if (studentId) {
+      await query(
+        `INSERT INTO student_stop_assignments (
+           school_id, student_id, pickup_stop_id
+         ) VALUES ($1, $2, $3)
+         ON CONFLICT (school_id, student_id)
+         DO UPDATE SET
+           pickup_stop_id = EXCLUDED.pickup_stop_id,
+           updated_at = NOW()`,
+        [schoolId, studentId, stopRecord.id]
+      );
+      logger.info(`[DynamicPickup] Assigned student ${studentId} to pickup stop ${stopRecord.id}`);
+    }
+
+    return {
+      id: stopRecord.id,
+      schoolId: stopRecord.school_id,
+      routeId: stopRecord.route_id,
+      stopName: stopRecord.stop_name,
+      sequenceOrder: stopRecord.sequence_order,
+      latitude: stopRecord.latitude,
+      longitude: stopRecord.longitude,
+      originalCoordinates: { latitude, longitude },
+      snappedCoordinates: targetCoords,
+      distanceToRoadMeters,
+      formattedAddress: addressInfo.formattedAddress,
+      scheduledTime: String(stopRecord.scheduled_time),
+      geofenceRadiusMeters: stopRecord.geofence_radius_meters,
+      reusedExistingStop,
+      assignedStudentId: studentId,
+      createdAt: stopRecord.created_at,
+    };
+  }
 }
+

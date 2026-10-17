@@ -3,6 +3,8 @@ import {
   RequestParentLocationSchema,
   ParentLocationShareRequestSchema,
   ValidateCoordinatesQuerySchema,
+  FindNearestRoadQuerySchema,
+  CreatePickupPointRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -40,6 +42,23 @@ dynamicPickupRouter.post(
 dynamicPickupRouter.post(
   '/webhook/whatsapp',
   DynamicPickupController.handleWhatsAppWebhook
+);
+
+// 5. Dynamic Pickup: Find Nearest Road & Reverse Geocode (Micro-phase 14.2 Tasks 1-3)
+dynamicPickupRouter.post(
+  '/pickup/nearest-road',
+  validateBody(FindNearestRoadQuerySchema),
+  DynamicPickupController.findNearestRoad
+);
+
+// 6. Dynamic Pickup: Create & Store Pickup Point (Micro-phase 14.2 Task 4)
+dynamicPickupRouter.post(
+  '/pickup/create-point',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  validateBody(CreatePickupPointRequestSchema),
+  requireTenantScope('body', 'schoolId'),
+  DynamicPickupController.createPickupPoint
 );
 
 export default dynamicPickupRouter;

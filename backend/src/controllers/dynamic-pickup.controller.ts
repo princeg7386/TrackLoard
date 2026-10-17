@@ -3,6 +3,8 @@ import {
   RequestParentLocation,
   ParentLocationShareRequest,
   ValidateCoordinatesQuery,
+  FindNearestRoadQuery,
+  CreatePickupPointRequest,
 } from '@school-bus/shared';
 import { DynamicPickupService } from '../services/dynamic-pickup/dynamic-pickup.service.js';
 import { sendSuccess } from '../utils/response.util.js';
@@ -102,4 +104,40 @@ export class DynamicPickupController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/parent/pickup/nearest-road
+   * Finds nearest navigable road segment, snapping offset, and readable address
+   */
+  public static async findNearestRoad(
+    req: Request<{}, {}, FindNearestRoadQuery>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const result = await DynamicPickupService.findNearestSuitableRoad(req.body);
+      sendSuccess(res, result, 'Nearest road and readable address resolved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/parent/pickup/create-point
+   * Creates or deduplicates a pickup location and assigns it to a route and optional student
+   */
+  public static async createPickupPoint(
+    req: Request<{}, {}, CreatePickupPointRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await DynamicPickupService.createOrAssignPickupPoint(req.body, actorSchoolId);
+      sendSuccess(res, result, 'Pickup point created and stored successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

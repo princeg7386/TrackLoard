@@ -2266,3 +2266,135 @@ export const WhatsAppInboundMessageSchema = z.object({
 });
 export type WhatsAppInboundMessage = z.infer<typeof WhatsAppInboundMessageSchema>;
 
+// Phase 14.2: Pickup point creation schemas
+export const FindNearestRoadQuerySchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  schoolId: z.string().uuid().optional(),
+  landmark: z.string().optional(),
+});
+export type FindNearestRoadQuery = z.infer<typeof FindNearestRoadQuerySchema>;
+
+export const NearestRoadResultSchema = z.object({
+  originalCoordinates: GeoCoordinatesSchema,
+  snappedCoordinates: GeoCoordinatesSchema,
+  distanceToRoadMeters: z.number().min(0),
+  isAccessible: z.boolean(),
+  formattedAddress: z.string(),
+  suggestedStopName: z.string(),
+  provider: z.string(),
+});
+export type NearestRoadResult = z.infer<typeof NearestRoadResultSchema>;
+
+export const CreatePickupPointRequestSchema = z.object({
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  studentId: z.string().uuid().optional(),
+  stopName: z.string().min(2).max(255).optional(),
+  landmark: z.string().max(255).optional(),
+  scheduledTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/)
+    .optional()
+    .default('07:30:00'),
+  geofenceRadiusMeters: z.number().int().min(50).max(1000).optional().default(300),
+  snapToRoad: z.boolean().optional().default(true),
+  clusterThresholdMeters: z.number().int().min(10).max(200).optional().default(50),
+});
+export type CreatePickupPointRequest = z.infer<typeof CreatePickupPointRequestSchema>;
+
+export const PickupPointCreationResultSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int(),
+  latitude: z.number(),
+  longitude: z.number(),
+  originalCoordinates: GeoCoordinatesSchema,
+  snappedCoordinates: GeoCoordinatesSchema,
+  distanceToRoadMeters: z.number(),
+  formattedAddress: z.string(),
+  scheduledTime: z.string(),
+  geofenceRadiusMeters: z.number(),
+  reusedExistingStop: z.boolean(),
+  assignedStudentId: z.string().uuid().optional(),
+  createdAt: z.string().optional(),
+});
+export type PickupPointCreationResult = z.infer<typeof PickupPointCreationResultSchema>;
+
+/**
+ * Formats a clean, human-readable Indian transport address and concise stop name.
+ * Adheres to Indian postal/locality standards (Landmark, Street, Sublocality/Colony, City, State, PIN).
+ */
+export function formatIndianTransportAddress(components: {
+  landmark?: string;
+  street?: string;
+  sublocality?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  fallbackAddress?: string;
+}): { formattedAddress: string; suggestedStopName: string } {
+  const parts: string[] = [];
+
+  const landmark = components.landmark?.trim();
+  if (landmark) {
+    parts.push(landmark.startsWith('Near ') || landmark.startsWith('Opp ') || landmark.startsWith('Opposite ')
+      ? landmark
+      : `Near ${landmark}`);
+  }
+
+  const street = components.street?.trim();
+  if (street && !parts.some((p) => p.toLowerCase().includes(street.toLowerCase()))) {
+    parts.push(street);
+  }
+
+  const sublocality = components.sublocality?.trim();
+  if (sublocality && !parts.some((p) => p.toLowerCase().includes(sublocality.toLowerCase()))) {
+    parts.push(sublocality);
+  }
+
+  const city = components.city?.trim();
+  if (city) {
+    parts.push(city);
+  }
+
+  let stateAndPin = '';
+  const state = components.state?.trim();
+  const postalCode = components.postalCode?.trim();
+  if (state && postalCode) {
+    stateAndPin = `${state} ${postalCode}`;
+  } else if (state) {
+    stateAndPin = state;
+  } else if (postalCode) {
+    stateAndPin = postalCode;
+  }
+  if (stateAndPin) {
+    parts.push(stateAndPin);
+  }
+
+  const formattedAddress = parts.length > 0 ? parts.join(', ') : (components.fallbackAddress || 'Pickup Point');
+
+  // Generate short operational stop label for bus drivers and dispatchers
+  let suggestedStopName = 'Pickup Point';
+  if (landmark) {
+    suggestedStopName = landmark;
+  } else if (street && sublocality) {
+    suggestedStopName = `${sublocality} - ${street}`;
+  } else if (sublocality) {
+    suggestedStopName = sublocality;
+  } else if (street) {
+    suggestedStopName = street;
+  } else if (components.fallbackAddress) {
+    suggestedStopName = components.fallbackAddress.split(',')[0]!.trim();
+  }
+
+  return {
+    formattedAddress,
+    suggestedStopName,
+  };
+}
+
