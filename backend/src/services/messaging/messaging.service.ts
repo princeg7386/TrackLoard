@@ -51,10 +51,11 @@ export class MessagingService {
           `INSERT INTO notifications (
              school_id, recipient_phone, recipient_role, channel,
              template_name, message_body, status, provider_message_id
-           ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', $3, $4, $5, $6)`,
+           ) VALUES ($1, $2, $3, 'WHATSAPP', $4, $5, $6, $7)`,
           [
             options.schoolId,
             options.recipientPhone,
+            options.recipientRole || 'PARENT',
             options.templateId || options.interactiveType || 'DIRECT_TEXT',
             options.directText || 'WhatsApp notification',
             result.status.toUpperCase(),

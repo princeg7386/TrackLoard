@@ -2427,6 +2427,7 @@ export type PaidMapPolicyResponse = z.infer<typeof PaidMapPolicyResponseSchema>;
 
 export const SendMessageOptionsSchema = z.object({
   recipientPhone: z.string(),
+  recipientRole: z.string().optional(),
   schoolId: z.string().optional(),
   studentId: z.string().optional(),
   templateId: z.string().optional(),
@@ -2836,4 +2837,87 @@ export const DeletePickupStopRequestSchema = z.object({
   notifyParents: z.boolean().optional().default(true),
 });
 export type DeletePickupStopRequest = z.infer<typeof DeletePickupStopRequestSchema>;
+
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 17.1 — Driver WhatsApp Core: Menu & Daily Operations
+ * -----------------------------------------------------------------------------
+ */
+
+export enum DriverWhatsAppAction {
+  START_TRIP = 'START_TRIP',
+  END_TRIP = 'END_TRIP',
+  STUDENT_SEARCH = 'STUDENT_SEARCH',
+  REPORT_PROBLEM = 'REPORT_PROBLEM',
+  EMERGENCY = 'EMERGENCY',
+  HELP = 'HELP',
+}
+
+export const DriverWhatsAppMenuItemSchema = z.object({
+  action: z.nativeEnum(DriverWhatsAppAction),
+  title: z.string(),
+  description: z.string(),
+  commandCode: z.string(),
+});
+export type DriverWhatsAppMenuItem = z.infer<typeof DriverWhatsAppMenuItemSchema>;
+
+export const DriverWhatsAppMenuResponseSchema = z.object({
+  driver: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    phone: z.string(),
+    schoolId: z.string().uuid(),
+  }),
+  bus: z
+    .object({
+      id: z.string().uuid(),
+      busNumber: z.string(),
+      registrationNumber: z.string(),
+    })
+    .optional(),
+  activeTrip: z
+    .object({
+      id: z.string().uuid(),
+      routeId: z.string().uuid(),
+      routeName: z.string().optional(),
+      routeCode: z.string().optional(),
+      status: z.nativeEnum(TripStatus),
+      currentStopSequence: z.number().int(),
+      totalStops: z.number().int(),
+    })
+    .nullable()
+    .optional(),
+  scheduledTrip: z
+    .object({
+      id: z.string().uuid(),
+      routeId: z.string().uuid(),
+      routeName: z.string().optional(),
+      routeCode: z.string().optional(),
+      scheduledStartTime: z.string(),
+    })
+    .nullable()
+    .optional(),
+  menuItems: z.array(DriverWhatsAppMenuItemSchema),
+  formattedText: z.string(),
+});
+export type DriverWhatsAppMenuResponse = z.infer<typeof DriverWhatsAppMenuResponseSchema>;
+
+export const DriverWhatsAppInboundRequestSchema = z.object({
+  from: z.string().min(6),
+  text: z.string().optional(),
+  action: z.nativeEnum(DriverWhatsAppAction).optional(),
+  schoolId: z.string().uuid().optional(),
+});
+export type DriverWhatsAppInboundRequest = z.infer<typeof DriverWhatsAppInboundRequestSchema>;
+
+export const DriverWhatsAppInboundResponseSchema = z.object({
+  handled: z.boolean(),
+  driverId: z.string().uuid().optional(),
+  schoolId: z.string().uuid().optional(),
+  actionTriggered: z.union([z.nativeEnum(DriverWhatsAppAction), z.literal('MENU'), z.literal('UNREGISTERED')]),
+  replyText: z.string(),
+  menu: DriverWhatsAppMenuResponseSchema.optional(),
+});
+export type DriverWhatsAppInboundResponse = z.infer<typeof DriverWhatsAppInboundResponseSchema>;
+
 

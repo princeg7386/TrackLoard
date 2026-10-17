@@ -11,12 +11,14 @@ import telemetryRouter from './telemetry.routes.js';
 import routingRouter from './routing.routes.js';
 import dynamicPickupRouter from './dynamic-pickup.routes.js';
 import tripRouter from './trip.routes.js';
+import driverWhatsappRouter from './driver-whatsapp.routes.js';
 
 const apiRouter = Router();
 
 // Subdomain Routers
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/driver/auth', driverAuthRouter);
+apiRouter.use('/driver/whatsapp', driverWhatsappRouter);
 apiRouter.use('/parent', parentRouter);
 apiRouter.use('/parent', dynamicPickupRouter);
 apiRouter.use('/telemetry', telemetryRouter);
