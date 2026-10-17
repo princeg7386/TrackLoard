@@ -4,6 +4,7 @@ import {
   UpdateBusRequestSchema,
   AssignBusPayloadSchema,
   CreateRouteRequestSchema,
+  UpdateRouteRequestSchema,
   AddRouteStopRequestSchema,
   ReorderRouteStopsRequestSchema,
   UpdateRouteStopRequestSchema,
@@ -200,6 +201,33 @@ busRouter.delete(
     UserRole.SUPER_ADMIN
   ),
   RouteController.removeStop
+);
+
+// 7h. Update Route Specifications (Micro-phase 15.4)
+busRouter.put(
+  '/:schoolId/routes/:routeId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateRouteRequestSchema),
+  RouteController.updateRoute
+);
+
+// 7i. Route History / Change Audit Trail (Micro-phase 15.4)
+busRouter.get(
+  '/:schoolId/routes/:routeId/history',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RouteController.getRouteHistory
 );
 
 // 9. Full Vehicle History (Bus profile, trips, safety incidents, attendance)

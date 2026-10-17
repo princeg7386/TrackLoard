@@ -1,11 +1,14 @@
 import {
   CreateRouteRequest,
+  UpdateRouteRequest,
   RouteDetail,
   RouteType,
   RouteStopDetail,
   AddRouteStopRequest,
   ReorderRouteStopsRequest,
   UpdateRouteStopRequest,
+  RouteHistoryItem,
+  RouteHistoryResponse,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import {
@@ -18,12 +21,63 @@ import { logger } from './logger.service.js';
 
 export class RouteService {
   /**
+   * Helper: Records an operational or lifecycle change to audit_logs
+   */
+  private static async recordRouteAudit(params: {
+    schoolId: string;
+    routeId: string;
+    action: string;
+    userId?: string | null;
+    userRole?: string;
+    changeSummary: string;
+    previousState?: Record<string, any> | null;
+    newState?: Record<string, any> | null;
+  }): Promise<void> {
+    try {
+      const {
+        schoolId,
+        routeId,
+        action,
+        userId = null,
+        userRole = 'SCHOOL_ADMIN',
+        changeSummary,
+        previousState = null,
+        newState = null,
+      } = params;
+
+      const diffJson = {
+        changeSummary,
+        previousState,
+        newState,
+      };
+
+      await query(
+        `INSERT INTO audit_logs (
+           school_id, user_id, user_role, action, entity_type, entity_id, diff_json
+         ) VALUES ($1, $2, $3, $4, 'ROUTE', $5, $6)`,
+        [
+          schoolId,
+          userId,
+          userRole,
+          action,
+          routeId,
+          JSON.stringify(diffJson),
+        ]
+      );
+    } catch (err: any) {
+      logger.warn(`[RouteService] Failed to record route audit log: ${err.message}`);
+    }
+  }
+
+  /**
    * Micro-phase 15.1: Create Route with assigned bus and driver
    */
   public static async createRoute(
     schoolId: string,
     payload: CreateRouteRequest,
-    actorSchoolId?: string
+    actorSchoolId?: string,
+    actorUserId?: string,
+    actorUserRole?: string
   ): Promise<RouteDetail> {
     // 1. Tenant validation
     if (actorSchoolId && actorSchoolId !== schoolId) {
@@ -132,6 +186,25 @@ export class RouteService {
     const r = insertResult[0]!;
     logger.info(`[RouteService] Created route ${r.id} (${r.code}) for school ${schoolId}`);
 
+    // Record audit log
+    await this.recordRouteAudit({
+      schoolId,
+      routeId: r.id,
+      action: 'ROUTE_CREATED',
+      userId: actorUserId,
+      userRole: actorUserRole,
+      changeSummary: `Route "${r.name}" (${r.code}) created`,
+      previousState: null,
+      newState: {
+        name: r.name,
+        code: r.code,
+        routeType: r.route_type,
+        defaultBusId: r.default_bus_id,
+        defaultDriverId: r.default_driver_id,
+        estimatedDurationMinutes: Number(r.estimated_duration_minutes),
+      },
+    });
+
     return {
       id: r.id,
       schoolId: r.school_id,
@@ -152,6 +225,143 @@ export class RouteService {
       updatedAt: r.updated_at,
     };
   }
+
+  /**
+   * Micro-phase 15.4: Update Route Specifications with change tracking
+   */
+  public static async updateRoute(
+    schoolId: string,
+    routeId: string,
+    payload: UpdateRouteRequest,
+    actorSchoolId?: string,
+    actorUserId?: string,
+    actorUserRole?: string
+  ): Promise<RouteDetail> {
+    if (actorSchoolId && actorSchoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant route update attempt');
+    }
+
+    // 1. Fetch current route state
+    const currentRows = await query<{
+      id: string;
+      name: string;
+      code: string;
+      route_type: RouteType;
+      default_bus_id: string | null;
+      default_driver_id: string | null;
+      estimated_duration_minutes: number;
+    }>(
+      `SELECT id, name, code, route_type, default_bus_id, default_driver_id, estimated_duration_minutes
+       FROM routes
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [routeId, schoolId]
+    );
+
+    if (currentRows.length === 0 || !currentRows[0]) {
+      throw new NotFoundError(`Route ${routeId} not found in this school context`);
+    }
+
+    const current = currentRows[0];
+    const previousState = {
+      name: current.name,
+      code: current.code,
+      routeType: current.route_type,
+      defaultBusId: current.default_bus_id,
+      defaultDriverId: current.default_driver_id,
+      estimatedDurationMinutes: Number(current.estimated_duration_minutes),
+    };
+
+    // 2. Validate route code uniqueness if changed
+    let normalizedCode: string | null = null;
+    if (payload.code && payload.code.trim().toUpperCase() !== current.code) {
+      normalizedCode = payload.code.trim().toUpperCase();
+      const duplicateRows = await query<{ id: string }>(
+        `SELECT id FROM routes
+         WHERE school_id = $1 AND code = $2 AND id != $3 AND deleted_at IS NULL
+         LIMIT 1`,
+        [schoolId, normalizedCode, routeId]
+      );
+      if (duplicateRows.length > 0) {
+        throw new ConflictError(`Route code "${normalizedCode}" is already in use by another route`);
+      }
+    }
+
+    // 3. Validate bus if specified
+    const updateBus = payload.defaultBusId !== undefined;
+    if (updateBus && payload.defaultBusId) {
+      const busCheck = await query<{ id: string }>(
+        `SELECT id FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [payload.defaultBusId, schoolId]
+      );
+      if (busCheck.length === 0) {
+        throw new NotFoundError(`Bus ${payload.defaultBusId} not found in this school context`);
+      }
+    }
+
+    // 4. Validate driver if specified
+    const updateDriver = payload.defaultDriverId !== undefined;
+    if (updateDriver && payload.defaultDriverId) {
+      const driverCheck = await query<{ id: string }>(
+        `SELECT id FROM drivers WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [payload.defaultDriverId, schoolId]
+      );
+      if (driverCheck.length === 0) {
+        throw new NotFoundError(`Driver ${payload.defaultDriverId} not found in this school context`);
+      }
+    }
+
+    // 5. Update database record
+    await query(
+      `UPDATE routes
+       SET name = COALESCE($1, name),
+           code = COALESCE($2, code),
+           route_type = COALESCE($3, route_type),
+           default_bus_id = CASE WHEN $4::boolean = TRUE THEN $5::uuid ELSE default_bus_id END,
+           default_driver_id = CASE WHEN $6::boolean = TRUE THEN $7::uuid ELSE default_driver_id END,
+           estimated_duration_minutes = COALESCE($8, estimated_duration_minutes),
+           updated_at = NOW()
+       WHERE id = $9 AND school_id = $10 AND deleted_at IS NULL`,
+      [
+        payload.name ? payload.name.trim() : null,
+        normalizedCode,
+        payload.routeType || null,
+        updateBus,
+        updateBus ? payload.defaultBusId : null,
+        updateDriver,
+        updateDriver ? payload.defaultDriverId : null,
+        payload.estimatedDurationMinutes || null,
+        routeId,
+        schoolId,
+      ]
+    );
+
+    const updated = await this.getRouteById(schoolId, routeId, actorSchoolId);
+
+    const newState = {
+      name: updated.name,
+      code: updated.code,
+      routeType: updated.routeType,
+      defaultBusId: updated.defaultBusId,
+      defaultDriverId: updated.defaultDriverId,
+      estimatedDurationMinutes: updated.estimatedDurationMinutes,
+    };
+
+    // 6. Record audit log with previous and new states
+    await this.recordRouteAudit({
+      schoolId,
+      routeId,
+      action: 'ROUTE_UPDATED',
+      userId: actorUserId,
+      userRole: actorUserRole,
+      changeSummary: `Route specifications updated for "${updated.name}" (${updated.code})`,
+      previousState,
+      newState,
+    });
+
+    return updated;
+  }
+
 
   /**
    * Retrieves single route details with assigned bus, driver, and aggregate metrics
@@ -370,7 +580,9 @@ export class RouteService {
     schoolId: string,
     routeId: string,
     payload: AddRouteStopRequest,
-    actorSchoolId?: string
+    actorSchoolId?: string,
+    actorUserId?: string,
+    actorUserRole?: string
   ): Promise<RouteStopDetail> {
     if (actorSchoolId && actorSchoolId !== schoolId) {
       throw new ForbiddenError('Cross-tenant stop creation attempt');
@@ -461,6 +673,26 @@ export class RouteService {
     const r = insertedRows[0]!;
     logger.info(`[RouteService] Added stop ${r.id} (${r.stop_name}) at sequence ${r.sequence_order} on route ${routeId}`);
 
+    // Record audit log
+    await this.recordRouteAudit({
+      schoolId,
+      routeId,
+      action: 'ROUTE_STOP_ADDED',
+      userId: actorUserId,
+      userRole: actorUserRole,
+      changeSummary: `Added stop "${r.stop_name}" at sequence #${r.sequence_order}`,
+      previousState: null,
+      newState: {
+        stopId: r.id,
+        stopName: r.stop_name,
+        sequenceOrder: Number(r.sequence_order),
+        latitude: Number(r.latitude),
+        longitude: Number(r.longitude),
+        scheduledTime: r.scheduled_time,
+        geofenceRadiusMeters: Number(r.geofence_radius_meters),
+      },
+    });
+
     return {
       id: r.id,
       schoolId: r.school_id,
@@ -484,7 +716,9 @@ export class RouteService {
     schoolId: string,
     routeId: string,
     stopIds: string[],
-    actorSchoolId?: string
+    actorSchoolId?: string,
+    actorUserId?: string,
+    actorUserRole?: string
   ): Promise<RouteStopDetail[]> {
     if (actorSchoolId && actorSchoolId !== schoolId) {
       throw new ForbiddenError('Cross-tenant stop reordering attempt');
@@ -500,8 +734,8 @@ export class RouteService {
     }
 
     // Fetch active stops for this route
-    const activeStops = await query<{ id: string }>(
-      `SELECT id FROM pickup_locations WHERE route_id = $1 AND school_id = $2 AND deleted_at IS NULL ORDER BY sequence_order ASC`,
+    const activeStops = await query<{ id: string; stop_name: string; sequence_order: number }>(
+      `SELECT id, stop_name, sequence_order FROM pickup_locations WHERE route_id = $1 AND school_id = $2 AND deleted_at IS NULL ORDER BY sequence_order ASC`,
       [routeId, schoolId]
     );
 
@@ -509,6 +743,12 @@ export class RouteService {
     if (stopIds.length !== activeStops.length || !stopIds.every((id) => activeSet.has(id))) {
       throw new BadRequestError('Provided stopIds must match exactly all active stops for this route');
     }
+
+    const previousOrder = activeStops.map((s) => ({
+      id: s.id,
+      stopName: s.stop_name,
+      sequenceOrder: Number(s.sequence_order),
+    }));
 
     // Step 1: Temporarily shift active stops to offset +50000 to avoid uq_route_sequence collisions
     await query(
@@ -531,7 +771,24 @@ export class RouteService {
     }
 
     logger.info(`[RouteService] Reordered ${stopIds.length} stops on route ${routeId}`);
-    return this.listRouteStops(schoolId, routeId, actorSchoolId);
+
+    const result = await this.listRouteStops(schoolId, routeId, actorSchoolId);
+
+    // Record audit log
+    await this.recordRouteAudit({
+      schoolId,
+      routeId,
+      action: 'ROUTE_STOPS_REORDERED',
+      userId: actorUserId,
+      userRole: actorUserRole,
+      changeSummary: `Reordered ${stopIds.length} stops on route`,
+      previousState: { stopOrder: previousOrder },
+      newState: {
+        stopOrder: stopIds.map((id, idx) => ({ id, sequenceOrder: idx + 1 })),
+      },
+    });
+
+    return result;
   }
 
   /**
@@ -542,7 +799,9 @@ export class RouteService {
     routeId: string,
     stopId: string,
     payload: UpdateRouteStopRequest,
-    actorSchoolId?: string
+    actorSchoolId?: string,
+    actorUserId?: string,
+    actorUserRole?: string
   ): Promise<RouteStopDetail> {
     if (actorSchoolId && actorSchoolId !== schoolId) {
       throw new ForbiddenError('Cross-tenant stop update attempt');
@@ -551,9 +810,15 @@ export class RouteService {
     // Check stop exists
     const stopRows = await query<{
       id: string;
+      stop_name: string;
       sequence_order: number;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
     }>(
-      `SELECT id, sequence_order
+      `SELECT id, stop_name, sequence_order, latitude, longitude,
+              scheduled_time::text AS scheduled_time, geofence_radius_meters
        FROM pickup_locations
        WHERE id = $1 AND route_id = $2 AND school_id = $3 AND deleted_at IS NULL
        LIMIT 1`,
@@ -563,11 +828,22 @@ export class RouteService {
       throw new NotFoundError(`Stop ${stopId} not found on route ${routeId}`);
     }
 
+    const currentStop = stopRows[0];
+    const previousState = {
+      stopId: currentStop.id,
+      stopName: currentStop.stop_name,
+      sequenceOrder: Number(currentStop.sequence_order),
+      latitude: Number(currentStop.latitude),
+      longitude: Number(currentStop.longitude),
+      scheduledTime: currentStop.scheduled_time,
+      geofenceRadiusMeters: Number(currentStop.geofence_radius_meters),
+    };
+
     // If sequenceOrder is specified and different from current
     if (
       payload.sequenceOrder !== undefined &&
       payload.sequenceOrder !== null &&
-      payload.sequenceOrder !== Number(stopRows[0].sequence_order)
+      payload.sequenceOrder !== Number(currentStop.sequence_order)
     ) {
       // Get all active stops in order
       const allActive = await query<{ id: string }>(
@@ -581,7 +857,7 @@ export class RouteService {
       stopList.splice(targetIndex, 0, stopId);
 
       // Reorder using safe helper
-      await this.reorderRouteStops(schoolId, routeId, stopList, actorSchoolId);
+      await this.reorderRouteStops(schoolId, routeId, stopList, actorSchoolId, actorUserId, actorUserRole);
     }
 
     // Update non-sequence fields if provided
@@ -621,6 +897,29 @@ export class RouteService {
     if (!updated) {
       throw new NotFoundError(`Stop ${stopId} not found after update`);
     }
+
+    const newState = {
+      stopId: updated.id,
+      stopName: updated.stopName,
+      sequenceOrder: updated.sequenceOrder,
+      latitude: updated.latitude,
+      longitude: updated.longitude,
+      scheduledTime: updated.scheduledTime,
+      geofenceRadiusMeters: updated.geofenceRadiusMeters,
+    };
+
+    // Record audit log
+    await this.recordRouteAudit({
+      schoolId,
+      routeId,
+      action: 'ROUTE_STOP_UPDATED',
+      userId: actorUserId,
+      userRole: actorUserRole,
+      changeSummary: `Updated stop "${updated.stopName}" (seq #${updated.sequenceOrder})`,
+      previousState,
+      newState,
+    });
+
     return updated;
   }
 
@@ -631,7 +930,9 @@ export class RouteService {
     schoolId: string,
     routeId: string,
     stopId: string,
-    actorSchoolId?: string
+    actorSchoolId?: string,
+    actorUserId?: string,
+    actorUserRole?: string
   ): Promise<{ success: boolean; removedStopId: string; remainingStopsCount: number }> {
     if (actorSchoolId && actorSchoolId !== schoolId) {
       throw new ForbiddenError('Cross-tenant stop removal attempt');
@@ -640,9 +941,15 @@ export class RouteService {
     // Verify stop exists
     const stopRows = await query<{
       id: string;
+      stop_name: string;
       sequence_order: number;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
     }>(
-      `SELECT id, sequence_order
+      `SELECT id, stop_name, sequence_order, latitude, longitude,
+              scheduled_time::text AS scheduled_time, geofence_radius_meters
        FROM pickup_locations
        WHERE id = $1 AND route_id = $2 AND school_id = $3 AND deleted_at IS NULL
        LIMIT 1`,
@@ -651,6 +958,17 @@ export class RouteService {
     if (stopRows.length === 0 || !stopRows[0]) {
       throw new NotFoundError(`Stop ${stopId} not found on route ${routeId}`);
     }
+
+    const currentStop = stopRows[0];
+    const previousState = {
+      stopId: currentStop.id,
+      stopName: currentStop.stop_name,
+      sequenceOrder: Number(currentStop.sequence_order),
+      latitude: Number(currentStop.latitude),
+      longitude: Number(currentStop.longitude),
+      scheduledTime: currentStop.scheduled_time,
+      geofenceRadiusMeters: Number(currentStop.geofence_radius_meters),
+    };
 
     // Find next available negative sequence order to avoid uq_route_sequence collision
     const negRows = await query<{ next_neg: number }>(
@@ -701,10 +1019,93 @@ export class RouteService {
 
     logger.info(`[RouteService] Removed stop ${stopId} from route ${routeId}; ${remainingStops.length} stops remaining`);
 
+    // Record audit log
+    await this.recordRouteAudit({
+      schoolId,
+      routeId,
+      action: 'ROUTE_STOP_REMOVED',
+      userId: actorUserId,
+      userRole: actorUserRole,
+      changeSummary: `Removed stop "${currentStop.stop_name}" (was seq #${currentStop.sequence_order})`,
+      previousState,
+      newState: null,
+    });
+
     return {
       success: true,
       removedStopId: stopId,
       remainingStopsCount: remainingStops.length,
+    };
+  }
+
+  /**
+   * Micro-phase 15.4: Get route change history / audit trail
+   */
+  public static async getRouteHistory(
+    schoolId: string,
+    routeId: string,
+    actorSchoolId?: string
+  ): Promise<RouteHistoryResponse> {
+    if (actorSchoolId && actorSchoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant route history access attempt');
+    }
+
+    const route = await this.getRouteById(schoolId, routeId, actorSchoolId);
+
+    const rows = await query<{
+      id: string;
+      school_id: string;
+      user_id: string | null;
+      user_role: string;
+      action: string;
+      entity_type: string;
+      entity_id: string;
+      diff_json: any;
+      created_at: string;
+      user_name: string | null;
+      user_email: string | null;
+    }>(
+      `SELECT al.id, al.school_id, al.user_id, al.user_role, al.action,
+              al.entity_type, al.entity_id, al.diff_json, al.created_at,
+              adm.full_name AS user_name, adm.email AS user_email
+       FROM audit_logs al
+       LEFT JOIN admins adm ON al.user_id = adm.id
+       WHERE al.school_id = $1 AND al.entity_type = 'ROUTE' AND al.entity_id = $2
+       ORDER BY al.created_at DESC`,
+      [schoolId, routeId]
+    );
+
+    const history: RouteHistoryItem[] = rows.map((r) => {
+      let parsedDiff: any = {};
+      if (typeof r.diff_json === 'string') {
+        try {
+          parsedDiff = JSON.parse(r.diff_json);
+        } catch {
+          parsedDiff = {};
+        }
+      } else if (r.diff_json && typeof r.diff_json === 'object') {
+        parsedDiff = r.diff_json;
+      }
+
+      return {
+        id: r.id,
+        schoolId: r.school_id,
+        routeId: r.entity_id,
+        action: r.action,
+        userId: r.user_id,
+        userName: r.user_name || undefined,
+        userRole: r.user_role,
+        changeSummary: parsedDiff.changeSummary || r.action,
+        previousState: parsedDiff.previousState ?? null,
+        newState: parsedDiff.newState ?? null,
+        createdAt: r.created_at,
+      };
+    });
+
+    return {
+      route,
+      history,
+      totalChanges: history.length,
     };
   }
 }

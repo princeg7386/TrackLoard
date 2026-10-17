@@ -147,7 +147,7 @@ describe('Phase 15.2: Route Management — Pickup Sequence', () => {
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.sequenceOrder).toBe(2);
-      expect(querySpy).toHaveBeenCalledTimes(4);
+      expect(querySpy).toHaveBeenCalledTimes(5); // 1. route check, 2. shift offset, 3. shift final, 4. insert, 5. audit log
     });
 
     it('rejects invalid latitude and scheduled time with 422 Unprocessable Entity', async () => {
@@ -359,11 +359,13 @@ describe('Phase 15.2: Route Management — Pickup Sequence', () => {
         .mockResolvedValueOnce([] as any) // 7. update 2
         .mockResolvedValueOnce([{ id: routeAId }] as any) // 8. list route check
         .mockResolvedValueOnce(updatedList as any) // 9. list result
+        .mockResolvedValueOnce([] as any) // 9b. reorder audit log
         // Update details:
         .mockResolvedValueOnce([] as any) // 10. update non-sequence fields
         // Final list:
         .mockResolvedValueOnce([{ id: routeAId }] as any) // 11. list route check
-        .mockResolvedValueOnce(updatedList as any); // 12. final list result
+        .mockResolvedValueOnce(updatedList as any) // 12. final list result
+        .mockResolvedValueOnce([] as any); // 13. update audit log
 
       const res = await request(app)
         .put(`/api/v1/schools/${schoolA}/routes/${routeAId}/stops/${stop1Id}`)

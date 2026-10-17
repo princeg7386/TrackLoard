@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import {
   CreateRouteRequest,
+  UpdateRouteRequest,
   AddRouteStopRequest,
   ReorderRouteStopsRequest,
   UpdateRouteStopRequest,
@@ -21,8 +22,50 @@ export class RouteController {
     try {
       const { schoolId } = req.params;
       const actorSchoolId = req.user?.schoolId || undefined;
-      const result = await RouteService.createRoute(schoolId, req.body, actorSchoolId);
+      const actorUserId = req.user?.id || undefined;
+      const actorUserRole = req.user?.role || undefined;
+      const result = await RouteService.createRoute(schoolId, req.body, actorSchoolId, actorUserId, actorUserRole);
       sendSuccess(res, result, 'Route created successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/v1/schools/:schoolId/routes/:routeId
+   * Updates route specifications with change tracking and audit log
+   */
+  public static async updateRoute(
+    req: Request<{ schoolId: string; routeId: string }, {}, UpdateRouteRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, routeId } = req.params;
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const actorUserId = req.user?.id || undefined;
+      const actorUserRole = req.user?.role || undefined;
+      const result = await RouteService.updateRoute(schoolId, routeId, req.body, actorSchoolId, actorUserId, actorUserRole);
+      sendSuccess(res, result, 'Route updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/schools/:schoolId/routes/:routeId/history
+   * Retrieves chronological audit history and state diffs for a route
+   */
+  public static async getRouteHistory(
+    req: Request<{ schoolId: string; routeId: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, routeId } = req.params;
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await RouteService.getRouteHistory(schoolId, routeId, actorSchoolId);
+      sendSuccess(res, result, 'Route history retrieved successfully');
     } catch (error) {
       next(error);
     }
@@ -97,7 +140,9 @@ export class RouteController {
     try {
       const { schoolId, routeId } = req.params;
       const actorSchoolId = req.user?.schoolId || undefined;
-      const result = await RouteService.addRouteStop(schoolId, routeId, req.body, actorSchoolId);
+      const actorUserId = req.user?.id || undefined;
+      const actorUserRole = req.user?.role || undefined;
+      const result = await RouteService.addRouteStop(schoolId, routeId, req.body, actorSchoolId, actorUserId, actorUserRole);
       sendSuccess(res, result, 'Pickup stop added successfully', 201);
     } catch (error) {
       next(error);
@@ -116,7 +161,9 @@ export class RouteController {
     try {
       const { schoolId, routeId } = req.params;
       const actorSchoolId = req.user?.schoolId || undefined;
-      const result = await RouteService.reorderRouteStops(schoolId, routeId, req.body.stopIds, actorSchoolId);
+      const actorUserId = req.user?.id || undefined;
+      const actorUserRole = req.user?.role || undefined;
+      const result = await RouteService.reorderRouteStops(schoolId, routeId, req.body.stopIds, actorSchoolId, actorUserId, actorUserRole);
       sendSuccess(res, result, 'Pickup stops reordered successfully');
     } catch (error) {
       next(error);
@@ -135,7 +182,9 @@ export class RouteController {
     try {
       const { schoolId, routeId, stopId } = req.params;
       const actorSchoolId = req.user?.schoolId || undefined;
-      const result = await RouteService.updateRouteStop(schoolId, routeId, stopId, req.body, actorSchoolId);
+      const actorUserId = req.user?.id || undefined;
+      const actorUserRole = req.user?.role || undefined;
+      const result = await RouteService.updateRouteStop(schoolId, routeId, stopId, req.body, actorSchoolId, actorUserId, actorUserRole);
       sendSuccess(res, result, 'Pickup stop updated successfully');
     } catch (error) {
       next(error);
@@ -154,11 +203,14 @@ export class RouteController {
     try {
       const { schoolId, routeId, stopId } = req.params;
       const actorSchoolId = req.user?.schoolId || undefined;
-      const result = await RouteService.removeRouteStop(schoolId, routeId, stopId, actorSchoolId);
+      const actorUserId = req.user?.id || undefined;
+      const actorUserRole = req.user?.role || undefined;
+      const result = await RouteService.removeRouteStop(schoolId, routeId, stopId, actorSchoolId, actorUserId, actorUserRole);
       sendSuccess(res, result, 'Pickup stop removed successfully');
     } catch (error) {
       next(error);
     }
   }
 }
+
 

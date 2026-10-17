@@ -14,6 +14,7 @@ import {
   Plus,
   Radio,
   FileText,
+  History,
 } from 'lucide-react';
 import {
   type RouteDetail,
@@ -28,6 +29,7 @@ interface RouteDetailPanelProps {
   selectedStopId?: string | null;
   onSelectStop?: (stop: RouteStopDetail) => void;
   onAddStop?: () => void;
+  onViewHistory?: () => void;
   onRefreshDirections?: () => void;
   isDirectionsLoading?: boolean;
 }
@@ -39,6 +41,7 @@ export function RouteDetailPanel({
   selectedStopId,
   onSelectStop,
   onAddStop,
+  onViewHistory,
   onRefreshDirections,
   isDirectionsLoading = false,
 }: RouteDetailPanelProps) {
@@ -86,6 +89,17 @@ export function RouteDetailPanel({
               {route.name}
             </h2>
           </div>
+          {onViewHistory && (
+            <button
+              type="button"
+              onClick={onViewHistory}
+              title="View Route History & State Diffs"
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-md shadow-2xs transition-colors shrink-0"
+            >
+              <History className="w-3.5 h-3.5 text-slate-500" />
+              History
+            </button>
+          )}
         </div>
 
         {/* 2. Operational Metrics Cards */}

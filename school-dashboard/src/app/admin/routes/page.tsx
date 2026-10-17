@@ -22,6 +22,7 @@ import { RouteMapCanvas } from '../../../components/route/RouteMapCanvas';
 import { RouteDetailPanel } from '../../../components/route/RouteDetailPanel';
 import { CreateRouteModal } from '../../../components/route/CreateRouteModal';
 import { AddStopModal } from '../../../components/route/AddStopModal';
+import { RouteHistoryModal } from '../../../components/route/RouteHistoryModal';
 import { EmptyState } from '../../../components/ui/EmptyState';
 
 export default function RoutesStopsPage() {
@@ -47,6 +48,7 @@ export default function RoutesStopsPage() {
   // Modals state
   const [isCreateRouteOpen, setIsCreateRouteOpen] = useState<boolean>(false);
   const [isAddStopOpen, setIsAddStopOpen] = useState<boolean>(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState<boolean>(false);
 
   // Sync school ID
   useEffect(() => {
@@ -277,6 +279,7 @@ export default function RoutesStopsPage() {
                 selectedStopId={selectedStopId}
                 onSelectStop={(stop) => setSelectedStopId(stop.id)}
                 onAddStop={() => setIsAddStopOpen(true)}
+                onViewHistory={() => setIsHistoryOpen(true)}
                 onRefreshDirections={handleRefreshDirections}
                 isDirectionsLoading={isDirectionsLoading}
               />
@@ -320,6 +323,17 @@ export default function RoutesStopsPage() {
                 loadRoutes(selectedRouteId);
               }}
               defaultSequenceOrder={stops.length + 1}
+            />
+          )}
+
+          {selectedRoute && (
+            <RouteHistoryModal
+              schoolId={schoolId}
+              routeId={selectedRoute.id}
+              routeName={selectedRoute.name}
+              routeCode={selectedRoute.code}
+              isOpen={isHistoryOpen}
+              onClose={() => setIsHistoryOpen(false)}
             />
           )}
         </>

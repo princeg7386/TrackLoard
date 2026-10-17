@@ -917,6 +917,39 @@ export const RouteDetailSchema = z.object({
 });
 export type RouteDetail = z.infer<typeof RouteDetailSchema>;
 
+export const UpdateRouteRequestSchema = z.object({
+  name: z.string().trim().min(2, 'Route name must be at least 2 characters').max(255).optional(),
+  code: z.string().trim().min(2, 'Route code must be at least 2 characters').max(50).optional(),
+  routeType: z.nativeEnum(RouteType).optional(),
+  defaultBusId: z.string().uuid('Valid bus UUID required').nullable().optional(),
+  defaultDriverId: z.string().uuid('Valid driver UUID required').nullable().optional(),
+  estimatedDurationMinutes: z.number().int().min(5).max(300).optional(),
+});
+export type UpdateRouteRequest = z.infer<typeof UpdateRouteRequestSchema>;
+
+// Route History Schemas (Micro-phase 15.4)
+export const RouteHistoryItemSchema = z.object({
+  id: z.string().uuid(),
+  routeId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  action: z.string(),
+  userId: z.string().uuid().nullable().optional(),
+  userName: z.string().optional(),
+  userRole: z.string().default('SCHOOL_ADMIN'),
+  changeSummary: z.string(),
+  previousState: z.record(z.any()).nullable().optional(),
+  newState: z.record(z.any()).nullable().optional(),
+  createdAt: z.string(),
+});
+export type RouteHistoryItem = z.infer<typeof RouteHistoryItemSchema>;
+
+export const RouteHistoryResponseSchema = z.object({
+  route: RouteDetailSchema,
+  history: z.array(RouteHistoryItemSchema),
+  totalChanges: z.number().int(),
+});
+export type RouteHistoryResponse = z.infer<typeof RouteHistoryResponseSchema>;
+
 // 8. Pickup Location / Stop
 export const PickupLocationSchema = z.object({
   id: z.string().uuid().optional(),

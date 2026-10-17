@@ -1,11 +1,13 @@
 import {
   RouteDetail,
   CreateRouteRequest,
+  UpdateRouteRequest,
   RouteStopDetail,
   AddRouteStopRequest,
   ReorderRouteStopsRequest,
   UpdateRouteStopRequest,
   RouteStopCalculationResult,
+  RouteHistoryResponse,
 } from '@school-bus/shared';
 import { apiRequest } from './api-client';
 
@@ -110,5 +112,29 @@ export class RouteApiService {
     return apiRequest<RouteStopCalculationResult>(
       `/routing/schools/${schoolId}/routes/${routeId}/directions`
     );
+  }
+
+  /**
+   * Update route specifications (name, code, type, bus, driver, duration)
+   */
+  public static async updateRoute(
+    schoolId: string,
+    routeId: string,
+    payload: UpdateRouteRequest
+  ): Promise<RouteDetail> {
+    return apiRequest<RouteDetail>(`/schools/${schoolId}/routes/${routeId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /**
+   * Retrieve route change history and audit trail
+   */
+  public static async getRouteHistory(
+    schoolId: string,
+    routeId: string
+  ): Promise<RouteHistoryResponse> {
+    return apiRequest<RouteHistoryResponse>(`/schools/${schoolId}/routes/${routeId}/history`);
   }
 }
