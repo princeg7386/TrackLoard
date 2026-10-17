@@ -2482,3 +2482,102 @@ export const StudentPickupMapDataSchema = z.object({
 });
 export type StudentPickupMapData = z.infer<typeof StudentPickupMapDataSchema>;
 
+// Phase 14.4: Safety/quality checks, duplicate detection, and stop management schemas
+export const LocationSafetyCheckRequestSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  schoolId: z.string().uuid().optional(),
+  maxCatchmentKm: z.number().min(1).max(200).optional(),
+  maxRoadDistanceMeters: z.number().min(10).max(2000).optional(),
+});
+export type LocationSafetyCheckRequest = z.infer<typeof LocationSafetyCheckRequestSchema>;
+
+export const LocationSafetyCheckResultSchema = z.object({
+  isSafe: z.boolean(),
+  safetyScore: z.number().min(0).max(100),
+  reasons: z.array(z.string()),
+  coordinates: z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+  }),
+  isWithinIndia: z.boolean(),
+  isWithinCatchment: z.boolean(),
+  distanceToSchoolKm: z.number(),
+  isRoadAccessible: z.boolean(),
+  distanceToRoadMeters: z.number(),
+  snappedCoordinates: z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+    })
+    .optional(),
+  formattedAddress: z.string().optional(),
+});
+export type LocationSafetyCheckResult = z.infer<typeof LocationSafetyCheckResultSchema>;
+
+export const DetectDuplicatesRequestSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  schoolId: z.string().uuid().optional(),
+  routeId: z.string().uuid().optional(),
+  radiusMeters: z.number().min(10).max(5000).optional(),
+  duplicateThresholdMeters: z.number().min(10).max(500).optional(),
+});
+export type DetectDuplicatesRequest = z.infer<typeof DetectDuplicatesRequestSchema>;
+
+export const NearbyStopItemSchema = z.object({
+  id: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int(),
+  latitude: z.number(),
+  longitude: z.number(),
+  scheduledTime: z.string(),
+  geofenceRadiusMeters: z.number(),
+  distanceMeters: z.number(),
+  isDuplicate: z.boolean(),
+  assignedStudentsCount: z.number().int(),
+  route: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    code: z.string(),
+  }),
+});
+export type NearbyStopItem = z.infer<typeof NearbyStopItemSchema>;
+
+export const DetectDuplicatesResultSchema = z.object({
+  hasNearbyDuplicates: z.boolean(),
+  duplicateCount: z.number().int(),
+  totalNearbyCount: z.number().int(),
+  recommendation: z.enum(['REUSE_EXISTING', 'CREATE_NEW', 'MERGE_STOPS']),
+  nearestStop: NearbyStopItemSchema.nullable().optional(),
+  nearbyStops: z.array(NearbyStopItemSchema),
+});
+export type DetectDuplicatesResult = z.infer<typeof DetectDuplicatesResultSchema>;
+
+export const AuditDuplicatesQuerySchema = z.object({
+  schoolId: z.string().uuid().optional(),
+  routeId: z.string().uuid().optional(),
+  thresholdMeters: z.coerce.number().min(5).max(500).optional(),
+});
+export type AuditDuplicatesQuery = z.infer<typeof AuditDuplicatesQuerySchema>;
+
+export const EditPickupStopRequestSchema = z.object({
+  schoolId: z.string().uuid().optional(),
+  stopName: z.string().min(1).max(255).optional(),
+  scheduledTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, 'Invalid time format (HH:MM or HH:MM:SS)').optional(),
+  geofenceRadiusMeters: z.number().int().min(50).max(2000).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  landmark: z.string().max(255).optional(),
+  reassignStudentsToStopId: z.string().uuid().optional(),
+  notifyParents: z.boolean().optional().default(true),
+});
+export type EditPickupStopRequest = z.infer<typeof EditPickupStopRequestSchema>;
+
+export const DeletePickupStopRequestSchema = z.object({
+  schoolId: z.string().uuid().optional(),
+  forceReassignToStopId: z.string().uuid().optional(),
+  notifyParents: z.boolean().optional().default(true),
+});
+export type DeletePickupStopRequest = z.infer<typeof DeletePickupStopRequestSchema>;
+

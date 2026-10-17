@@ -7,6 +7,11 @@ import {
   CreatePickupPointRequest,
   AssignStudentPickupRequest,
   UpdateStudentPickupRequest,
+  LocationSafetyCheckRequest,
+  DetectDuplicatesRequest,
+  AuditDuplicatesQuery,
+  EditPickupStopRequest,
+  DeletePickupStopRequest,
 } from '@school-bus/shared';
 import { DynamicPickupService } from '../services/dynamic-pickup/dynamic-pickup.service.js';
 import { sendSuccess } from '../utils/response.util.js';
@@ -207,6 +212,122 @@ export class DynamicPickupController {
 
       const result = await DynamicPickupService.updateStudentPickup(payload, actorSchoolId);
       sendSuccess(res, result, 'Student pickup point updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/parent/pickup/safety-check
+   * Evaluates location safety: null island, India boundaries, catchment, road accessibility
+   */
+  public static async checkLocationSafety(
+    req: Request<{}, {}, LocationSafetyCheckRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const schoolId = req.body.schoolId || actorSchoolId;
+      const result = await DynamicPickupService.checkLocationSafety({
+        ...req.body,
+        schoolId,
+      });
+      sendSuccess(res, result, 'Location safety and quality evaluation complete');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/parent/pickup/detect-duplicates
+   * Detects duplicate and nearby stops within proximity threshold
+   */
+  public static async detectNearbyDuplicates(
+    req: Request<{}, {}, DetectDuplicatesRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await DynamicPickupService.detectNearbyOrDuplicateStops(req.body, actorSchoolId);
+      sendSuccess(res, result, 'Nearby and duplicate pickup stops evaluated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/parent/pickup/audit-duplicates
+   * Audits route or school for duplicate stop pairs within threshold
+   */
+  public static async auditStopDuplicates(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await DynamicPickupService.auditRouteStopDuplicates(req.query as any, actorSchoolId);
+      sendSuccess(res, result, 'Stop duplicates audit completed successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/parent/pickup/stops/:stopId
+   * Retrieves single pickup stop details with route and assigned students
+   */
+  public static async getStopDetail(
+    req: Request<{ stopId: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { stopId } = req.params;
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const schoolId = (req.query.schoolId as string) || actorSchoolId || '';
+      const result = await DynamicPickupService.getPickupStopDetail(stopId, schoolId, actorSchoolId);
+      sendSuccess(res, result, 'Pickup stop details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/v1/parent/pickup/stops/:stopId
+   * Edits/changes pickup stop details, relocates stop, and migrates students if requested
+   */
+  public static async editPickupStop(
+    req: Request<{ stopId: string }, {}, EditPickupStopRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { stopId } = req.params;
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await DynamicPickupService.editPickupStop(stopId, req.body, actorSchoolId);
+      sendSuccess(res, result, 'Pickup stop updated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/v1/parent/pickup/stops/:stopId
+   * Soft-deletes pickup stop with student migration guard
+   */
+  public static async deletePickupStop(
+    req: Request<{ stopId: string }, {}, DeletePickupStopRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { stopId } = req.params;
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await DynamicPickupService.deletePickupStop(stopId, req.body, actorSchoolId);
+      sendSuccess(res, result, 'Pickup stop deleted successfully');
     } catch (error) {
       next(error);
     }

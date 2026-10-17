@@ -7,6 +7,10 @@ import {
   CreatePickupPointRequestSchema,
   AssignStudentPickupRequestSchema,
   UpdateStudentPickupRequestSchema,
+  LocationSafetyCheckRequestSchema,
+  DetectDuplicatesRequestSchema,
+  EditPickupStopRequestSchema,
+  DeletePickupStopRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -87,6 +91,57 @@ dynamicPickupRouter.put(
   requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
   validateBody(UpdateStudentPickupRequestSchema),
   DynamicPickupController.updateStudentPickup
+);
+
+// 10. Dynamic Pickup: Location Safety & Quality Check (Micro-phase 14.4 Task 1)
+dynamicPickupRouter.post(
+  '/pickup/safety-check',
+  authenticateToken,
+  validateBody(LocationSafetyCheckRequestSchema),
+  DynamicPickupController.checkLocationSafety
+);
+
+// 11. Dynamic Pickup: Detect Nearby & Duplicate Stops (Micro-phase 14.4 Task 2)
+dynamicPickupRouter.post(
+  '/pickup/detect-duplicates',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  validateBody(DetectDuplicatesRequestSchema),
+  DynamicPickupController.detectNearbyDuplicates
+);
+
+// 12. Dynamic Pickup: Audit Route/School Stop Duplicates (Micro-phase 14.4 Task 2)
+dynamicPickupRouter.get(
+  '/pickup/audit-duplicates',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  DynamicPickupController.auditStopDuplicates
+);
+
+// 13. Dynamic Pickup: Get Pickup Stop Detail (Micro-phase 14.4 Task 3)
+dynamicPickupRouter.get(
+  '/pickup/stops/:stopId',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  DynamicPickupController.getStopDetail
+);
+
+// 14. Dynamic Pickup: Edit/Change Pickup Stop (Micro-phase 14.4 Task 3)
+dynamicPickupRouter.put(
+  '/pickup/stops/:stopId',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  validateBody(EditPickupStopRequestSchema),
+  DynamicPickupController.editPickupStop
+);
+
+// 15. Dynamic Pickup: Delete Pickup Stop with Student Migration Guard (Micro-phase 14.4 Task 3)
+dynamicPickupRouter.delete(
+  '/pickup/stops/:stopId',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  validateBody(DeletePickupStopRequestSchema),
+  DynamicPickupController.deletePickupStop
 );
 
 export default dynamicPickupRouter;

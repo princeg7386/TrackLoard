@@ -10,6 +10,14 @@ import {
   AssignStudentPickupRequest,
   UpdateStudentPickupRequest,
   StudentPickupMapData,
+  LocationSafetyCheckRequest,
+  LocationSafetyCheckResult,
+  DetectDuplicatesRequest,
+  DetectDuplicatesResult,
+  NearbyStopItem,
+  AuditDuplicatesQuery,
+  EditPickupStopRequest,
+  DeletePickupStopRequest,
   formatIndianTransportAddress,
   calculateHaversineDistanceMeters,
   normalizeIndianPhoneNumber,
@@ -499,6 +507,21 @@ export class DynamicPickupService {
       }
     }
 
+    // 3.5. Reject clearly invalid locations
+    if (Math.abs(latitude) < 0.0001 && Math.abs(longitude) < 0.0001) {
+      throw new ValidationError('Location safety check failed: Coordinates correspond to Null Island (0,0) or uninitialized GPS.');
+    }
+    if (
+      latitude < INDIA_BOUNDS.minLat ||
+      latitude > INDIA_BOUNDS.maxLat ||
+      longitude < INDIA_BOUNDS.minLng ||
+      longitude > INDIA_BOUNDS.maxLng
+    ) {
+      throw new ValidationError(
+        `Location safety check failed: Coordinates (${latitude.toFixed(4)}, ${longitude.toFixed(4)}) fall outside the territory of India.`
+      );
+    }
+
     // 4. Snapping & address formatting
     let targetCoords: GeoCoordinates = { latitude, longitude };
     let distanceToRoadMeters = 0;
@@ -511,11 +534,15 @@ export class DynamicPickupService {
           schoolId,
           landmark,
         });
-        if (roadInfo.isAccessible) {
-          targetCoords = roadInfo.snappedCoordinates;
-          distanceToRoadMeters = roadInfo.distanceToRoadMeters;
+        if (!roadInfo.isAccessible || roadInfo.distanceToRoadMeters > 300) {
+          throw new ValidationError(
+            `Location safety check failed: Location is ${Math.round(roadInfo.distanceToRoadMeters)}m away from the nearest navigable road (safe threshold: 300m).`
+          );
         }
+        targetCoords = roadInfo.snappedCoordinates;
+        distanceToRoadMeters = roadInfo.distanceToRoadMeters;
       } catch (err: any) {
+        if (err instanceof ValidationError) throw err;
         logger.warn(`[DynamicPickup] Snapping failed in createOrAssignPickupPoint: ${err.message}`);
       }
     }
@@ -1118,5 +1145,728 @@ export class DynamicPickupService {
       parentNotified,
     };
   }
+
+  /**
+   * Micro-phase 14.4 Task 1: Comprehensive Safety & Quality Check for Coordinates
+   * Rejects Null Island, non-Indian coordinates, locations outside school catchment,
+   * and inaccessible off-road locations.
+   */
+  public static async checkLocationSafety(
+    request: LocationSafetyCheckRequest
+  ): Promise<LocationSafetyCheckResult> {
+    const {
+      latitude,
+      longitude,
+      schoolId,
+      maxCatchmentKm = 35,
+      maxRoadDistanceMeters = 300,
+    } = request;
+
+    const reasons: string[] = [];
+    let safetyScore = 100;
+
+    // 1. Physical range & Null Island check
+    if (isNaN(latitude) || isNaN(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return {
+        isSafe: false,
+        safetyScore: 0,
+        reasons: ['Coordinates are mathematically invalid or out of range.'],
+        coordinates: { latitude, longitude },
+        isWithinIndia: false,
+        isWithinCatchment: false,
+        distanceToSchoolKm: 9999,
+        isRoadAccessible: false,
+        distanceToRoadMeters: 9999,
+      };
+    }
+
+    if (Math.abs(latitude) < 0.0001 && Math.abs(longitude) < 0.0001) {
+      return {
+        isSafe: false,
+        safetyScore: 0,
+        reasons: ['Coordinates correspond to Null Island (0,0) or uninitialized GPS fix.'],
+        coordinates: { latitude, longitude },
+        isWithinIndia: false,
+        isWithinCatchment: false,
+        distanceToSchoolKm: 9999,
+        isRoadAccessible: false,
+        distanceToRoadMeters: 9999,
+      };
+    }
+
+    // 2. India Geographic Bounds
+    const isWithinIndia =
+      latitude >= INDIA_BOUNDS.minLat &&
+      latitude <= INDIA_BOUNDS.maxLat &&
+      longitude >= INDIA_BOUNDS.minLng &&
+      longitude <= INDIA_BOUNDS.maxLng;
+
+    if (!isWithinIndia) {
+      reasons.push(`Coordinates (${latitude.toFixed(4)}, ${longitude.toFixed(4)}) are outside the territory of India.`);
+      safetyScore -= 50;
+    }
+
+    // 3. School Catchment Distance
+    let distanceToSchoolKm = 0;
+    let isWithinCatchment = true;
+
+    if (schoolId) {
+      let schoolAnchor: GeoCoordinates | null = null;
+      try {
+        const stopRows = await query<{ latitude: number; longitude: number }>(
+          `SELECT latitude, longitude
+           FROM pickup_locations
+           WHERE school_id = $1 AND deleted_at IS NULL
+           ORDER BY sequence_order ASC
+           LIMIT 1`,
+          [schoolId]
+        );
+        if (stopRows.length > 0 && stopRows[0]) {
+          schoolAnchor = { latitude: stopRows[0].latitude, longitude: stopRows[0].longitude };
+        } else {
+          schoolAnchor = { latitude: 28.6139, longitude: 77.2090 };
+        }
+      } catch {
+        schoolAnchor = { latitude: 28.6139, longitude: 77.2090 };
+      }
+
+      if (schoolAnchor) {
+        const distMeters = calculateHaversineDistanceMeters(schoolAnchor, { latitude, longitude });
+        distanceToSchoolKm = Number((distMeters / 1000).toFixed(1));
+        if (distanceToSchoolKm > maxCatchmentKm) {
+          isWithinCatchment = false;
+          reasons.push(
+            `Location is ${distanceToSchoolKm} km from school center, exceeding the ${maxCatchmentKm} km catchment limit.`
+          );
+          safetyScore -= 30;
+        }
+      }
+    }
+
+    // 4. Road Proximity & Accessibility
+    let isRoadAccessible = true;
+    let distanceToRoadMeters = 0;
+    let snappedCoordinates: GeoCoordinates | undefined = undefined;
+
+    try {
+      const snapResult = await RoutingService.snapToRoad([{ latitude, longitude }], schoolId || 'system');
+      if (snapResult.snappedPoints.length > 0 && snapResult.snappedPoints[0]) {
+        const snapped = snapResult.snappedPoints[0];
+        snappedCoordinates = { latitude: snapped.latitude, longitude: snapped.longitude };
+        distanceToRoadMeters = Math.round(
+          calculateHaversineDistanceMeters({ latitude, longitude }, snappedCoordinates)
+        );
+        if (distanceToRoadMeters > maxRoadDistanceMeters) {
+          isRoadAccessible = false;
+          reasons.push(
+            `Location is ${distanceToRoadMeters}m away from the nearest navigable road (safe threshold: ${maxRoadDistanceMeters}m).`
+          );
+          safetyScore -= 30;
+        }
+      }
+    } catch {
+      isRoadAccessible = true;
+      distanceToRoadMeters = 0;
+    }
+
+    // 5. Reverse geocoding for formatted address
+    let formattedAddress = `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+    try {
+      const geo = await MapService.reverseGeocode({ latitude, longitude }, schoolId || 'system');
+      if (geo.formattedAddress) {
+        formattedAddress = geo.formattedAddress;
+      }
+    } catch {
+      // Keep coordinate fallback
+    }
+
+    safetyScore = Math.max(0, Math.min(100, safetyScore));
+    const isSafe = isWithinIndia && isWithinCatchment && isRoadAccessible && reasons.length === 0;
+
+    return {
+      isSafe,
+      safetyScore,
+      reasons,
+      coordinates: { latitude, longitude },
+      isWithinIndia,
+      isWithinCatchment,
+      distanceToSchoolKm,
+      isRoadAccessible,
+      distanceToRoadMeters,
+      snappedCoordinates,
+      formattedAddress,
+    };
+  }
+
+  /**
+   * Micro-phase 14.4 Task 2: Detect duplicate and nearby pickup points within a radius.
+   * Leverages PostGIS ST_DWithin and ST_Distance on pickup_locations.location.
+   */
+  public static async detectNearbyOrDuplicateStops(
+    params: DetectDuplicatesRequest,
+    actorSchoolId?: string
+  ): Promise<DetectDuplicatesResult> {
+    const {
+      latitude,
+      longitude,
+      radiusMeters = 500,
+      duplicateThresholdMeters = 50,
+    } = params;
+
+    const schoolId = params.schoolId || actorSchoolId;
+    if (!schoolId) {
+      throw new BadRequestError('schoolId is required to detect nearby/duplicate stops');
+    }
+    if (actorSchoolId && actorSchoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant unauthorized access attempt: actor school does not match requested school');
+    }
+
+    const routeId = params.routeId || null;
+
+    const rows = await query<{
+      id: string;
+      stop_name: string;
+      sequence_order: number;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
+      route_id: string;
+      route_name: string;
+      route_code: string;
+      distance_meters: number;
+      assigned_students_count: number;
+    }>(
+      `SELECT pl.id, pl.stop_name, pl.sequence_order, pl.latitude, pl.longitude,
+              pl.scheduled_time::text AS scheduled_time, pl.geofence_radius_meters,
+              pl.route_id, r.name AS route_name, r.code AS route_code,
+              ROUND(ST_Distance(pl.location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography)::numeric, 1) AS distance_meters,
+              COUNT(ssa.student_id)::int AS assigned_students_count
+       FROM pickup_locations pl
+       JOIN routes r ON pl.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN student_stop_assignments ssa ON pl.id = ssa.pickup_stop_id AND ssa.deleted_at IS NULL
+       WHERE pl.school_id = $3 AND pl.deleted_at IS NULL
+         AND ($4::uuid IS NULL OR pl.route_id = $4)
+         AND ST_DWithin(pl.location, ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography, $5)
+       GROUP BY pl.id, r.id, r.name, r.code
+       ORDER BY distance_meters ASC`,
+      [longitude, latitude, schoolId, routeId, radiusMeters]
+    );
+
+    const nearbyStops: NearbyStopItem[] = rows.map((r) => ({
+      id: r.id,
+      stopName: r.stop_name,
+      sequenceOrder: Number(r.sequence_order),
+      latitude: Number(r.latitude),
+      longitude: Number(r.longitude),
+      scheduledTime: String(r.scheduled_time),
+      geofenceRadiusMeters: Number(r.geofence_radius_meters),
+      distanceMeters: Number(r.distance_meters),
+      isDuplicate: Number(r.distance_meters) <= duplicateThresholdMeters,
+      assignedStudentsCount: Number(r.assigned_students_count),
+      route: {
+        id: r.route_id,
+        name: r.route_name,
+        code: r.route_code,
+      },
+    }));
+
+    const duplicates = nearbyStops.filter((s) => s.isDuplicate);
+    const hasNearbyDuplicates = duplicates.length > 0;
+    const nearestStop = nearbyStops.length > 0 ? nearbyStops[0]! : null;
+
+    let recommendation: 'REUSE_EXISTING' | 'CREATE_NEW' | 'MERGE_STOPS' = 'CREATE_NEW';
+    if (hasNearbyDuplicates) {
+      recommendation = 'REUSE_EXISTING';
+    }
+
+    return {
+      hasNearbyDuplicates,
+      duplicateCount: duplicates.length,
+      totalNearbyCount: nearbyStops.length,
+      recommendation,
+      nearestStop,
+      nearbyStops,
+    };
+  }
+
+  /**
+   * Micro-phase 14.4 Task 2 (cont): Audit an entire route or school for duplicate stop pairs
+   */
+  public static async auditRouteStopDuplicates(
+    params: AuditDuplicatesQuery,
+    actorSchoolId?: string
+  ): Promise<{
+    schoolId: string;
+    thresholdMeters: number;
+    duplicatePairsCount: number;
+    duplicateClusters: Array<{
+      stop1: { id: string; name: string; sequenceOrder: number; studentsCount: number };
+      stop2: { id: string; name: string; sequenceOrder: number; studentsCount: number };
+      route: { id: string; name: string; code: string };
+      distanceMeters: number;
+    }>;
+  }> {
+    const schoolId = params.schoolId || actorSchoolId;
+    if (!schoolId) {
+      throw new BadRequestError('schoolId is required to audit stop duplicates');
+    }
+    if (actorSchoolId && actorSchoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant unauthorized access attempt');
+    }
+
+    const { routeId = null, thresholdMeters = 50 } = params;
+
+    const rows = await query<{
+      stop1_id: string;
+      stop1_name: string;
+      stop1_seq: number;
+      stop2_id: string;
+      stop2_name: string;
+      stop2_seq: number;
+      route_id: string;
+      route_name: string;
+      route_code: string;
+      distance_meters: number;
+      stop1_students: number;
+      stop2_students: number;
+    }>(
+      `SELECT pl1.id AS stop1_id, pl1.stop_name AS stop1_name, pl1.sequence_order AS stop1_seq,
+              pl2.id AS stop2_id, pl2.stop_name AS stop2_name, pl2.sequence_order AS stop2_seq,
+              pl1.route_id, r.name AS route_name, r.code AS route_code,
+              ROUND(ST_Distance(pl1.location, pl2.location)::numeric, 1) AS distance_meters,
+              (SELECT COUNT(*)::int FROM student_stop_assignments WHERE pickup_stop_id = pl1.id AND deleted_at IS NULL) AS stop1_students,
+              (SELECT COUNT(*)::int FROM student_stop_assignments WHERE pickup_stop_id = pl2.id AND deleted_at IS NULL) AS stop2_students
+       FROM pickup_locations pl1
+       JOIN pickup_locations pl2 ON pl1.route_id = pl2.route_id AND pl1.id < pl2.id
+       JOIN routes r ON pl1.route_id = r.id AND r.deleted_at IS NULL
+       WHERE pl1.school_id = $1 AND pl2.school_id = $1
+         AND pl1.deleted_at IS NULL AND pl2.deleted_at IS NULL
+         AND ($2::uuid IS NULL OR pl1.route_id = $2)
+         AND ST_DWithin(pl1.location, pl2.location, $3)
+       ORDER BY distance_meters ASC`,
+      [schoolId, routeId, thresholdMeters]
+    );
+
+    const duplicateClusters = rows.map((r) => ({
+      stop1: {
+        id: r.stop1_id,
+        name: r.stop1_name,
+        sequenceOrder: Number(r.stop1_seq),
+        studentsCount: Number(r.stop1_students),
+      },
+      stop2: {
+        id: r.stop2_id,
+        name: r.stop2_name,
+        sequenceOrder: Number(r.stop2_seq),
+        studentsCount: Number(r.stop2_students),
+      },
+      route: {
+        id: r.route_id,
+        name: r.route_name,
+        code: r.route_code,
+      },
+      distanceMeters: Number(r.distance_meters),
+    }));
+
+    return {
+      schoolId,
+      thresholdMeters,
+      duplicatePairsCount: duplicateClusters.length,
+      duplicateClusters,
+    };
+  }
+
+  /**
+   * Micro-phase 14.4 Task 3: Get detailed pickup stop information including assigned students.
+   */
+  public static async getPickupStopDetail(
+    stopId: string,
+    schoolId: string,
+    actorSchoolId?: string
+  ): Promise<{
+    id: string;
+    schoolId: string;
+    routeId: string;
+    routeName: string;
+    routeCode: string;
+    stopName: string;
+    sequenceOrder: number;
+    latitude: number;
+    longitude: number;
+    scheduledTime: string;
+    geofenceRadiusMeters: number;
+    assignedStudents: Array<{
+      id: string;
+      fullName: string;
+      admissionNumber: string;
+      classGrade: string;
+      section: string;
+      parentName?: string;
+      parentPhone?: string;
+    }>;
+  }> {
+    const effectiveSchoolId = schoolId || actorSchoolId;
+    if (!effectiveSchoolId) {
+      throw new BadRequestError('schoolId is required to fetch stop detail');
+    }
+    if (actorSchoolId && actorSchoolId !== effectiveSchoolId) {
+      throw new ForbiddenError('Cross-tenant unauthorized access attempt');
+    }
+
+    const stopRows = await query<{
+      id: string;
+      school_id: string;
+      route_id: string;
+      route_name: string;
+      route_code: string;
+      stop_name: string;
+      sequence_order: number;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
+    }>(
+      `SELECT pl.id, pl.school_id, pl.route_id, r.name AS route_name, r.code AS route_code,
+              pl.stop_name, pl.sequence_order, pl.latitude, pl.longitude,
+              pl.scheduled_time::text AS scheduled_time, pl.geofence_radius_meters
+       FROM pickup_locations pl
+       JOIN routes r ON pl.route_id = r.id AND r.deleted_at IS NULL
+       WHERE pl.id = $1 AND pl.school_id = $2 AND pl.deleted_at IS NULL
+       LIMIT 1`,
+      [stopId, effectiveSchoolId]
+    );
+
+    if (stopRows.length === 0 || !stopRows[0]) {
+      throw new NotFoundError(`Pickup stop ${stopId} not found in this school context`);
+    }
+
+    const s = stopRows[0];
+
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      class_grade: string;
+      section: string;
+      parent_name: string | null;
+      parent_phone: string | null;
+    }>(
+      `SELECT st.id, st.full_name, st.admission_number, st.class_grade, st.section,
+              p.full_name AS parent_name, p.phone AS parent_phone
+       FROM student_stop_assignments ssa
+       JOIN students st ON ssa.student_id = st.id AND st.deleted_at IS NULL
+       LEFT JOIN parents p ON p.student_id = st.id AND p.deleted_at IS NULL
+       WHERE ssa.pickup_stop_id = $1 AND ssa.school_id = $2 AND ssa.deleted_at IS NULL
+       ORDER BY st.full_name ASC`,
+      [stopId, effectiveSchoolId]
+    );
+
+    return {
+      id: s.id,
+      schoolId: s.school_id,
+      routeId: s.route_id,
+      routeName: s.route_name,
+      routeCode: s.route_code,
+      stopName: s.stop_name,
+      sequenceOrder: Number(s.sequence_order),
+      latitude: Number(s.latitude),
+      longitude: Number(s.longitude),
+      scheduledTime: String(s.scheduled_time),
+      geofenceRadiusMeters: Number(s.geofence_radius_meters),
+      assignedStudents: studentRows.map((st) => ({
+        id: st.id,
+        fullName: st.full_name,
+        admissionNumber: st.admission_number,
+        classGrade: st.class_grade,
+        section: st.section,
+        parentName: st.parent_name || undefined,
+        parentPhone: st.parent_phone || undefined,
+      })),
+    };
+  }
+
+  /**
+   * Micro-phase 14.4 Task 3: Edit/change pickup stop details, relocate coordinates,
+   * reassign students, and dispatch WhatsApp alerts to parents.
+   */
+  public static async editPickupStop(
+    stopId: string,
+    payload: EditPickupStopRequest,
+    actorSchoolId?: string
+  ): Promise<{
+    success: boolean;
+    stopId: string;
+    stopName: string;
+    latitude: number;
+    longitude: number;
+    scheduledTime: string;
+    geofenceRadiusMeters: number;
+    reassignedStudentsCount: number;
+    parentsNotifiedCount: number;
+  }> {
+    const effectiveSchoolId = payload.schoolId || actorSchoolId;
+    if (!effectiveSchoolId) {
+      throw new BadRequestError('schoolId is required to edit pickup stop');
+    }
+    if (actorSchoolId && actorSchoolId !== effectiveSchoolId) {
+      throw new ForbiddenError('Cross-tenant update attempt');
+    }
+
+    // 1. Fetch current stop
+    const existingRows = await query<{
+      id: string;
+      school_id: string;
+      route_id: string;
+      stop_name: string;
+      latitude: number;
+      longitude: number;
+      scheduled_time: string;
+      geofence_radius_meters: number;
+    }>(
+      `SELECT id, school_id, route_id, stop_name, latitude, longitude,
+              scheduled_time::text AS scheduled_time, geofence_radius_meters
+       FROM pickup_locations
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [stopId, effectiveSchoolId]
+    );
+
+    if (existingRows.length === 0 || !existingRows[0]) {
+      throw new NotFoundError(`Pickup stop ${stopId} not found`);
+    }
+
+    const currentStop = existingRows[0];
+
+    let newStopName = payload.stopName || currentStop.stop_name;
+    let newScheduledTime = payload.scheduledTime || currentStop.scheduled_time;
+    let newGeofence = payload.geofenceRadiusMeters || currentStop.geofence_radius_meters;
+    let newLat = currentStop.latitude;
+    let newLng = currentStop.longitude;
+
+    // 2. If relocating coordinates: run safety check and road snapping
+    if (payload.latitude !== undefined && payload.longitude !== undefined) {
+      const safety = await DynamicPickupService.checkLocationSafety({
+        latitude: payload.latitude,
+        longitude: payload.longitude,
+        schoolId: effectiveSchoolId,
+      });
+
+      if (!safety.isSafe) {
+        throw new ValidationError(`Location safety check failed: ${safety.reasons.join('; ')}`);
+      }
+
+      newLat = safety.snappedCoordinates ? safety.snappedCoordinates.latitude : payload.latitude;
+      newLng = safety.snappedCoordinates ? safety.snappedCoordinates.longitude : payload.longitude;
+
+      if (!payload.stopName && safety.formattedAddress) {
+        newStopName = safety.formattedAddress.split(',')[0] || newStopName;
+      }
+    }
+
+    // 3. Update pickup_locations
+    await query(
+      `UPDATE pickup_locations
+       SET stop_name = $1,
+           scheduled_time = $2,
+           geofence_radius_meters = $3,
+           latitude = $4,
+           longitude = $5,
+           location = ST_SetSRID(ST_MakePoint($5, $4), 4326)::geography,
+           updated_at = NOW()
+       WHERE id = $6 AND school_id = $7`,
+      [newStopName, newScheduledTime, newGeofence, newLat, newLng, stopId, effectiveSchoolId]
+    );
+
+    // 4. Handle student reassignment if requested
+    let reassignedStudentsCount = 0;
+    if (payload.reassignStudentsToStopId && payload.reassignStudentsToStopId !== stopId) {
+      const targetStopRows = await query<{ id: string }>(
+        `SELECT id FROM pickup_locations WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [payload.reassignStudentsToStopId, effectiveSchoolId]
+      );
+      if (targetStopRows.length === 0) {
+        throw new NotFoundError(`Target reassignment stop ${payload.reassignStudentsToStopId} not found in this school context`);
+      }
+
+      const updateResult = await query(
+        `UPDATE student_stop_assignments
+         SET pickup_stop_id = $1,
+             updated_at = NOW()
+         WHERE pickup_stop_id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+        [payload.reassignStudentsToStopId, stopId, effectiveSchoolId]
+      );
+      reassignedStudentsCount = (updateResult as any).rowCount || 0;
+    }
+
+    // 5. Notify parents of assigned students via WhatsApp if requested
+    let parentsNotifiedCount = 0;
+    if (payload.notifyParents) {
+      try {
+        const parentRows = await query<{
+          parent_phone: string;
+          parent_name: string;
+          student_name: string;
+          student_id: string;
+        }>(
+          `SELECT DISTINCT p.phone AS parent_phone, p.full_name AS parent_name,
+                  st.full_name AS student_name, st.id AS student_id
+           FROM student_stop_assignments ssa
+           JOIN students st ON ssa.student_id = st.id AND st.deleted_at IS NULL
+           JOIN parents p ON p.student_id = st.id AND p.deleted_at IS NULL
+           WHERE (ssa.pickup_stop_id = $1 OR ssa.pickup_stop_id = $2)
+             AND ssa.school_id = $3 AND ssa.deleted_at IS NULL`,
+          [stopId, payload.reassignStudentsToStopId || stopId, effectiveSchoolId]
+        );
+
+        for (const p of parentRows) {
+          const message = `📢 School Transport Notice: ${p.student_name}'s bus pickup stop has been updated to "${newStopName}" (Scheduled: ${newScheduledTime}).`;
+          await MessagingService.sendMessage({
+            recipientPhone: p.parent_phone,
+            schoolId: effectiveSchoolId,
+            studentId: p.student_id,
+            directText: message,
+          });
+          parentsNotifiedCount++;
+        }
+      } catch (err: any) {
+        logger.warn(`[DynamicPickup] Failed to dispatch WhatsApp notices for stop update: ${err.message}`);
+      }
+    }
+
+    logger.info(`[DynamicPickup] Pickup stop ${stopId} updated successfully by school admin`);
+
+    return {
+      success: true,
+      stopId,
+      stopName: newStopName,
+      latitude: newLat,
+      longitude: newLng,
+      scheduledTime: String(newScheduledTime),
+      geofenceRadiusMeters: Number(newGeofence),
+      reassignedStudentsCount,
+      parentsNotifiedCount,
+    };
+  }
+
+  /**
+   * Micro-phase 14.4 Task 3: Soft-delete pickup stop with student migration guard.
+   */
+  public static async deletePickupStop(
+    stopId: string,
+    payload: DeletePickupStopRequest,
+    actorSchoolId?: string
+  ): Promise<{
+    success: boolean;
+    stopId: string;
+    reassignedStudentsCount: number;
+    parentsNotifiedCount: number;
+  }> {
+    const effectiveSchoolId = payload.schoolId || actorSchoolId;
+    if (!effectiveSchoolId) {
+      throw new BadRequestError('schoolId is required to delete pickup stop');
+    }
+    if (actorSchoolId && actorSchoolId !== effectiveSchoolId) {
+      throw new ForbiddenError('Cross-tenant delete attempt');
+    }
+
+    // 1. Verify stop exists
+    const stopRows = await query<{ id: string; stop_name: string }>(
+      `SELECT id, stop_name FROM pickup_locations WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [stopId, effectiveSchoolId]
+    );
+    if (stopRows.length === 0 || !stopRows[0]) {
+      throw new NotFoundError(`Pickup stop ${stopId} not found`);
+    }
+
+    // 2. Check for assigned students
+    const assignedStudents = await query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM student_stop_assignments WHERE pickup_stop_id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [stopId, effectiveSchoolId]
+    );
+    const count = Number(assignedStudents[0]?.count || 0);
+
+    let reassignedStudentsCount = 0;
+    let parentsNotifiedCount = 0;
+
+    if (count > 0) {
+      if (!payload.forceReassignToStopId) {
+        throw new ValidationError(
+          `Cannot delete pickup stop because ${count} student(s) are currently assigned to it. Please specify forceReassignToStopId to move students to another stop.`
+        );
+      }
+
+      // Check target stop
+      const targetRows = await query<{ id: string; stop_name: string; scheduled_time: string }>(
+        `SELECT id, stop_name, scheduled_time::text AS scheduled_time FROM pickup_locations WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [payload.forceReassignToStopId, effectiveSchoolId]
+      );
+      if (targetRows.length === 0 || !targetRows[0]) {
+        throw new NotFoundError(`Reassignment target stop ${payload.forceReassignToStopId} not found`);
+      }
+
+      const targetStop = targetRows[0];
+
+      // Reassign students
+      const updateResult = await query(
+        `UPDATE student_stop_assignments
+         SET pickup_stop_id = $1,
+             updated_at = NOW()
+         WHERE pickup_stop_id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+        [payload.forceReassignToStopId, stopId, effectiveSchoolId]
+      );
+      reassignedStudentsCount = (updateResult as any).rowCount || count;
+
+      if (payload.notifyParents) {
+        try {
+          const parentRows = await query<{
+            parent_phone: string;
+            parent_name: string;
+            student_name: string;
+            student_id: string;
+          }>(
+            `SELECT DISTINCT p.phone AS parent_phone, p.full_name AS parent_name,
+                    st.full_name AS student_name, st.id AS student_id
+             FROM student_stop_assignments ssa
+             JOIN students st ON ssa.student_id = st.id AND st.deleted_at IS NULL
+             JOIN parents p ON p.student_id = st.id AND p.deleted_at IS NULL
+             WHERE ssa.pickup_stop_id = $1 AND ssa.school_id = $2 AND ssa.deleted_at IS NULL`,
+            [payload.forceReassignToStopId, effectiveSchoolId]
+          );
+
+          for (const p of parentRows) {
+            const message = `📢 School Transport Notice: The bus stop "${stopRows[0].stop_name}" has been decommissioned. ${p.student_name} has been reassigned to "${targetStop.stop_name}" (Scheduled: ${targetStop.scheduled_time}).`;
+            await MessagingService.sendMessage({
+              recipientPhone: p.parent_phone,
+              schoolId: effectiveSchoolId,
+              studentId: p.student_id,
+              directText: message,
+            });
+            parentsNotifiedCount++;
+          }
+        } catch (err: any) {
+          logger.warn(`[DynamicPickup] Failed to dispatch WhatsApp notices for stop deletion: ${err.message}`);
+        }
+      }
+    }
+
+    // 3. Soft-delete the stop
+    await query(
+      `UPDATE pickup_locations
+       SET deleted_at = NOW()
+       WHERE id = $1 AND school_id = $2`,
+      [stopId, effectiveSchoolId]
+    );
+
+    logger.info(`[DynamicPickup] Pickup stop ${stopId} soft-deleted by school admin`);
+
+    return {
+      success: true,
+      stopId,
+      reassignedStudentsCount,
+      parentsNotifiedCount,
+    };
+  }
 }
+
 
