@@ -93,7 +93,7 @@ export class TripService {
     if (row.status === TripStatus.COMPLETED) {
       return TripLifecycleStage.COMPLETED;
     }
-    if (row.isArrivedSchool && row.status === TripStatus.IN_TRANSIT) {
+    if (row.status === TripStatus.ARRIVED_SCHOOL || row.isArrivedSchool) {
       return TripLifecycleStage.ARRIVED_SCHOOL;
     }
     if (row.actualStartTime && (row.status === TripStatus.IN_TRANSIT || row.status === TripStatus.DELAYED)) {
@@ -884,6 +884,12 @@ export class TripService {
 
     // State machine: must be active
     if (current.status !== TripStatus.IN_TRANSIT && current.status !== TripStatus.DELAYED) {
+      if (current.status === TripStatus.ARRIVED_SCHOOL) {
+        logger.info(
+          `[TripService] Idempotent retry detected for arriveAtSchool: Trip ${tripId} already in ARRIVED_SCHOOL state`
+        );
+        return this.getTripById(schoolId, tripId, actor);
+      }
       throw new BadRequestError(`Cannot mark arrival for trip in ${current.status} state`);
     }
 
@@ -903,6 +909,15 @@ export class TripService {
 
     logger.info(`[TripService] Trip ${tripId} reached destination (ARRIVED_SCHOOL)`);
 
+    // Update status to ARRIVED_SCHOOL in database
+    await query(
+      `UPDATE trips
+       SET status = 'ARRIVED_SCHOOL',
+           updated_at = NOW()
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [tripId, schoolId]
+    );
+
     // Audit log stores the arrival milestone
     await this.recordTripAudit({
       schoolId,
@@ -916,7 +931,7 @@ export class TripService {
         stage: TripLifecycleStage.IN_TRANSIT,
       },
       newState: {
-        status: current.status,
+        status: TripStatus.ARRIVED_SCHOOL,
         stage: TripLifecycleStage.ARRIVED_SCHOOL,
         arrivedSchoolTime: new Date().toISOString(),
       },
