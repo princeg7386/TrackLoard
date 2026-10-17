@@ -494,7 +494,7 @@ describe('Phase 14.4: Safety/Quality Checks & Stop Management', () => {
 
       await db.query(
         `INSERT INTO schools (id, name, code, city, state)
-         VALUES ($1, 'Delhi Public School R.K. Puram', 'DPS-RKP', 'New Delhi', 'Delhi')
+         VALUES ($1, 'Delhi Public School R.K. Puram', 'DPS-SAFE-911', 'New Delhi', 'Delhi')
          ON CONFLICT (id) DO NOTHING`,
         [testSchoolId]
       );

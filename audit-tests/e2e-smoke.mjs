@@ -197,8 +197,73 @@ async function main() {
     rec('11.4', 'SSE school feed pushes location_update', buf.includes('location_update'), buf.slice(0, 120).replace(/\n/g, ' '));
   } catch (e) { rec('11.4', 'SSE school feed', false, e.message); }
 
+  // ---------- Real-DB Tests for Phases 14–17 (PostGIS, Resequencing, Conflict, Idempotency) ----------
+  // 1. Phase 14.4: ST_DWithin duplicate/nearby pickup detection (PostGIS spatial query)
+  try {
+    const nearby = sql(`SELECT COUNT(*) FROM pickup_locations WHERE school_id='${A}' AND ST_DWithin(location, ST_SetSRID(ST_MakePoint(77.2091, 28.6140), 4326)::geography, 100);`);
+    rec('14.4', 'ST_DWithin duplicate/nearby pickup detection', Number(nearby) >= 1, `matches=${nearby}`);
+  } catch (e) {
+    rec('14.4', 'ST_DWithin duplicate/nearby pickup detection', false, e.message);
+  }
+
+  // 2. Phase 15.2: Route stop resequencing (strict contiguous ordering, no gaps/duplicates)
+  try {
+    sql(`INSERT INTO pickup_locations(id,school_id,route_id,stop_name,sequence_order,latitude,longitude,location,scheduled_time)
+         VALUES (gen_random_uuid(),'${A}','${RA}','Audit Stop 2',2,28.6150,77.2100,ST_SetSRID(ST_MakePoint(77.2100,28.6150),4326),'07:20'),
+                (gen_random_uuid(),'${A}','${RA}','Audit Stop 3',3,28.6160,77.2110,ST_SetSRID(ST_MakePoint(77.2110,28.6160),4326),'07:25')
+         ON CONFLICT DO NOTHING;`);
+    const seqs = sql(`SELECT string_agg(sequence_order::text, ',' ORDER BY sequence_order) FROM pickup_locations WHERE route_id='${RA}' AND deleted_at IS NULL;`);
+    const nums = seqs.split(',').map(Number);
+    const isContiguous = nums.length >= 3 && nums.every((n, i) => i === 0 || n === nums[i - 1] + 1);
+    rec('15.2', 'route stop resequencing under edits (no gaps/duplicates)', isContiguous, `sequence=${seqs}`);
+  } catch (e) {
+    rec('15.2', 'route stop resequencing under edits', false, e.message);
+  }
+
+  // 3. Phase 16.2: Unique trip per route/date/shift & conflict validation
+  const dupTrip = await call('POST', `/schools/${A}/trips`, {
+    token: TA,
+    body: {
+      routeId: RA,
+      busId: BUS,
+      driverId: DRV,
+      scheduledDate: new Date().toISOString().slice(0, 10),
+      scheduledStartTime: '07:30',
+      tripType: 'MORNING_PICKUP',
+    },
+  });
+  rec('16.2', 'conflict validation rejects duplicate active trip for assigned bus/route', [400, 409].includes(dupTrip.status), short(dupTrip));
+
+  // 4. Phase 16.5: Concurrent duplicate trip start (retries are safe and idempotent)
+  const startRetry = await call('POST', `/schools/${A}/trips/${TRIP}/start`, { token: TA });
+  rec('16.5', 'duplicate trip start returns safe idempotent response', [200, 409].includes(startRetry.status), short(startRetry));
+
+  // 5. Phase 17.4: Duplicate WhatsApp command idempotency
+  const waMsgId = `WA-MSG-${uniq}-IDEM`;
+  const wa1 = await call('POST', '/driver/whatsapp/webhook', {
+    body: {
+      from: '+919876543210',
+      text: 'HELP',
+      id: waMsgId,
+    },
+  });
+  const wa2 = await call('POST', '/driver/whatsapp/webhook', {
+    body: {
+      from: '+919876543210',
+      text: 'HELP',
+      id: waMsgId,
+    },
+  });
+  rec('17.4', 'duplicate WhatsApp command processed idempotently', [200].includes(wa1.status) && [200].includes(wa2.status), `wa1=${wa1.status}, wa2=${wa2.status}`);
+
   // ---------- Remove + re-add (soft delete) ----------
   await expect('6.3', 'remove bus with running trip → blocked (409/400)', call('DELETE', `/schools/${A}/buses/${BUS}`, { token: TA }), [400, 409]);
+
+  // Phase 16.4 & 16.5: Trip complete & duplicate complete idempotency
+  const end1 = await call('POST', `/schools/${A}/trips/${TRIP}/complete`, { token: TA, body: { summaryNotes: 'End test' } });
+  rec('16.4', 'trip complete concludes running trip', [200].includes(end1.status), short(end1));
+  const endRetry = await call('POST', `/schools/${A}/trips/${TRIP}/complete`, { token: TA, body: { summaryNotes: 'End retry' } });
+  rec('16.5', 'duplicate trip complete is safe and idempotent', [200].includes(endRetry.status), short(endRetry));
   const plate2 = `HR-2${uniq.slice(0, 1)}-CK-${uniq.slice(-4)}`;
   const b2 = await call('POST', `/schools/${A}/buses`, { token: TA, body: { busNumber: `Tmp-${uniq}`, registrationNumber: plate2 } });
   const B2 = findId(b2.body);

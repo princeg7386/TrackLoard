@@ -38,7 +38,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 run('Build shared package', 'npm', ['run', 'build', '--workspace=shared']);
 run('Typecheck backend', 'npm', ['run', 'typecheck', '--workspace=backend']);
 run('Typecheck school-dashboard', 'npm', ['run', 'typecheck', '--workspace=school-dashboard']);
-const vt = run('Existing vitest suite (backend, mocked)', 'npx', ['vitest', 'run'], { env: { NODE_ENV: 'test' }, tail: 12, cwd: path.join(ROOT, 'backend') });
+const vt = run('Existing vitest suite (backend, mocked)', 'npx', ['vitest', 'run', '--fileParallelism=false'], { env: { NODE_ENV: 'test' }, tail: 12, cwd: path.join(ROOT, 'backend') });
 run('Audit unit tests (logic + route auth)', 'npx', ['tsx', '--test', 'audit-tests/logic.test.ts', 'audit-tests/route-auth.test.ts'], { tail: 30 });
 run('Audit consistency tests (v2)', 'npx', ['tsx', '--test', 'audit-tests/consistency.test.ts'], { tail: 40 });
 

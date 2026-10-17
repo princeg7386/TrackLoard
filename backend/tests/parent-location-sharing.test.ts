@@ -296,8 +296,8 @@ describe('Phase 14.1: Parent Location Sharing (Dynamic Pickup Engine)', () => {
       if (tablesExist) {
         try {
           await db.query(
-            `INSERT INTO schools (id, name, domain, address, contact_phone, contact_email)
-             VALUES ($1, 'Dynamic Pickup Academy', 'dynamic.edu', 'Connaught Place, New Delhi', '+919876543210', 'pickup@dynamic.edu')
+            `INSERT INTO schools (id, name, code, address, phone, email, city, state)
+             VALUES ($1, 'Dynamic Pickup Academy', 'SCH-DYNAMIC', 'Connaught Place, New Delhi', '+919876543210', 'pickup@dynamic.edu', 'New Delhi', 'Delhi')
              ON CONFLICT (id) DO NOTHING;`,
             [testSchoolId]
           );

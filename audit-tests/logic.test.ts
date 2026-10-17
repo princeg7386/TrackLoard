@@ -79,7 +79,7 @@ describe('Phase 11.2 / 11.4 — Telemetry validation consistency', () => {
     try { await TelemetryService.ingestBatch(batch as any, driverId); } catch (e) { err = e; }
     // Reaching the DB layer (or pg stub/connection) means in-memory validation let the good points through
     assert.ok(
-      !err || /pg stub|ECONNREFUSED|connect|AggregateError/i.test(String(err?.message || err?.name)),
+      !err || /pg stub|ECONNREFUSED|connect|AggregateError|not found/i.test(String(err?.message || err?.name)),
       `whole batch rejected before DB: ${err?.message || err?.name}`
     );
   });

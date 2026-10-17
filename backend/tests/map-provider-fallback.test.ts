@@ -249,8 +249,8 @@ describe('Phase 13.4: Provider Fallback & Map API Usage Tracking', () => {
       if (tablesExist) {
         try {
           await db.query(
-            `INSERT INTO schools (id, name, domain, address, contact_phone, contact_email)
-             VALUES ($1, 'Fallback Test Academy', 'fallback.edu', 'Delhi', '+919876543210', 'fallback@school.edu')
+            `INSERT INTO schools (id, name, code, address, phone, email, city, state)
+             VALUES ($1, 'Fallback Test Academy', 'SCH-FALLBACK', 'Delhi', '+919876543210', 'fallback@school.edu', 'Delhi', 'Delhi')
              ON CONFLICT (id) DO NOTHING;`,
             [testSchoolId]
           );
