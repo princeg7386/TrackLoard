@@ -7,13 +7,16 @@ import {
   NearestRoadResult,
   CreatePickupPointRequest,
   PickupPointCreationResult,
+  AssignStudentPickupRequest,
+  UpdateStudentPickupRequest,
+  StudentPickupMapData,
   formatIndianTransportAddress,
   calculateHaversineDistanceMeters,
   normalizeIndianPhoneNumber,
   GeoCoordinates,
 } from '@school-bus/shared';
 import { query } from '../../config/database.js';
-import { NotFoundError, ValidationError, ForbiddenError } from '../../middlewares/error.middleware.js';
+import { NotFoundError, ValidationError, ForbiddenError, BadRequestError } from '../../middlewares/error.middleware.js';
 import { MessagingService } from '../messaging/messaging.service.js';
 import { MapService } from '../maps/map.service.js';
 import { RoutingService } from '../routing/routing.service.js';
@@ -657,6 +660,462 @@ export class DynamicPickupService {
       reusedExistingStop,
       assignedStudentId: studentId,
       createdAt: stopRecord.created_at,
+    };
+  }
+
+  /**
+   * Micro-phase 14.3 Task 1: Assign pickup stop to student with tenant validation and parent notification
+   */
+  public static async assignPickupToStudent(
+    payload: AssignStudentPickupRequest,
+    actorSchoolId?: string
+  ): Promise<{
+    success: boolean;
+    studentId: string;
+    studentName: string;
+    pickupStopId: string;
+    pickupStopName: string;
+    scheduledTime: string;
+    parentNotified: boolean;
+  }> {
+    const { schoolId, studentId, pickupStopId, dropStopId, notifyParent = true } = payload;
+
+    // 1. Tenant validation
+    if (actorSchoolId && actorSchoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant assignment attempt: actor school does not match payload school');
+    }
+
+    // 2. Verify student exists and belongs to school
+    const studentRows = await query<{ id: string; full_name: string }>(
+      `SELECT id, full_name FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [studentId, schoolId]
+    );
+    if (studentRows.length === 0) {
+      throw new NotFoundError(`Student ${studentId} not found in this school context`);
+    }
+    const student = studentRows[0]!;
+
+    // 3. Verify pickup stop exists and belongs to school
+    const stopRows = await query<{ id: string; stop_name: string; scheduled_time: string; route_id: string }>(
+      `SELECT id, stop_name, scheduled_time, route_id FROM pickup_locations WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [pickupStopId, schoolId]
+    );
+    if (stopRows.length === 0) {
+      throw new NotFoundError(`Pickup stop ${pickupStopId} not found in this school context`);
+    }
+    const pickupStop = stopRows[0]!;
+
+    // 4. Verify drop stop if provided
+    if (dropStopId) {
+      const dropRows = await query<{ id: string }>(
+        `SELECT id FROM pickup_locations WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [dropStopId, schoolId]
+      );
+      if (dropRows.length === 0) {
+        throw new NotFoundError(`Drop stop ${dropStopId} not found in this school context`);
+      }
+    }
+
+    // 5. Upsert into student_stop_assignments
+    await query(
+      `INSERT INTO student_stop_assignments (
+         school_id, student_id, pickup_stop_id, drop_stop_id
+       ) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (school_id, student_id)
+       DO UPDATE SET
+         pickup_stop_id = EXCLUDED.pickup_stop_id,
+         drop_stop_id = COALESCE(EXCLUDED.drop_stop_id, student_stop_assignments.drop_stop_id),
+         updated_at = NOW()`,
+      [schoolId, studentId, pickupStopId, dropStopId || null]
+    );
+
+    // 6. Optional Parent WhatsApp Notification
+    let parentNotified = false;
+    if (notifyParent) {
+      try {
+        const parentRows = await query<{ id: string; full_name: string; phone: string }>(
+          `SELECT id, full_name, phone
+           FROM parents
+           WHERE student_id = $1 AND school_id = $2 AND deleted_at IS NULL
+           ORDER BY created_at ASC
+           LIMIT 1`,
+          [studentId, schoolId]
+        );
+
+        if (parentRows.length > 0 && parentRows[0]) {
+          const parent = parentRows[0];
+          const timeFormatted = String(pickupStop.scheduled_time).slice(0, 5);
+          const noticeText = `🚏 Hello ${parent.full_name}! ${student.full_name}'s school bus pickup point has been assigned to: ${pickupStop.stop_name} (Scheduled: ${timeFormatted}).`;
+
+          await MessagingService.sendMessage({
+            recipientPhone: parent.phone,
+            schoolId,
+            studentId,
+            directText: noticeText,
+          });
+          parentNotified = true;
+        }
+      } catch (err: any) {
+        logger.warn(`[DynamicPickup] Failed to notify parent for pickup assignment: ${err.message}`);
+      }
+    }
+
+    logger.info(`[DynamicPickup] Student ${studentId} assigned to pickup stop ${pickupStopId} (School: ${schoolId})`);
+
+    return {
+      success: true,
+      studentId,
+      studentName: student.full_name,
+      pickupStopId,
+      pickupStopName: pickupStop.stop_name,
+      scheduledTime: String(pickupStop.scheduled_time),
+      parentNotified,
+    };
+  }
+
+  /**
+   * Micro-phase 14.3 Task 2: Get comprehensive map rendering data for student's pickup location
+   */
+  public static async getStudentPickupMapData(
+    studentId: string,
+    schoolId: string
+  ): Promise<StudentPickupMapData> {
+    // 1. Fetch student
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      class_grade: string;
+      section: string;
+    }>(
+      `SELECT id, full_name, admission_number, class_grade, section
+       FROM students
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [studentId, schoolId]
+    );
+    if (studentRows.length === 0) {
+      throw new NotFoundError(`Student ${studentId} not found in this school context`);
+    }
+    const student = studentRows[0]!;
+
+    // 2. Fetch assigned stops
+    const assignmentRows = await query<{
+      pickup_stop_id: string | null;
+      pickup_name: string | null;
+      pickup_seq: number | null;
+      pickup_time: string | null;
+      pickup_lat: number | null;
+      pickup_lng: number | null;
+      pickup_geofence: number | null;
+      route_id: string | null;
+      drop_stop_id: string | null;
+      drop_name: string | null;
+      drop_seq: number | null;
+      drop_time: string | null;
+      drop_lat: number | null;
+      drop_lng: number | null;
+      drop_geofence: number | null;
+    }>(
+      `SELECT 
+         ssa.pickup_stop_id,
+         pl_pick.stop_name AS pickup_name,
+         pl_pick.sequence_order AS pickup_seq,
+         pl_pick.scheduled_time AS pickup_time,
+         pl_pick.latitude AS pickup_lat,
+         pl_pick.longitude AS pickup_lng,
+         pl_pick.geofence_radius_meters AS pickup_geofence,
+         pl_pick.route_id,
+         ssa.drop_stop_id,
+         pl_drop.stop_name AS drop_name,
+         pl_drop.sequence_order AS drop_seq,
+         pl_drop.scheduled_time AS drop_time,
+         pl_drop.latitude AS drop_lat,
+         pl_drop.longitude AS drop_lng,
+         pl_drop.geofence_radius_meters AS drop_geofence
+       FROM student_stop_assignments ssa
+       LEFT JOIN pickup_locations pl_pick ON ssa.pickup_stop_id = pl_pick.id AND pl_pick.deleted_at IS NULL
+       LEFT JOIN pickup_locations pl_drop ON ssa.drop_stop_id = pl_drop.id AND pl_drop.deleted_at IS NULL
+       WHERE ssa.student_id = $1 AND ssa.school_id = $2 AND ssa.deleted_at IS NULL
+       LIMIT 1`,
+      [studentId, schoolId]
+    );
+
+    const assignment = assignmentRows[0];
+
+    let pickupStop = null;
+    if (assignment && assignment.pickup_stop_id && assignment.pickup_lat !== null && assignment.pickup_lng !== null) {
+      pickupStop = {
+        id: assignment.pickup_stop_id,
+        stopName: assignment.pickup_name || 'Pickup Point',
+        sequenceOrder: Number(assignment.pickup_seq || 1),
+        scheduledTime: String(assignment.pickup_time || '07:30:00'),
+        latitude: Number(assignment.pickup_lat),
+        longitude: Number(assignment.pickup_lng),
+        geofenceRadiusMeters: Number(assignment.pickup_geofence || 300),
+      };
+    }
+
+    let dropStop = null;
+    if (assignment && assignment.drop_stop_id && assignment.drop_lat !== null && assignment.drop_lng !== null) {
+      dropStop = {
+        id: assignment.drop_stop_id,
+        stopName: assignment.drop_name || 'Drop Point',
+        sequenceOrder: Number(assignment.drop_seq || 1),
+        scheduledTime: String(assignment.drop_time || '14:30:00'),
+        latitude: Number(assignment.drop_lat),
+        longitude: Number(assignment.drop_lng),
+        geofenceRadiusMeters: Number(assignment.drop_geofence || 300),
+      };
+    }
+
+    // 3. Fetch Route details if assigned
+    let route = null;
+    let activeTrip = null;
+
+    if (assignment?.route_id) {
+      const routeRows = await query<{
+        id: string;
+        name: string;
+        code: string;
+        route_type: string;
+        path_polyline: string | null;
+      }>(
+        `SELECT id, name, code, route_type, path_polyline
+         FROM routes
+         WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [assignment.route_id, schoolId]
+      );
+
+      if (routeRows.length > 0 && routeRows[0]) {
+        const r = routeRows[0];
+        route = {
+          id: r.id,
+          name: r.name,
+          code: r.code,
+          routeType: r.route_type,
+          pathPolyline: r.path_polyline,
+        };
+
+        // 4. Fetch active live trip if in progress
+        const tripRows = await query<{
+          id: string;
+          status: string;
+          bus_number: string | null;
+          registration_number: string | null;
+          driver_name: string | null;
+          last_latitude: number | null;
+          last_longitude: number | null;
+          last_speed_kmh: number | null;
+          last_gps_recorded_at: string | null;
+        }>(
+          `SELECT t.id, t.status, b.bus_number, b.registration_number, d.full_name AS driver_name,
+                  b.last_latitude, b.last_longitude, b.last_speed_kmh, b.last_gps_recorded_at
+           FROM trips t
+           LEFT JOIN buses b ON t.bus_id = b.id
+           LEFT JOIN drivers d ON t.driver_id = d.id
+           WHERE t.route_id = $1 AND t.school_id = $2 AND t.status IN ('IN_TRANSIT', 'DELAYED') AND t.deleted_at IS NULL
+           ORDER BY t.created_at DESC
+           LIMIT 1`,
+          [r.id, schoolId]
+        );
+
+        if (tripRows.length > 0 && tripRows[0]) {
+          const t = tripRows[0];
+          activeTrip = {
+            id: t.id,
+            status: t.status,
+            busNumber: t.bus_number || 'Bus',
+            registrationNumber: t.registration_number || '',
+            driverName: t.driver_name || 'Driver',
+            currentLatitude: t.last_latitude !== null ? Number(t.last_latitude) : null,
+            currentLongitude: t.last_longitude !== null ? Number(t.last_longitude) : null,
+            speedKmh: t.last_speed_kmh !== null ? Number(t.last_speed_kmh) : null,
+            lastPingAt: t.last_gps_recorded_at ? new Date(t.last_gps_recorded_at).toISOString() : null,
+          };
+        }
+      }
+    }
+
+    return {
+      student: {
+        id: student.id,
+        fullName: student.full_name,
+        admissionNumber: student.admission_number,
+        classGrade: student.class_grade,
+        section: student.section,
+      },
+      pickupStop,
+      dropStop,
+      route,
+      activeTrip,
+    };
+  }
+
+  /**
+   * Micro-phase 14.3 Task 3: Update student's pickup point via stop ID or new coordinates
+   */
+  public static async updateStudentPickup(
+    payload: UpdateStudentPickupRequest,
+    actorSchoolId?: string
+  ): Promise<{
+    success: boolean;
+    studentId: string;
+    studentName: string;
+    pickupStopId: string;
+    pickupStopName: string;
+    formattedAddress?: string;
+    reusedExistingStop: boolean;
+    parentNotified: boolean;
+  }> {
+    const {
+      pickupStopId,
+      dropStopId,
+      latitude,
+      longitude,
+      stopName,
+      landmark,
+      notifyParent = true,
+    } = payload;
+
+    const effectiveSchoolId = payload.schoolId || actorSchoolId;
+    if (!effectiveSchoolId) {
+      throw new BadRequestError('schoolId is required to update student pickup');
+    }
+    const effectiveStudentId = payload.studentId;
+    if (!effectiveStudentId) {
+      throw new BadRequestError('studentId is required to update student pickup');
+    }
+
+    // 1. Tenant validation
+    if (actorSchoolId && actorSchoolId !== effectiveSchoolId) {
+      throw new ForbiddenError('Cross-tenant update attempt: actor school does not match payload school');
+    }
+
+    // 2. Verify student exists
+    const studentRows = await query<{ id: string; full_name: string }>(
+      `SELECT id, full_name FROM students WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [effectiveStudentId, effectiveSchoolId]
+    );
+    if (studentRows.length === 0) {
+      throw new NotFoundError(`Student ${effectiveStudentId} not found in this school context`);
+    }
+    const student = studentRows[0]!;
+
+    let finalStopId = pickupStopId;
+    let finalStopName = stopName || 'Pickup Stop';
+    let formattedAddress = '';
+    let reusedExistingStop = false;
+
+    // 3. If coordinates are provided: Create or snap new pickup point
+    if (latitude !== undefined && longitude !== undefined) {
+      // Find route: use payload routeId or lookup existing route
+      let routeId = payload.routeId;
+      if (!routeId) {
+        const existingRoute = await query<{ route_id: string }>(
+          `SELECT pl.route_id
+           FROM student_stop_assignments ssa
+           JOIN pickup_locations pl ON ssa.pickup_stop_id = pl.id
+           WHERE ssa.student_id = $1 AND ssa.school_id = $2 AND ssa.deleted_at IS NULL AND pl.deleted_at IS NULL
+           LIMIT 1`,
+          [effectiveStudentId, effectiveSchoolId]
+        );
+        if (existingRoute.length > 0 && existingRoute[0]) {
+          routeId = existingRoute[0].route_id;
+        } else {
+          const defaultRoute = await query<{ id: string }>(
+            `SELECT id FROM routes WHERE school_id = $1 AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
+            [effectiveSchoolId]
+          );
+          if (defaultRoute.length === 0) {
+            throw new BadRequestError('No transit route found for this school. Please create a route first.');
+          }
+          routeId = defaultRoute[0]!.id;
+        }
+      }
+
+      const pointResult = await DynamicPickupService.createOrAssignPickupPoint(
+        {
+          schoolId: effectiveSchoolId,
+          routeId,
+          latitude,
+          longitude,
+          studentId: effectiveStudentId,
+          stopName,
+          landmark,
+          scheduledTime: '07:30:00',
+          geofenceRadiusMeters: 300,
+          snapToRoad: true,
+          clusterThresholdMeters: 50,
+        },
+        actorSchoolId
+      );
+
+      finalStopId = pointResult.id;
+      finalStopName = pointResult.stopName;
+      formattedAddress = pointResult.formattedAddress;
+      reusedExistingStop = pointResult.reusedExistingStop;
+    } else if (pickupStopId) {
+      // Direct stop ID assignment
+      const assignResult = await DynamicPickupService.assignPickupToStudent(
+        {
+          schoolId: effectiveSchoolId,
+          studentId: effectiveStudentId,
+          pickupStopId,
+          dropStopId,
+          notifyParent: false, // We'll send consolidated notification below
+        },
+        actorSchoolId
+      );
+      finalStopId = assignResult.pickupStopId;
+      finalStopName = assignResult.pickupStopName;
+    } else {
+      throw new BadRequestError('Either pickupStopId or latitude/longitude coordinates must be provided to update pickup point.');
+    }
+
+    // 4. Send WhatsApp update notification to parent
+    let parentNotified = false;
+    if (notifyParent) {
+      try {
+        const parentRows = await query<{ id: string; full_name: string; phone: string }>(
+          `SELECT id, full_name, phone
+           FROM parents
+           WHERE student_id = $1 AND school_id = $2 AND deleted_at IS NULL
+           ORDER BY created_at ASC
+           LIMIT 1`,
+          [effectiveStudentId, effectiveSchoolId]
+        );
+
+        if (parentRows.length > 0 && parentRows[0]) {
+          const parent = parentRows[0];
+          const addressPart = formattedAddress ? ` (${formattedAddress})` : '';
+          const noticeText = `✅ Hello ${parent.full_name}! ${student.full_name}'s bus pickup point has been updated to: ${finalStopName}${addressPart}.`;
+
+          await MessagingService.sendMessage({
+            recipientPhone: parent.phone,
+            schoolId: effectiveSchoolId,
+            studentId: effectiveStudentId,
+            directText: noticeText,
+          });
+          parentNotified = true;
+        }
+      } catch (err: any) {
+        logger.warn(`[DynamicPickup] Failed to notify parent for pickup update: ${err.message}`);
+      }
+    }
+
+    logger.info(`[DynamicPickup] Student ${effectiveStudentId} pickup point updated to stop ${finalStopId}`);
+
+    return {
+      success: true,
+      studentId: effectiveStudentId,
+      studentName: student.full_name,
+      pickupStopId: finalStopId!,
+      pickupStopName: finalStopName,
+      formattedAddress,
+      reusedExistingStop,
+      parentNotified,
     };
   }
 }

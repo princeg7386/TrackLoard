@@ -5,10 +5,12 @@ import {
   ValidateCoordinatesQuery,
   FindNearestRoadQuery,
   CreatePickupPointRequest,
+  AssignStudentPickupRequest,
+  UpdateStudentPickupRequest,
 } from '@school-bus/shared';
 import { DynamicPickupService } from '../services/dynamic-pickup/dynamic-pickup.service.js';
 import { sendSuccess } from '../utils/response.util.js';
-import { ForbiddenError } from '../middlewares/error.middleware.js';
+import { ForbiddenError, BadRequestError } from '../middlewares/error.middleware.js';
 
 export class DynamicPickupController {
   /**
@@ -135,6 +137,76 @@ export class DynamicPickupController {
       const actorSchoolId = req.user?.schoolId || undefined;
       const result = await DynamicPickupService.createOrAssignPickupPoint(req.body, actorSchoolId);
       sendSuccess(res, result, 'Pickup point created and stored successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/parent/pickup/assign
+   * Assigns a designated pickup stop to a student with parent notification
+   */
+  public static async assignStudentPickup(
+    req: Request<{}, {}, AssignStudentPickupRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const result = await DynamicPickupService.assignPickupToStudent(req.body, actorSchoolId);
+      sendSuccess(res, result, 'Pickup stop assigned to student successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/parent/pickup/student/:studentId/map
+   * Retrieves map data (pickup stop, drop stop, route path, live bus state) for a student
+   */
+  public static async getStudentPickupMap(
+    req: Request<{ studentId: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { studentId } = req.params;
+      const schoolId =
+        req.user?.schoolId ||
+        (req.query.schoolId as string) ||
+        (req as any).parentTrackingSession?.school?.id;
+
+      if (!schoolId) {
+        throw new BadRequestError('School context ID is required to fetch student pickup map data');
+      }
+
+      const result = await DynamicPickupService.getStudentPickupMapData(studentId, schoolId);
+      sendSuccess(res, result, 'Student pickup map data retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/v1/parent/pickup/student/:studentId
+   * Updates student's pickup location via stop ID or new coordinates
+   */
+  public static async updateStudentPickup(
+    req: Request<{ studentId: string }, {}, UpdateStudentPickupRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { studentId } = req.params;
+      const actorSchoolId = req.user?.schoolId || undefined;
+      const payload: UpdateStudentPickupRequest = {
+        ...req.body,
+        studentId,
+        schoolId: req.body.schoolId || actorSchoolId || '',
+      };
+
+      const result = await DynamicPickupService.updateStudentPickup(payload, actorSchoolId);
+      sendSuccess(res, result, 'Student pickup point updated successfully');
     } catch (error) {
       next(error);
     }

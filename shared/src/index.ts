@@ -2398,3 +2398,87 @@ export function formatIndianTransportAddress(components: {
   };
 }
 
+// Phase 14.3: Student mapping schemas
+export const AssignStudentPickupRequestSchema = z.object({
+  schoolId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  pickupStopId: z.string().uuid(),
+  dropStopId: z.string().uuid().optional(),
+  notifyParent: z.boolean().optional().default(true),
+});
+export type AssignStudentPickupRequest = z.infer<typeof AssignStudentPickupRequestSchema>;
+
+export const UpdateStudentPickupRequestSchema = z.object({
+  schoolId: z.string().uuid().optional(),
+  studentId: z.string().uuid().optional(),
+  pickupStopId: z.string().uuid().optional(),
+  dropStopId: z.string().uuid().optional(),
+  routeId: z.string().uuid().optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  stopName: z.string().max(255).optional(),
+  landmark: z.string().max(255).optional(),
+  notifyParent: z.boolean().optional().default(true),
+});
+export type UpdateStudentPickupRequest = z.infer<typeof UpdateStudentPickupRequestSchema>;
+
+export const StudentPickupMapDataSchema = z.object({
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string(),
+    classGrade: z.string(),
+    section: z.string(),
+  }),
+  pickupStop: z
+    .object({
+      id: z.string().uuid(),
+      stopName: z.string(),
+      sequenceOrder: z.number().int(),
+      scheduledTime: z.string(),
+      latitude: z.number(),
+      longitude: z.number(),
+      geofenceRadiusMeters: z.number(),
+      formattedAddress: z.string().optional(),
+    })
+    .nullable(),
+  dropStop: z
+    .object({
+      id: z.string().uuid(),
+      stopName: z.string(),
+      sequenceOrder: z.number().int(),
+      scheduledTime: z.string(),
+      latitude: z.number(),
+      longitude: z.number(),
+      geofenceRadiusMeters: z.number(),
+      formattedAddress: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+  route: z
+    .object({
+      id: z.string().uuid(),
+      name: z.string(),
+      code: z.string(),
+      routeType: z.string(),
+      pathPolyline: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  activeTrip: z
+    .object({
+      id: z.string().uuid(),
+      status: z.string(),
+      busNumber: z.string(),
+      registrationNumber: z.string(),
+      driverName: z.string(),
+      currentLatitude: z.number().nullable().optional(),
+      currentLongitude: z.number().nullable().optional(),
+      speedKmh: z.number().nullable().optional(),
+      lastPingAt: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+export type StudentPickupMapData = z.infer<typeof StudentPickupMapDataSchema>;
+

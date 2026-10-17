@@ -5,6 +5,8 @@ import {
   ValidateCoordinatesQuerySchema,
   FindNearestRoadQuerySchema,
   CreatePickupPointRequestSchema,
+  AssignStudentPickupRequestSchema,
+  UpdateStudentPickupRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -59,6 +61,32 @@ dynamicPickupRouter.post(
   validateBody(CreatePickupPointRequestSchema),
   requireTenantScope('body', 'schoolId'),
   DynamicPickupController.createPickupPoint
+);
+
+// 7. Dynamic Pickup: Assign Pickup to Student (Micro-phase 14.3 Task 1)
+dynamicPickupRouter.post(
+  '/pickup/assign',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  validateBody(AssignStudentPickupRequestSchema),
+  requireTenantScope('body', 'schoolId'),
+  DynamicPickupController.assignStudentPickup
+);
+
+// 8. Dynamic Pickup: Show Pickup on Map (Micro-phase 14.3 Task 2)
+dynamicPickupRouter.get(
+  '/pickup/student/:studentId/map',
+  authenticateToken,
+  DynamicPickupController.getStudentPickupMap
+);
+
+// 9. Dynamic Pickup: Update Student Pickup (Micro-phase 14.3 Task 3)
+dynamicPickupRouter.put(
+  '/pickup/student/:studentId',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.SUPER_ADMIN),
+  validateBody(UpdateStudentPickupRequestSchema),
+  DynamicPickupController.updateStudentPickup
 );
 
 export default dynamicPickupRouter;
