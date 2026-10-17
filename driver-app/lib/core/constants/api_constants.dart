@@ -11,6 +11,9 @@ class ApiConstants {
   static const String logoutEndpoint = '/driver/auth/logout';
   static const String profileEndpoint = '/driver/auth/me';
 
+  // Driver Attendance Endpoints (Phase 18)
+  static const String attendanceStudentsEndpoint = '/driver/attendance/students';
+
   // Telemetry Ingestion Endpoint (used in Phase 10.2 / 10.3)
   static const String telemetryEndpoint = '/telemetry/batch';
 

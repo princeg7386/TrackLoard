@@ -2993,6 +2993,61 @@ export const DriverWhatsAppEndTripResponseSchema = z.object({
 });
 export type DriverWhatsAppEndTripResponse = z.infer<typeof DriverWhatsAppEndTripResponseSchema>;
 
+/**
+ * Driver Attendance Student List (Micro-Phase 18.1)
+ */
+export const DriverStudentStopInfoSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  sequenceOrder: z.number().int().min(1),
+  expectedTimeOffsetMinutes: z.number().int().optional(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  address: z.string().optional(),
+});
+export type DriverStudentStopInfo = z.infer<typeof DriverStudentStopInfoSchema>;
+
+export const DriverStudentAttendanceItemSchema = z.object({
+  studentId: z.string().uuid(),
+  admissionNumber: z.string(),
+  fullName: z.string(),
+  grade: z.string().optional(),
+  section: z.string().optional(),
+  emergencyPhone: z.string().optional(),
+  pickupStop: DriverStudentStopInfoSchema,
+  dropStop: DriverStudentStopInfoSchema.optional(),
+  parent: z
+    .object({
+      fullName: z.string(),
+      phone: z.string(),
+      relationship: z.string().optional(),
+    })
+    .optional(),
+  attendanceStatus: z.nativeEnum(AttendanceStatus).default(AttendanceStatus.PENDING),
+  boardedAt: z.string().optional(),
+  droppedAt: z.string().optional(),
+  markedBy: z.string().optional(),
+});
+export type DriverStudentAttendanceItem = z.infer<typeof DriverStudentAttendanceItemSchema>;
+
+export const DriverStudentListResponseSchema = z.object({
+  tripId: z.string().uuid().optional(),
+  busId: z.string().uuid(),
+  busNumber: z.string(),
+  registrationNumber: z.string(),
+  routeId: z.string().uuid().optional(),
+  routeName: z.string().optional(),
+  routeCode: z.string().optional(),
+  totalStudents: z.number().int().min(0),
+  boardedCount: z.number().int().min(0),
+  droppedCount: z.number().int().min(0),
+  absentCount: z.number().int().min(0),
+  pendingCount: z.number().int().min(0),
+  students: z.array(DriverStudentAttendanceItemSchema),
+});
+export type DriverStudentListResponse = z.infer<typeof DriverStudentListResponseSchema>;
+
+
 
 
 

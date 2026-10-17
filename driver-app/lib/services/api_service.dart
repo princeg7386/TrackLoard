@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants/api_constants.dart';
+import '../models/student_attendance_model.dart';
 
 /// Response wrapper for API calls
 class ApiResponse<T> {
@@ -126,6 +127,50 @@ class ApiService {
         success: false,
         message: 'An unexpected error occurred: ${e.toString()}',
         statusCode: 500,
+      );
+    }
+  }
+
+  /// Retrieves registered student list and pickup details for assigned bus or trip (Phase 18.1)
+  Future<ApiResponse<DriverStudentListModel>> getAssignedStudents({
+    String? busId,
+    String? tripId,
+  }) async {
+    final queryParams = <String, String>{};
+    if (busId != null && busId.isNotEmpty) {
+      queryParams['busId'] = busId;
+    }
+    if (tripId != null && tripId.isNotEmpty) {
+      queryParams['tripId'] = tripId;
+    }
+
+    final queryString = queryParams.isNotEmpty
+        ? '?${queryParams.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&')}'
+        : '';
+
+    final res = await get('${ApiConstants.attendanceStudentsEndpoint}$queryString');
+    if (!res.success || res.data == null) {
+      return ApiResponse<DriverStudentListModel>(
+        success: false,
+        message: res.message,
+        statusCode: res.statusCode,
+        isOffline: res.isOffline,
+      );
+    }
+
+    try {
+      final model = DriverStudentListModel.fromJson(res.data!);
+      return ApiResponse<DriverStudentListModel>(
+        success: true,
+        data: model,
+        message: res.message,
+        statusCode: res.statusCode,
+      );
+    } catch (e) {
+      return ApiResponse<DriverStudentListModel>(
+        success: false,
+        message: 'Failed to parse student attendance list: ${e.toString()}',
+        statusCode: res.statusCode,
       );
     }
   }

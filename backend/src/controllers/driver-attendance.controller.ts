@@ -1,0 +1,57 @@
+import { Request, Response, NextFunction } from 'express';
+import { DriverAttendanceService } from '../services/driver-attendance.service.js';
+import { sendSuccess } from '../utils/response.util.js';
+import { BadRequestError, ForbiddenError } from '../middlewares/error.middleware.js';
+
+export class DriverAttendanceController {
+  /**
+   * GET /api/v1/driver/attendance/students
+   * Retrieves registered students and pickup details for the driver's assigned bus or active trip
+   */
+  public static async getStudents(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.query.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const busId = req.query.busId as string | undefined;
+      const driverId = isDriver ? user.id : (req.query.driverId as string | undefined);
+      const tripId = req.query.tripId as string | undefined;
+
+      const result = await DriverAttendanceService.getStudentsForAssignedBus(
+        targetSchoolId,
+        {
+          busId,
+          driverId,
+          tripId,
+        },
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Assigned student attendance list retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+}
