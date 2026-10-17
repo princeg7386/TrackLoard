@@ -51,7 +51,7 @@ BUSLOARD solves real transport safety challenges faced by Indian schools every d
 | Layer | Technology |
 |---|---|
 | **Backend API** | Node.js + TypeScript (strict mode) |
-| **Database** | PostgreSQL 15 + PostGIS (geospatial) |
+| **Database** | PostgreSQL 16 + PostGIS 3.4 (geospatial) |
 | **Driver App** | Flutter Android (background GPS service) |
 | **School Dashboard** | Next.js 14 / React |
 | **Parent Web** | Responsive Next.js page (no install needed) |
@@ -113,7 +113,7 @@ BUSLOARD/
 |---|---|
 | Node.js | v20+ or v22 LTS |
 | npm | v10+ |
-| PostgreSQL | v15+ with PostGIS extension |
+| PostgreSQL | v16 with PostGIS 3.4 extension |
 | Flutter SDK | v3.x (for driver app only) |
 | Android Studio | Latest (for driver app only) |
 
@@ -204,20 +204,26 @@ flutter build apk --dart-define=API_BASE_URL=https://your-api-url.com
 
 ---
 
-## 🗺️ Roadmap
+## 🗺️ Roadmap & Phase Completion
 
-| Phase | Description | Status |
-|---|---|---|
-| 1–5 | Core DB schema, auth, multi-tenant setup | ✅ Done |
-| 6–8 | Driver directory, student/parent records, routes | ✅ Done |
-| 9 | Trip lifecycle state machine | ✅ Done |
-| 10 | Driver app foundation (UI, status, reliability) | ✅ Done |
-| **11** | **GPS capture & ingestion pipeline** | ✅ Done |
-| 12 | Geofencing & ETA prediction | 🔜 Next |
-| 13 | Student pickup/drop attendance | 🔜 Planned |
-| 14 | Parent live tracking web + WhatsApp notifications | 🔜 Planned |
-| 15 | Delay & deviation detection | 🔜 Planned |
-| 16 | SOS / Incident management | 🔜 Planned |
+All phase definitions and numbers strictly align with the **Master Micro-Phase Roadmap**:
+
+| Phase | Description | Status | Evidence |
+|---|---|---|---|
+| **0–5** | Architecture, PostgreSQL 16 schema, multi-tenant RBAC, school onboarding | ✅ Done | Migrations 001–005, Vitest suites |
+| **6–9** | Fleet management, driver records, student/parent directory & WhatsApp | ✅ Done | Migrations 006–010, Vitest suites |
+| **10** | Driver mobile app foundation (Flutter background GPS, SQLite queue) | ✅ Done | `driver-app/` scaffold, zero flutter analyze issues |
+| **11** | GPS telemetry ingestion pipeline (batching, dedup, stationary filter, SSE) | ✅ Done | Migrations 011–015, telemetry tests |
+| **12** | Real-time live tracking (bus state, SSE transport, map canvas, parent live) | ✅ Done | `backend/src/services/live-tracking.service.ts` |
+| **13** | Map & routing layer (OSM, OSRM, Valhalla, road snapping, fallback & usage) | ✅ Done | `backend/src/services/routing/` |
+| **14** | Dynamic pickup engine (WhatsApp location share, nearest road, direct assign) | ✅ Done | `backend/src/services/dynamic-pickup/` |
+| **15** | Route management (assigned driver/bus, stop sequence, route canvas, audit) | ✅ Done | `backend/src/services/route.service.ts` |
+| **16** | Trip engine (state machine, `ARRIVED_SCHOOL`, conflict check, idempotency) | ✅ Done | `backend/src/services/trip.service.ts`, Migration 016 |
+| **17** | Driver WhatsApp core (menu, start/end trip, error handling & deduplication) | ✅ Done | `backend/src/services/driver-whatsapp.service.ts` |
+| **18.1** | Driver attendance student list (stop sequence roster, WhatsApp manifest) | ✅ Done | `backend/src/services/driver-attendance.service.ts` |
+| **18.2+** | Boarding & drop logging, journey history, ETA engine, geofencing | 🔜 Planned | Next execution phases |
+
+> Detailed verification table and file evidence: see [docs/phase-audit-12-18.md](./docs/phase-audit-12-18.md) and [docs/adr/trip-state-vocabulary.md](./docs/adr/trip-state-vocabulary.md).
 
 ---
 
@@ -229,6 +235,7 @@ To keep the system lean and reliable, these are **permanently out of scope** unl
 |---|---|
 | Bus seat capacity counting | Not needed for safety tracking |
 | Bus active/inactive toggles | Managed via trip assignments |
+| Mandatory school approval for normal pickup | Direct verified coordinator workflow |
 | Parent child-selection switchers | Direct 1:1 tokenized sessions |
 | Payments / Billing / Subscriptions | Deferred to commercial phase |
 | RFID / CCTV / Face recognition | Hardware dependencies avoided |
@@ -239,11 +246,17 @@ To keep the system lean and reliable, these are **permanently out of scope** unl
 ## 🧪 Testing
 
 ```bash
-# Run all backend tests (268 tests, 35 files)
+# Run all backend unit & integration tests (524 tests, 61 files)
 npm test -w backend
 
-# Run security audit tests (25 tests)
+# Run cross-layer consistency audit tests (26 tests, 5 test suites)
+npx tsx --test audit-tests/consistency.test.ts
+
+# Run security and route authorization audit tests (25 tests)
 npm run test:audit
+
+# Run full end-to-end audit with Docker PostgreSQL 16 + PostGIS 3.4
+node audit-tests/run-report.mjs
 
 # Type check backend
 npx tsc --noEmit -p backend/tsconfig.json
@@ -252,15 +265,17 @@ npx tsc --noEmit -p backend/tsconfig.json
 npx tsc --noEmit -p school-dashboard/tsconfig.json
 ```
 
-**Current status: 268 backend tests + 25 audit tests, all passing ✅**
+**Current verified status: 524 backend tests + 26 consistency tests + 25 audit tests + 70+ E2E checks, all passing ✅**
 
 ---
 
 ## 📖 Documentation
 
 - [AGENTS.md](./AGENTS.md) — Master agent rules & quality guardrails
+- [Phase 12–18 Audit Evidence](./docs/phase-audit-12-18.md) — Detailed micro-phase verification table
+- [ADR: Trip State Vocabulary](./docs/adr/trip-state-vocabulary.md) — PDF 16.1 state mapping & token consistency
 - [Architecture](./docs/architecture.md) — System design & adapter interfaces
-- [Feature Registry](./docs/feature-registry.md) — Scope register & status
+- [Feature Registry](./docs/feature-registry.md) — Master feature registry & status
 - [Product Spec](./docs/product-spec.md) — Role matrix & user journeys
 - [ADR Records](./docs/adr/) — Architecture decision records
 
