@@ -33,6 +33,17 @@ export enum TripStatus {
 }
 
 /**
+ * Trip Operational Lifecycle Stages (Micro-phase 16.1)
+ */
+export enum TripLifecycleStage {
+  NOT_STARTED = 'NOT_STARTED',
+  STARTED = 'STARTED',
+  IN_TRANSIT = 'IN_TRANSIT',
+  ARRIVED_SCHOOL = 'ARRIVED_SCHOOL',
+  COMPLETED = 'COMPLETED',
+}
+
+/**
  * Stop Arrival / Boarding States
  */
 export enum StopStatus {
@@ -1038,6 +1049,54 @@ export const TripSchema = z.object({
   updatedAt: z.string().datetime().optional(),
 });
 export type Trip = z.infer<typeof TripSchema>;
+
+// Trip Engine (Micro-phase 16.1)
+export const CreateTripRequestSchema = z.object({
+  routeId: z.string().uuid('Valid route ID required'),
+  busId: z.string().uuid('Valid bus ID required'),
+  driverId: z.string().uuid('Valid driver ID required'),
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD').optional(),
+  scheduledStartTime: z.string().min(1, 'Scheduled start time required'),
+});
+export type CreateTripRequest = z.infer<typeof CreateTripRequestSchema>;
+
+export const UpdateTripProgressRequestSchema = z.object({
+  currentStopSequence: z.number().int().min(0),
+  delayMinutes: z.number().int().min(0).optional(),
+});
+export type UpdateTripProgressRequest = z.infer<typeof UpdateTripProgressRequestSchema>;
+
+export const CancelTripRequestSchema = z.object({
+  reason: z.string().min(2, 'Cancellation reason required').max(255),
+});
+export type CancelTripRequest = z.infer<typeof CancelTripRequestSchema>;
+
+export const TripDetailResponseSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  routeName: z.string().optional(),
+  routeCode: z.string().optional(),
+  busId: z.string().uuid(),
+  busNumber: z.string().optional(),
+  busRegistrationNumber: z.string().optional(),
+  driverId: z.string().uuid(),
+  driverName: z.string().optional(),
+  driverPhone: z.string().optional(),
+  status: z.nativeEnum(TripStatus),
+  lifecycleStage: z.nativeEnum(TripLifecycleStage),
+  scheduledDate: z.string(),
+  scheduledStartTime: z.string(),
+  actualStartTime: z.string().nullable().optional(),
+  actualEndTime: z.string().nullable().optional(),
+  arrivedSchoolTime: z.string().nullable().optional(),
+  currentStopSequence: z.number().int(),
+  delayMinutes: z.number().int(),
+  totalStops: z.number().int().optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type TripDetailResponse = z.infer<typeof TripDetailResponseSchema>;
 
 // 11. GPS Telemetry Payload
 export const TelemetryIngestSchema = z.object({

@@ -10,6 +10,7 @@ import studentRouter from './student.routes.js';
 import telemetryRouter from './telemetry.routes.js';
 import routingRouter from './routing.routes.js';
 import dynamicPickupRouter from './dynamic-pickup.routes.js';
+import tripRouter from './trip.routes.js';
 
 const apiRouter = Router();
 
@@ -25,6 +26,7 @@ apiRouter.use('/schools', dashboardRouter);
 apiRouter.use('/schools', busRouter);
 apiRouter.use('/schools', driverRouter);
 apiRouter.use('/schools', studentRouter);
+apiRouter.use('/schools', tripRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({

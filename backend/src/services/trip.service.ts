@@ -1,0 +1,803 @@
+import {
+  TripStatus,
+  TripLifecycleStage,
+  CreateTripRequest,
+  TripDetailResponse,
+  UpdateTripProgressRequest,
+} from '@school-bus/shared';
+import { query } from '../config/database.js';
+import {
+  BadRequestError,
+  NotFoundError,
+  ForbiddenError,
+  ConflictError,
+} from '../middlewares/error.middleware.js';
+import { logger } from './logger.service.js';
+
+export interface TripActorContext {
+  schoolId?: string;
+  userId?: string;
+  userRole?: string;
+  isDriver?: boolean;
+}
+
+export class TripService {
+  /**
+   * Helper: Records an operational trip change to audit_logs
+   */
+  private static async recordTripAudit(params: {
+    schoolId: string;
+    tripId: string;
+    action: string;
+    userId?: string | null;
+    userRole?: string;
+    changeSummary: string;
+    previousState?: Record<string, any> | null;
+    newState?: Record<string, any> | null;
+  }): Promise<void> {
+    try {
+      const {
+        schoolId,
+        tripId,
+        action,
+        userId = null,
+        userRole = 'SCHOOL_ADMIN',
+        changeSummary,
+        previousState = null,
+        newState = null,
+      } = params;
+
+      const diffJson = {
+        changeSummary,
+        previousState,
+        newState,
+      };
+
+      await query(
+        `INSERT INTO audit_logs (
+           school_id, user_id, user_role, action, entity_type, entity_id, diff_json
+         ) VALUES ($1, $2, $3, $4, 'TRIP', $5, $6)`,
+        [
+          schoolId,
+          userId,
+          userRole,
+          action,
+          tripId,
+          JSON.stringify(diffJson),
+        ]
+      );
+    } catch (err: any) {
+      logger.warn(`[TripService] Failed to record trip audit log: ${err.message}`);
+    }
+  }
+
+  /**
+   * Helper: Resolves computed TripLifecycleStage from state and timestamps
+   */
+  public static computeLifecycleStage(row: {
+    status: TripStatus | string;
+    actualStartTime?: string | Date | null;
+    actualEndTime?: string | Date | null;
+    currentStopSequence?: number;
+    isArrivedSchool?: boolean;
+  }): TripLifecycleStage {
+    if (row.status === TripStatus.COMPLETED) {
+      return TripLifecycleStage.COMPLETED;
+    }
+    if (row.isArrivedSchool && row.status === TripStatus.IN_TRANSIT) {
+      return TripLifecycleStage.ARRIVED_SCHOOL;
+    }
+    if (row.actualStartTime && (row.status === TripStatus.IN_TRANSIT || row.status === TripStatus.DELAYED)) {
+      if ((row.currentStopSequence ?? 0) > 0) {
+        return TripLifecycleStage.IN_TRANSIT;
+      }
+      return TripLifecycleStage.STARTED;
+    }
+    return TripLifecycleStage.NOT_STARTED;
+  }
+
+  /**
+   * Micro-phase 16.1: Create / Schedule a new Trip
+   */
+  public static async createTrip(
+    schoolId: string,
+    payload: CreateTripRequest,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip creation attempt');
+    }
+
+    // 1. Verify school exists
+    const schoolRows = await query<{ id: string }>(
+      `SELECT id FROM schools WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+      [schoolId]
+    );
+    if (schoolRows.length === 0) {
+      throw new NotFoundError(`School ${schoolId} not found`);
+    }
+
+    const { routeId, busId, driverId, scheduledDate, scheduledStartTime } = payload;
+
+    // 2. Verify Route belongs to this school
+    const routeRows = await query<{ id: string; name: string; code: string }>(
+      `SELECT id, name, code FROM routes WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [routeId, schoolId]
+    );
+    if (routeRows.length === 0 || !routeRows[0]) {
+      throw new NotFoundError(`Route ${routeId} not found for this school`);
+    }
+
+    // 3. Verify Bus belongs to this school
+    const busRows = await query<{ id: string; bus_number: string; registration_number: string }>(
+      `SELECT id, bus_number, registration_number FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [busId, schoolId]
+    );
+    if (busRows.length === 0 || !busRows[0]) {
+      throw new NotFoundError(`Bus ${busId} not found for this school`);
+    }
+
+    // 4. Verify Driver belongs to this school
+    const driverRows = await query<{ id: string; full_name: string; phone: string }>(
+      `SELECT id, full_name, phone FROM drivers WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [driverId, schoolId]
+    );
+    if (driverRows.length === 0 || !driverRows[0]) {
+      throw new NotFoundError(`Driver ${driverId} not found for this school`);
+    }
+
+    const todayDate = scheduledDate || new Date().toISOString().split('T')[0]!;
+
+    // 5. Insert scheduled trip
+    const insertResult = await query<{
+      id: string;
+      school_id: string;
+      route_id: string;
+      bus_id: string;
+      driver_id: string;
+      status: TripStatus;
+      scheduled_date: string;
+      scheduled_start_time: string;
+      actual_start_time: string | null;
+      actual_end_time: string | null;
+      current_stop_sequence: number;
+      delay_minutes: number;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `INSERT INTO trips (
+         school_id, route_id, bus_id, driver_id, status, scheduled_date, scheduled_start_time
+       ) VALUES ($1, $2, $3, $4, 'SCHEDULED', $5::date, $6::timestamptz)
+       RETURNING id, school_id, route_id, bus_id, driver_id, status,
+                 scheduled_date::text AS scheduled_date,
+                 scheduled_start_time::text AS scheduled_start_time,
+                 actual_start_time::text AS actual_start_time,
+                 actual_end_time::text AS actual_end_time,
+                 current_stop_sequence, delay_minutes, created_at, updated_at`,
+      [schoolId, routeId, busId, driverId, todayDate, scheduledStartTime]
+    );
+
+    const r = insertResult[0]!;
+    logger.info(`[TripService] Scheduled trip ${r.id} for route ${routeId} on ${todayDate}`);
+
+    // 6. Record audit log
+    await this.recordTripAudit({
+      schoolId,
+      tripId: r.id,
+      action: 'TRIP_CREATED',
+      userId: actor?.userId,
+      userRole: actor?.userRole,
+      changeSummary: `Trip scheduled for route ${routeRows[0].name} (${routeRows[0].code}) on ${todayDate}`,
+      previousState: null,
+      newState: {
+        status: r.status,
+        routeId: r.route_id,
+        busId: r.bus_id,
+        driverId: r.driver_id,
+        scheduledDate: r.scheduled_date,
+        scheduledStartTime: r.scheduled_start_time,
+        stage: TripLifecycleStage.NOT_STARTED,
+      },
+    });
+
+    return this.getTripById(schoolId, r.id, actor);
+  }
+
+  /**
+   * Micro-phase 16.1: Retrieves trip details with assigned entities and lifecycle state
+   */
+  public static async getTripById(
+    schoolId: string,
+    tripId: string,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip access attempt');
+    }
+
+    const rows = await query<{
+      id: string;
+      school_id: string;
+      route_id: string;
+      bus_id: string;
+      driver_id: string;
+      status: TripStatus;
+      scheduled_date: string;
+      scheduled_start_time: string;
+      actual_start_time: string | null;
+      actual_end_time: string | null;
+      current_stop_sequence: number;
+      delay_minutes: number;
+      created_at: string;
+      updated_at: string;
+      route_name: string | null;
+      route_code: string | null;
+      bus_number: string | null;
+      registration_number: string | null;
+      driver_name: string | null;
+      driver_phone: string | null;
+      total_stops: number;
+      is_arrived_school: boolean;
+      arrived_school_time: string | null;
+    }>(
+      `SELECT t.id, t.school_id, t.route_id, t.bus_id, t.driver_id, t.status,
+              t.scheduled_date::text AS scheduled_date,
+              t.scheduled_start_time::text AS scheduled_start_time,
+              t.actual_start_time::text AS actual_start_time,
+              t.actual_end_time::text AS actual_end_time,
+              t.current_stop_sequence, t.delay_minutes, t.created_at, t.updated_at,
+              r.name AS route_name, r.code AS route_code,
+              b.bus_number, b.registration_number,
+              d.full_name AS driver_name, d.phone AS driver_phone,
+              (SELECT COUNT(*)::int FROM pickup_locations pl WHERE pl.route_id = t.route_id AND pl.deleted_at IS NULL) AS total_stops,
+              EXISTS(
+                SELECT 1 FROM audit_logs al
+                WHERE al.school_id = t.school_id AND al.entity_type = 'TRIP' AND al.entity_id = t.id AND al.action = 'TRIP_ARRIVED_SCHOOL'
+              ) AS is_arrived_school,
+              (
+                SELECT al.created_at::text FROM audit_logs al
+                WHERE al.school_id = t.school_id AND al.entity_type = 'TRIP' AND al.entity_id = t.id AND al.action = 'TRIP_ARRIVED_SCHOOL'
+                ORDER BY al.created_at DESC LIMIT 1
+              ) AS arrived_school_time
+       FROM trips t
+       LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+       WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (rows.length === 0 || !rows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found for this school`);
+    }
+
+    const r = rows[0];
+
+    const lifecycleStage = this.computeLifecycleStage({
+      status: r.status,
+      actualStartTime: r.actual_start_time,
+      actualEndTime: r.actual_end_time,
+      currentStopSequence: Number(r.current_stop_sequence),
+      isArrivedSchool: Boolean(r.is_arrived_school),
+    });
+
+    return {
+      id: r.id,
+      schoolId: r.school_id,
+      routeId: r.route_id,
+      routeName: r.route_name || undefined,
+      routeCode: r.route_code || undefined,
+      busId: r.bus_id,
+      busNumber: r.bus_number || undefined,
+      busRegistrationNumber: r.registration_number || undefined,
+      driverId: r.driver_id,
+      driverName: r.driver_name || undefined,
+      driverPhone: r.driver_phone || undefined,
+      status: r.status,
+      lifecycleStage,
+      scheduledDate: r.scheduled_date,
+      scheduledStartTime: r.scheduled_start_time,
+      actualStartTime: r.actual_start_time || null,
+      actualEndTime: r.actual_end_time || null,
+      arrivedSchoolTime: r.arrived_school_time || null,
+      currentStopSequence: Number(r.current_stop_sequence),
+      delayMinutes: Number(r.delay_minutes),
+      totalStops: Number(r.total_stops),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  /**
+   * Micro-phase 16.1: List trips for school with filters
+   */
+  public static async listTrips(
+    schoolId: string,
+    filters?: {
+      date?: string;
+      routeId?: string;
+      busId?: string;
+      driverId?: string;
+      status?: TripStatus;
+    },
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse[]> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip access attempt');
+    }
+
+    const rows = await query<{
+      id: string;
+      school_id: string;
+      route_id: string;
+      bus_id: string;
+      driver_id: string;
+      status: TripStatus;
+      scheduled_date: string;
+      scheduled_start_time: string;
+      actual_start_time: string | null;
+      actual_end_time: string | null;
+      current_stop_sequence: number;
+      delay_minutes: number;
+      created_at: string;
+      updated_at: string;
+      route_name: string | null;
+      route_code: string | null;
+      bus_number: string | null;
+      registration_number: string | null;
+      driver_name: string | null;
+      driver_phone: string | null;
+      total_stops: number;
+      is_arrived_school: boolean;
+      arrived_school_time: string | null;
+    }>(
+      `SELECT t.id, t.school_id, t.route_id, t.bus_id, t.driver_id, t.status,
+              t.scheduled_date::text AS scheduled_date,
+              t.scheduled_start_time::text AS scheduled_start_time,
+              t.actual_start_time::text AS actual_start_time,
+              t.actual_end_time::text AS actual_end_time,
+              t.current_stop_sequence, t.delay_minutes, t.created_at, t.updated_at,
+              r.name AS route_name, r.code AS route_code,
+              b.bus_number, b.registration_number,
+              d.full_name AS driver_name, d.phone AS driver_phone,
+              (SELECT COUNT(*)::int FROM pickup_locations pl WHERE pl.route_id = t.route_id AND pl.deleted_at IS NULL) AS total_stops,
+              EXISTS(
+                SELECT 1 FROM audit_logs al
+                WHERE al.school_id = t.school_id AND al.entity_type = 'TRIP' AND al.entity_id = t.id AND al.action = 'TRIP_ARRIVED_SCHOOL'
+              ) AS is_arrived_school,
+              (
+                SELECT al.created_at::text FROM audit_logs al
+                WHERE al.school_id = t.school_id AND al.entity_type = 'TRIP' AND al.entity_id = t.id AND al.action = 'TRIP_ARRIVED_SCHOOL'
+                ORDER BY al.created_at DESC LIMIT 1
+              ) AS arrived_school_time
+       FROM trips t
+       LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+       WHERE t.school_id = $1
+         AND ($2::date IS NULL OR t.scheduled_date = $2::date)
+         AND ($3::uuid IS NULL OR t.route_id = $3::uuid)
+         AND ($4::uuid IS NULL OR t.bus_id = $4::uuid)
+         AND ($5::uuid IS NULL OR t.driver_id = $5::uuid)
+         AND ($6::varchar IS NULL OR t.status = $6::varchar)
+         AND t.deleted_at IS NULL
+       ORDER BY t.scheduled_date DESC, t.scheduled_start_time ASC`,
+      [
+        schoolId,
+        filters?.date || null,
+        filters?.routeId || null,
+        filters?.busId || null,
+        filters?.driverId || null,
+        filters?.status || null,
+      ]
+    );
+
+    return rows.map((r) => ({
+      id: r.id,
+      schoolId: r.school_id,
+      routeId: r.route_id,
+      routeName: r.route_name || undefined,
+      routeCode: r.route_code || undefined,
+      busId: r.bus_id,
+      busNumber: r.bus_number || undefined,
+      busRegistrationNumber: r.registration_number || undefined,
+      driverId: r.driver_id,
+      driverName: r.driver_name || undefined,
+      driverPhone: r.driver_phone || undefined,
+      status: r.status,
+      lifecycleStage: this.computeLifecycleStage({
+        status: r.status,
+        actualStartTime: r.actual_start_time,
+        actualEndTime: r.actual_end_time,
+        currentStopSequence: Number(r.current_stop_sequence),
+        isArrivedSchool: Boolean(r.is_arrived_school),
+      }),
+      scheduledDate: r.scheduled_date,
+      scheduledStartTime: r.scheduled_start_time,
+      actualStartTime: r.actual_start_time || null,
+      actualEndTime: r.actual_end_time || null,
+      arrivedSchoolTime: r.arrived_school_time || null,
+      currentStopSequence: Number(r.current_stop_sequence),
+      delayMinutes: Number(r.delay_minutes),
+      totalStops: Number(r.total_stops),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  /**
+   * Micro-phase 16.1: Transition from NOT_STARTED to STARTED (Lifecycle: STARTED)
+   */
+  public static async startTrip(
+    schoolId: string,
+    tripId: string,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip start attempt');
+    }
+
+    // 1. Fetch current trip state
+    const currentRows = await query<{
+      id: string;
+      driver_id: string;
+      status: TripStatus;
+      actual_start_time: string | null;
+      actual_end_time: string | null;
+    }>(
+      `SELECT id, driver_id, status, actual_start_time, actual_end_time
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (currentRows.length === 0 || !currentRows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+
+    const current = currentRows[0];
+
+    // 2. Driver role validation: driver can only start their assigned trip
+    if (actor?.isDriver && actor.userId && current.driver_id !== actor.userId) {
+      throw new ForbiddenError('You are not authorized to start a trip assigned to another driver');
+    }
+
+    // 3. State Machine Validation:
+    // Can only start if currently SCHEDULED (NOT_STARTED)
+    if (current.status === TripStatus.IN_TRANSIT) {
+      throw new BadRequestError('Trip is already started and in transit');
+    }
+    if (current.status === TripStatus.COMPLETED) {
+      throw new BadRequestError('Cannot start a trip that is already completed');
+    }
+    if (current.status === TripStatus.CANCELLED) {
+      throw new BadRequestError('Cannot start a trip that has been cancelled');
+    }
+
+    // 4. Update status to IN_TRANSIT and set actual_start_time
+    await query(
+      `UPDATE trips
+       SET status = 'IN_TRANSIT',
+           actual_start_time = COALESCE(actual_start_time, NOW()),
+           current_stop_sequence = 0,
+           updated_at = NOW()
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [tripId, schoolId]
+    );
+
+    logger.info(`[TripService] Trip ${tripId} STARTED by ${actor?.userId || 'admin'}`);
+
+    // 5. Audit log
+    await this.recordTripAudit({
+      schoolId,
+      tripId,
+      action: 'TRIP_STARTED',
+      userId: actor?.userId,
+      userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
+      changeSummary: 'Trip departed / started',
+      previousState: {
+        status: current.status,
+        stage: TripLifecycleStage.NOT_STARTED,
+      },
+      newState: {
+        status: TripStatus.IN_TRANSIT,
+        stage: TripLifecycleStage.STARTED,
+        actualStartTime: new Date().toISOString(),
+      },
+    });
+
+    return this.getTripById(schoolId, tripId, actor);
+  }
+
+  /**
+   * Micro-phase 16.1: Update trip stop progress (Lifecycle: IN_TRANSIT progression)
+   */
+  public static async updateTripProgress(
+    schoolId: string,
+    tripId: string,
+    payload: UpdateTripProgressRequest,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip update attempt');
+    }
+
+    const currentRows = await query<{
+      id: string;
+      driver_id: string;
+      status: TripStatus;
+      current_stop_sequence: number;
+      delay_minutes: number;
+    }>(
+      `SELECT id, driver_id, status, current_stop_sequence, delay_minutes
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (currentRows.length === 0 || !currentRows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+
+    const current = currentRows[0];
+
+    // Driver verification
+    if (actor?.isDriver && actor.userId && current.driver_id !== actor.userId) {
+      throw new ForbiddenError('You are not authorized to update progress for another driver\'s trip');
+    }
+
+    // State machine: must be active (IN_TRANSIT or DELAYED)
+    if (current.status !== TripStatus.IN_TRANSIT && current.status !== TripStatus.DELAYED) {
+      throw new BadRequestError(`Cannot update progress for trip in ${current.status} state`);
+    }
+
+    const nextDelay = payload.delayMinutes !== undefined ? payload.delayMinutes : current.delay_minutes;
+
+    await query(
+      `UPDATE trips
+       SET current_stop_sequence = $1,
+           delay_minutes = $2,
+           status = CASE WHEN $2 > 10 THEN 'DELAYED' ELSE 'IN_TRANSIT' END,
+           updated_at = NOW()
+       WHERE id = $3 AND school_id = $4 AND deleted_at IS NULL`,
+      [payload.currentStopSequence, nextDelay, tripId, schoolId]
+    );
+
+    // Audit log
+    await this.recordTripAudit({
+      schoolId,
+      tripId,
+      action: 'TRIP_PROGRESS_UPDATED',
+      userId: actor?.userId,
+      userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
+      changeSummary: `Progress updated: stop sequence #${payload.currentStopSequence}`,
+      previousState: {
+        currentStopSequence: current.current_stop_sequence,
+        delayMinutes: current.delay_minutes,
+      },
+      newState: {
+        currentStopSequence: payload.currentStopSequence,
+        delayMinutes: nextDelay,
+        stage: TripLifecycleStage.IN_TRANSIT,
+      },
+    });
+
+    return this.getTripById(schoolId, tripId, actor);
+  }
+
+  /**
+   * Micro-phase 16.1: Mark arrival at destination school (Lifecycle: ARRIVED_SCHOOL)
+   */
+  public static async arriveAtSchool(
+    schoolId: string,
+    tripId: string,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip arrival attempt');
+    }
+
+    const currentRows = await query<{
+      id: string;
+      driver_id: string;
+      status: TripStatus;
+      current_stop_sequence: number;
+    }>(
+      `SELECT id, driver_id, status, current_stop_sequence
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (currentRows.length === 0 || !currentRows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+
+    const current = currentRows[0];
+
+    // Driver verification
+    if (actor?.isDriver && actor.userId && current.driver_id !== actor.userId) {
+      throw new ForbiddenError('You are not authorized to mark arrival for another driver\'s trip');
+    }
+
+    // State machine: must be active
+    if (current.status !== TripStatus.IN_TRANSIT && current.status !== TripStatus.DELAYED) {
+      throw new BadRequestError(`Cannot mark arrival for trip in ${current.status} state`);
+    }
+
+    logger.info(`[TripService] Trip ${tripId} reached destination (ARRIVED_SCHOOL)`);
+
+    // Audit log stores the arrival milestone
+    await this.recordTripAudit({
+      schoolId,
+      tripId,
+      action: 'TRIP_ARRIVED_SCHOOL',
+      userId: actor?.userId,
+      userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
+      changeSummary: 'Bus arrived at destination school campus',
+      previousState: {
+        status: current.status,
+        stage: TripLifecycleStage.IN_TRANSIT,
+      },
+      newState: {
+        status: current.status,
+        stage: TripLifecycleStage.ARRIVED_SCHOOL,
+        arrivedSchoolTime: new Date().toISOString(),
+      },
+    });
+
+    return this.getTripById(schoolId, tripId, actor);
+  }
+
+  /**
+   * Micro-phase 16.1: Conclude and finalize a trip (Lifecycle: COMPLETED)
+   */
+  public static async completeTrip(
+    schoolId: string,
+    tripId: string,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip completion attempt');
+    }
+
+    const currentRows = await query<{
+      id: string;
+      driver_id: string;
+      status: TripStatus;
+      actual_start_time: string | null;
+      actual_end_time: string | null;
+    }>(
+      `SELECT id, driver_id, status, actual_start_time, actual_end_time
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (currentRows.length === 0 || !currentRows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+
+    const current = currentRows[0];
+
+    // Driver verification
+    if (actor?.isDriver && actor.userId && current.driver_id !== actor.userId) {
+      throw new ForbiddenError('You are not authorized to complete another driver\'s trip');
+    }
+
+    // State machine: cannot complete an already completed or cancelled trip
+    if (current.status === TripStatus.COMPLETED) {
+      throw new BadRequestError('Trip is already completed');
+    }
+    if (current.status === TripStatus.CANCELLED) {
+      throw new BadRequestError('Cannot complete a cancelled trip');
+    }
+    if (current.status === TripStatus.SCHEDULED) {
+      throw new BadRequestError('Cannot complete a trip that has not been started');
+    }
+
+    // Update status to COMPLETED and record actual_end_time
+    await query(
+      `UPDATE trips
+       SET status = 'COMPLETED',
+           actual_end_time = COALESCE(actual_end_time, NOW()),
+           updated_at = NOW()
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [tripId, schoolId]
+    );
+
+    logger.info(`[TripService] Trip ${tripId} COMPLETED`);
+
+    // Audit log
+    await this.recordTripAudit({
+      schoolId,
+      tripId,
+      action: 'TRIP_COMPLETED',
+      userId: actor?.userId,
+      userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
+      changeSummary: 'Trip successfully finished and marked COMPLETED',
+      previousState: {
+        status: current.status,
+      },
+      newState: {
+        status: TripStatus.COMPLETED,
+        stage: TripLifecycleStage.COMPLETED,
+        actualEndTime: new Date().toISOString(),
+      },
+    });
+
+    return this.getTripById(schoolId, tripId, actor);
+  }
+
+  /**
+   * Micro-phase 16.1: Cancel a trip with audit trail
+   */
+  public static async cancelTrip(
+    schoolId: string,
+    tripId: string,
+    reason: string,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip cancellation attempt');
+    }
+
+    const currentRows = await query<{
+      id: string;
+      status: TripStatus;
+    }>(
+      `SELECT id, status
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (currentRows.length === 0 || !currentRows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+
+    const current = currentRows[0];
+
+    if (current.status === TripStatus.COMPLETED) {
+      throw new BadRequestError('Cannot cancel an already completed trip');
+    }
+    if (current.status === TripStatus.CANCELLED) {
+      throw new BadRequestError('Trip is already cancelled');
+    }
+
+    await query(
+      `UPDATE trips
+       SET status = 'CANCELLED',
+           updated_at = NOW()
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [tripId, schoolId]
+    );
+
+    logger.info(`[TripService] Trip ${tripId} CANCELLED. Reason: ${reason}`);
+
+    // Audit log
+    await this.recordTripAudit({
+      schoolId,
+      tripId,
+      action: 'TRIP_CANCELLED',
+      userId: actor?.userId,
+      userRole: actor?.userRole || 'SCHOOL_ADMIN',
+      changeSummary: `Trip cancelled: ${reason.trim()}`,
+      previousState: {
+        status: current.status,
+      },
+      newState: {
+        status: TripStatus.CANCELLED,
+        reason: reason.trim(),
+      },
+    });
+
+    return this.getTripById(schoolId, tripId, actor);
+  }
+}

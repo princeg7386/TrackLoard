@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React from 'react';
 import Link from 'next/link';
@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Radio,
   UserCircle2,
+  Navigation,
   X,
 } from 'lucide-react';
 
@@ -33,6 +34,7 @@ const navItems: SidebarItem[] = [
   { name: 'Fleet / Buses', href: '/admin/buses', icon: Bus },
   { name: 'Drivers Directory', href: '/admin/drivers', icon: Users },
   { name: 'Routes & Stops', href: '/admin/routes', icon: MapPin },
+  { name: 'Trip Operations', href: '/admin/trips', icon: Navigation },
   { name: 'Students & Parents', href: '/admin/students', icon: GraduationCap },
   { name: 'Incidents & SOS', href: '/admin/safety', icon: AlertTriangle },
   { name: 'Reports & Logs', href: '/admin/reports', icon: FileText },
