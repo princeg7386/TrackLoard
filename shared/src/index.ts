@@ -2111,6 +2111,20 @@ export const RouteDistanceSummarySchema = z.object({
 });
 export type RouteDistanceSummary = z.infer<typeof RouteDistanceSummarySchema>;
 
+export const RouteStopCalculationResultSchema = z.object({
+  routeId: z.string().uuid(),
+  routeName: z.string(),
+  schoolId: z.string().uuid(),
+  stopsCount: z.number().int(),
+  totalDistanceMeters: z.number(),
+  estimatedDurationMinutes: z.number(),
+  pathPolyline: z.string(),
+  legs: z.array(z.any()),
+  provider: z.string(),
+});
+export type RouteStopCalculationResult = z.infer<typeof RouteStopCalculationResultSchema>;
+
+
 /**
  * Decodes standard encoded polyline (Google/OSRM algorithm) into [latitude, longitude] pairs
  */
