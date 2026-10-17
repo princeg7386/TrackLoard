@@ -15,11 +15,18 @@ import { sendSuccess } from '../utils/response.util.js';
 
 function extractTripActor(req: Request): TripActorContext {
   const isDriver = req.user?.role === UserRole.DRIVER || !!req.driver;
+  const headerKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
+  const idempotencyKey =
+    typeof headerKey === 'string'
+      ? headerKey
+      : (req.body as any)?.idempotencyKey || (req.body as any)?.clientRequestId || undefined;
+
   return {
     schoolId: req.user?.schoolId || req.driver?.schoolId,
     userId: req.user?.id || req.driver?.id,
     userRole: req.user?.role || (req.driver ? UserRole.DRIVER : undefined),
     isDriver,
+    idempotencyKey,
   };
 }
 

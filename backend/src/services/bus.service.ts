@@ -309,7 +309,7 @@ export class BusService {
   ): Promise<{ success: boolean; message: string }> {
     const bus = await this.getBusById(schoolId, busId);
 
-    // 1. Safety Check: Verify no trip is currently IN_PROGRESS
+    // 1. Safety Check: Verify no trip is currently IN_TRANSIT
     const activeTrips = await query<{ id: string }>(
       `SELECT id FROM trips 
        WHERE bus_id = $1 AND school_id = $2 AND status = 'IN_TRANSIT' AND deleted_at IS NULL`,

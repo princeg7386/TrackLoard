@@ -253,9 +253,10 @@ describe('Phase 16.4: Trip Engine — Trip End (End Timestamp, Stop State, Lock 
       expect(msg).toContain('not been started');
     });
 
-    it('rejects completing an already completed trip', async () => {
+    it('safely and idempotently handles completing an already completed trip', async () => {
       const querySpy = vi.spyOn(db, 'query');
 
+      // 1. Current trip query returns already COMPLETED
       querySpy.mockResolvedValueOnce([
         {
           id: tripAId,
@@ -263,6 +264,34 @@ describe('Phase 16.4: Trip Engine — Trip End (End Timestamp, Stop State, Lock 
           bus_id: busAId,
           driver_id: driverAId,
           status: TripStatus.COMPLETED,
+          actual_start_time: '2026-10-17T07:30:00Z',
+          actual_end_time: '2026-10-17T08:15:00Z',
+          last_latitude: 12.9716,
+          last_longitude: 77.5946,
+          last_speed_kmh: 0,
+          last_bearing_degrees: 90,
+          gps_health_status: 'OFFLINE',
+        },
+      ] as any);
+
+      // 2. getTripById query
+      querySpy.mockResolvedValueOnce([
+        {
+          id: tripAId,
+          school_id: schoolA,
+          route_id: routeAId,
+          bus_id: busAId,
+          driver_id: driverAId,
+          status: TripStatus.COMPLETED,
+          scheduled_date: '2026-10-17',
+          scheduled_start_time: '2026-10-17T07:30:00Z',
+          actual_start_time: '2026-10-17T07:30:00Z',
+          actual_end_time: '2026-10-17T08:15:00Z',
+          current_stop_sequence: 4,
+          delay_minutes: 0,
+          total_stops: 4,
+          is_arrived_school: true,
+          arrived_school_time: '2026-10-17T08:10:00Z',
         },
       ] as any);
 
@@ -270,10 +299,11 @@ describe('Phase 16.4: Trip Engine — Trip End (End Timestamp, Stop State, Lock 
         .post(`/api/v1/schools/${schoolA}/trips/${tripAId}/complete`)
         .set('Authorization', `Bearer ${adminAToken}`);
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      const msg = res.body.error?.message || res.body.message;
-      expect(msg).toContain('already completed');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe(TripStatus.COMPLETED);
+      expect(res.body.data.attendanceLocked).toBe(true);
+      expect(res.body.data.trackingSessionActive).toBe(false);
     });
 
     it('rejects completing a cancelled trip', async () => {

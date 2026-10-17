@@ -92,10 +92,16 @@ export class TripApiService {
   public static async startTrip(
     schoolId: string,
     tripId: string,
-    payload?: StartTripRequest
+    payload?: StartTripRequest,
+    options?: { idempotencyKey?: string }
   ): Promise<TripDetailResponse> {
+    const headers: Record<string, string> = {};
+    if (options?.idempotencyKey) {
+      headers['Idempotency-Key'] = options.idempotencyKey;
+    }
     return apiRequest<TripDetailResponse>(`/schools/${schoolId}/trips/${tripId}/start`, {
       method: 'POST',
+      headers,
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
   }
@@ -132,10 +138,16 @@ export class TripApiService {
   public static async completeTrip(
     schoolId: string,
     tripId: string,
-    payload?: EndTripRequest
+    payload?: EndTripRequest,
+    options?: { idempotencyKey?: string }
   ): Promise<TripDetailResponse> {
+    const headers: Record<string, string> = {};
+    if (options?.idempotencyKey) {
+      headers['Idempotency-Key'] = options.idempotencyKey;
+    }
     return apiRequest<TripDetailResponse>(`/schools/${schoolId}/trips/${tripId}/complete`, {
       method: 'POST',
+      headers,
       ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
   }

@@ -27,6 +27,7 @@ export interface TripActorContext {
   userId?: string;
   userRole?: string;
   isDriver?: boolean;
+  idempotencyKey?: string;
 }
 
 export class TripService {
@@ -647,10 +648,18 @@ export class TripService {
       throw new ForbiddenError('You are not authorized to start a trip assigned to another driver');
     }
 
-    // 3. State Machine Validation:
-    // Can only start if currently SCHEDULED (NOT_STARTED)
-    if (current.status === TripStatus.IN_TRANSIT) {
-      throw new BadRequestError('Trip is already started and in transit');
+    // 3. State Machine Validation & Idempotency:
+    // If the trip is already started / in-transit, return active trip idempotently without re-triggering side effects
+    if (current.status === TripStatus.IN_TRANSIT || current.status === TripStatus.DELAYED) {
+      const keySuffix = actor?.idempotencyKey ? ` [Key: ${actor.idempotencyKey}]` : '';
+      logger.info(
+        `[TripService] Idempotent retry detected for startTrip: Trip ${tripId} is already in transit${keySuffix}`
+      );
+      const trip = await this.getTripById(schoolId, tripId, actor);
+      return {
+        ...trip,
+        trackingSessionActive: true,
+      };
     }
     if (current.status === TripStatus.COMPLETED) {
       throw new BadRequestError('Cannot start a trip that is already completed');
@@ -794,6 +803,17 @@ export class TripService {
 
     const nextDelay = payload.delayMinutes !== undefined ? payload.delayMinutes : current.delay_minutes;
 
+    // Idempotency: If stop sequence and delay match current state, return existing trip without duplicate updates
+    if (
+      Number(current.current_stop_sequence) === payload.currentStopSequence &&
+      Number(current.delay_minutes) === nextDelay
+    ) {
+      logger.info(
+        `[TripService] Idempotent retry detected for updateTripProgress: Trip ${tripId} stop sequence #${payload.currentStopSequence} already recorded`
+      );
+      return this.getTripById(schoolId, tripId, actor);
+    }
+
     await query(
       `UPDATE trips
        SET current_stop_sequence = $1,
@@ -865,6 +885,20 @@ export class TripService {
     // State machine: must be active
     if (current.status !== TripStatus.IN_TRANSIT && current.status !== TripStatus.DELAYED) {
       throw new BadRequestError(`Cannot mark arrival for trip in ${current.status} state`);
+    }
+
+    // Idempotency: Check if arrival was already recorded
+    const existingArrival = await query<{ id: string }>(
+      `SELECT id FROM audit_logs
+       WHERE school_id = $1 AND entity_type = 'TRIP' AND entity_id = $2 AND action = 'TRIP_ARRIVED_SCHOOL'
+       LIMIT 1`,
+      [schoolId, tripId]
+    );
+    if (existingArrival.length > 0) {
+      logger.info(
+        `[TripService] Idempotent retry detected for arriveAtSchool: Trip ${tripId} already marked arrived at school`
+      );
+      return this.getTripById(schoolId, tripId, actor);
     }
 
     logger.info(`[TripService] Trip ${tripId} reached destination (ARRIVED_SCHOOL)`);
@@ -940,9 +974,19 @@ export class TripService {
       throw new ForbiddenError('You are not authorized to complete another driver\'s trip');
     }
 
-    // 3. State machine validation
+    // 3. State machine validation & Idempotency:
+    // If the trip is already completed, return existing finalized trip idempotently without duplicate side effects
     if (current.status === TripStatus.COMPLETED) {
-      throw new BadRequestError('Trip is already completed');
+      const keySuffix = actor?.idempotencyKey ? ` [Key: ${actor.idempotencyKey}]` : '';
+      logger.info(
+        `[TripService] Idempotent retry detected for completeTrip: Trip ${tripId} is already completed${keySuffix}`
+      );
+      const trip = await this.getTripById(schoolId, tripId, actor);
+      return {
+        ...trip,
+        trackingSessionActive: false,
+        attendanceLocked: true,
+      };
     }
     if (current.status === TripStatus.CANCELLED) {
       throw new BadRequestError('Cannot complete a cancelled trip');

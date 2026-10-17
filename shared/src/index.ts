@@ -1083,12 +1083,16 @@ export type GenerateDailyTripsResponse = z.infer<typeof GenerateDailyTripsRespon
 
 export const StartTripRequestSchema = z.object({
   startedAt: z.string().datetime().optional(),
+  idempotencyKey: z.string().optional(),
+  clientRequestId: z.string().optional(),
 });
 export type StartTripRequest = z.infer<typeof StartTripRequestSchema>;
 
 export const EndTripRequestSchema = z.object({
   endedAt: z.string().datetime().optional(),
   summaryNotes: z.string().max(500).optional(),
+  idempotencyKey: z.string().optional(),
+  clientRequestId: z.string().optional(),
 });
 export type EndTripRequest = z.infer<typeof EndTripRequestSchema>;
 

@@ -234,9 +234,10 @@ describe('Phase 16.3: Trip Engine — Trip Start (Start Timestamp, Tracking Sess
   });
 
   describe('2. State Machine Restrictions on Trip Start', () => {
-    it('rejects starting a trip that is already in transit', async () => {
+    it('safely and idempotently handles starting a trip that is already in transit', async () => {
       const querySpy = vi.spyOn(db, 'query');
 
+      // 1. Current trip query returns already IN_TRANSIT
       querySpy.mockResolvedValueOnce([
         {
           id: tripAId,
@@ -244,6 +245,34 @@ describe('Phase 16.3: Trip Engine — Trip Start (Start Timestamp, Tracking Sess
           bus_id: busAId,
           driver_id: driverAId,
           status: TripStatus.IN_TRANSIT,
+          actual_start_time: '2026-10-17T07:30:00Z',
+          actual_end_time: null,
+          last_latitude: 12.9716,
+          last_longitude: 77.5946,
+          last_speed_kmh: 0,
+          last_bearing_degrees: 90,
+          gps_health_status: 'HEALTHY',
+        },
+      ] as any);
+
+      // 2. getTripById query
+      querySpy.mockResolvedValueOnce([
+        {
+          id: tripAId,
+          school_id: schoolA,
+          route_id: routeAId,
+          bus_id: busAId,
+          driver_id: driverAId,
+          status: TripStatus.IN_TRANSIT,
+          scheduled_date: '2026-10-17',
+          scheduled_start_time: '2026-10-17T07:30:00Z',
+          actual_start_time: '2026-10-17T07:30:00Z',
+          actual_end_time: null,
+          current_stop_sequence: 0,
+          delay_minutes: 0,
+          total_stops: 4,
+          is_arrived_school: false,
+          arrived_school_time: null,
         },
       ] as any);
 
@@ -251,10 +280,10 @@ describe('Phase 16.3: Trip Engine — Trip Start (Start Timestamp, Tracking Sess
         .post(`/api/v1/schools/${schoolA}/trips/${tripAId}/start`)
         .set('Authorization', `Bearer ${driverAToken}`);
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      const msg = res.body.error?.message || res.body.message;
-      expect(msg).toContain('already started');
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe(TripStatus.IN_TRANSIT);
+      expect(res.body.data.trackingSessionActive).toBe(true);
     });
 
     it('rejects starting a trip that is already completed', async () => {
