@@ -9,10 +9,13 @@ import {
   EtaCalculationResult,
   SnapToRoadResult,
   RoutingOption,
+  RoutingEvaluationResponse,
+  RoutingEvaluationItem,
 } from '@school-bus/shared';
 import { query } from '../../config/database.js';
 import { NotFoundError } from '../../middlewares/error.middleware.js';
 import { OsrmRoutingAdapter } from './osrm-routing.adapter.js';
+import { ValhallaRoutingAdapter } from './valhalla-routing.adapter.js';
 import { MockRoutingAdapter } from './mock-routing.adapter.js';
 
 export interface RouteStopCalculationResult {
@@ -51,10 +54,13 @@ export class RoutingService {
     RoutingService.activeOption = option;
     if (option === 'osrm') {
       RoutingService.provider = new OsrmRoutingAdapter();
+    } else if (option === 'valhalla') {
+      RoutingService.provider = new ValhallaRoutingAdapter();
     } else {
       RoutingService.provider = new MockRoutingAdapter();
     }
   }
+
 
   /**
    * Get active routing option
@@ -201,4 +207,90 @@ export class RoutingService {
       provider: routeResult.provider,
     };
   }
+
+  /**
+   * Evaluate and benchmark routing engines (OSRM, Valhalla, Mock)
+   * Runs standardized transit route benchmark and returns comparative metrics.
+   */
+  public static async evaluateEngines(): Promise<RoutingEvaluationResponse> {
+    const benchmarkWaypoints: GeoCoordinates[] = [
+      { latitude: 28.6675, longitude: 77.2285 }, // Kashmere Gate Metro
+      { latitude: 28.6800, longitude: 77.2250 }, // Civil Lines Gate 3
+    ];
+
+    const engines: Array<{
+      option: RoutingOption;
+      name: string;
+      adapter: IRoutingProvider;
+      features: { turnByTurn: boolean; matrix: boolean; roadSnapping: boolean; customCosting: boolean };
+    }> = [
+      {
+        option: 'osrm',
+        name: 'Open Source Routing Machine (OSRM)',
+        adapter: new OsrmRoutingAdapter(),
+        features: { turnByTurn: true, matrix: true, roadSnapping: true, customCosting: false },
+      },
+      {
+        option: 'valhalla',
+        name: 'Valhalla Multi-Modal Routing Engine',
+        adapter: new ValhallaRoutingAdapter(),
+        features: { turnByTurn: true, matrix: true, roadSnapping: true, customCosting: true },
+      },
+      {
+        option: 'mock',
+        name: 'Mock & Geometric Transit Model (Offline)',
+        adapter: new MockRoutingAdapter(),
+        features: { turnByTurn: true, matrix: true, roadSnapping: true, customCosting: true },
+      },
+    ];
+
+    const evaluations: RoutingEvaluationItem[] = [];
+
+    for (const eng of engines) {
+      const start = Date.now();
+      try {
+        const result = await eng.adapter.calculateRoute(benchmarkWaypoints, { mode: 'bus' });
+        const latencyMs = Date.now() - start;
+
+        evaluations.push({
+          engine: eng.option,
+          engineName: eng.name,
+          isAvailable: true,
+          latencyMs,
+          distanceMeters: result.distanceMeters,
+          durationSeconds: result.durationSeconds,
+          pointsCount: result.coordinates.length,
+          features: eng.features,
+        });
+      } catch (err: any) {
+        evaluations.push({
+          engine: eng.option,
+          engineName: eng.name,
+          isAvailable: false,
+          latencyMs: Date.now() - start,
+          features: eng.features,
+          error: err?.message || 'Engine unreachable',
+        });
+      }
+    }
+
+    // Determine recommended engine: prefer OSRM or Valhalla if available with low latency (<3000ms), else mock
+    const osrmEval = evaluations.find((e) => e.engine === 'osrm');
+    const valhallaEval = evaluations.find((e) => e.engine === 'valhalla');
+
+    let recommendedEngine: RoutingOption = 'mock';
+    if (osrmEval && osrmEval.isAvailable && (!osrmEval.error || osrmEval.latencyMs < 3000)) {
+      recommendedEngine = 'osrm';
+    } else if (valhallaEval && valhallaEval.isAvailable && !valhallaEval.error) {
+      recommendedEngine = 'valhalla';
+    }
+
+    return {
+      evaluations,
+      recommendedEngine,
+      activeEngine: RoutingService.activeOption,
+      evaluatedAt: new Date().toISOString(),
+    };
+  }
 }
+

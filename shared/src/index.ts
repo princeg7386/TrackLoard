@@ -1734,7 +1734,9 @@ export const RouteOptionsSchema = z.object({
   avoidTolls: z.boolean().optional().default(false),
   overview: z.enum(['full', 'simplified', 'none']).optional().default('full'),
 });
-export type RouteOptions = z.infer<typeof RouteOptionsSchema>;
+export type RouteOptions = z.input<typeof RouteOptionsSchema>;
+export type RouteOptionsOutput = z.output<typeof RouteOptionsSchema>;
+
 
 export const CalculateRouteRequestSchema = z.object({
   waypoints: z.array(RouteWaypointSchema).min(2),
@@ -1872,8 +1874,9 @@ export type MapTileLayerOption = z.infer<typeof MapTileLayerOptionSchema>;
 export const GeocodingOptionSchema = z.enum(['osm_nominatim', 'mock']);
 export type GeocodingOption = z.infer<typeof GeocodingOptionSchema>;
 
-export const RoutingOptionSchema = z.enum(['osrm', 'mock']);
+export const RoutingOptionSchema = z.enum(['osrm', 'valhalla', 'mock']);
 export type RoutingOption = z.infer<typeof RoutingOptionSchema>;
+
 
 export const MapTileLayerConfigSchema = z.object({
   id: MapTileLayerOptionSchema,
@@ -1979,6 +1982,96 @@ export function getOsmTileUrl(
     .replace('{x}', String(x))
     .replace('{y}', String(y));
 }
+
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 13.3 — Routing (OSRM/Valhalla Evaluation, Route Distance, Road Paths, Fallbacks)
+ * -----------------------------------------------------------------------------
+ */
+
+export const RoutingEvaluationFeaturesSchema = z.object({
+  turnByTurn: z.boolean(),
+  matrix: z.boolean(),
+  roadSnapping: z.boolean(),
+  customCosting: z.boolean(),
+});
+export type RoutingEvaluationFeatures = z.infer<typeof RoutingEvaluationFeaturesSchema>;
+
+export const RoutingEvaluationItemSchema = z.object({
+  engine: RoutingOptionSchema,
+  engineName: z.string(),
+  isAvailable: z.boolean(),
+  latencyMs: z.number(),
+  distanceMeters: z.number().optional(),
+  durationSeconds: z.number().optional(),
+  pointsCount: z.number().optional(),
+  features: RoutingEvaluationFeaturesSchema,
+  error: z.string().optional(),
+});
+export type RoutingEvaluationItem = z.infer<typeof RoutingEvaluationItemSchema>;
+
+export const RoutingEvaluationResponseSchema = z.object({
+  evaluations: z.array(RoutingEvaluationItemSchema),
+  recommendedEngine: RoutingOptionSchema,
+  activeEngine: RoutingOptionSchema,
+  evaluatedAt: z.string(),
+});
+export type RoutingEvaluationResponse = z.infer<typeof RoutingEvaluationResponseSchema>;
+
+export const RouteDistanceSummarySchema = z.object({
+  totalDistanceMeters: z.number().min(0),
+  totalDistanceKm: z.number().min(0),
+  estimatedDurationMinutes: z.number().min(0),
+  legsCount: z.number().int().min(1),
+  isSnappy: z.boolean().default(true),
+});
+export type RouteDistanceSummary = z.infer<typeof RouteDistanceSummarySchema>;
+
+/**
+ * Decodes standard encoded polyline (Google/OSRM algorithm) into [latitude, longitude] pairs
+ */
+export function decodePolyline(encoded: string, precision: number = 5): [number, number][] {
+  const factor = Math.pow(10, precision);
+  const coordinates: [number, number][] = [];
+  let index = 0;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < encoded.length) {
+    let b: number;
+    let shift = 0;
+    let result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+
+    const deltaLat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+    lat += deltaLat;
+
+    shift = 0;
+    result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20);
+
+    const deltaLng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+    lng += deltaLng;
+
+    coordinates.push([
+      Number((lat / factor).toFixed(6)),
+      Number((lng / factor).toFixed(6)),
+    ]);
+  }
+
+  return coordinates;
+}
+
 
 
 

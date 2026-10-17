@@ -140,5 +140,18 @@ routingRouter.post(
   RoutingController.selectFreeMapOption
 );
 
+// 10. Benchmark & Evaluate Routing Engines (OSRM, Valhalla, Mock)
+routingRouter.get(
+  '/evaluate',
+  authenticateToken,
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RoutingController.evaluateRoutingEngines
+);
+
 export default routingRouter;
+
 

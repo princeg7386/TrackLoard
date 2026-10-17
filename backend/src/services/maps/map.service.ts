@@ -112,7 +112,7 @@ export class MapService {
       activeRoutingProvider: RoutingService.getRoutingOption(),
       availableTileLayers: Object.values(FREE_MAP_TILE_PROVIDERS),
       availableGeocodingProviders: ['osm_nominatim', 'mock'],
-      availableRoutingProviders: ['osrm', 'mock'],
+      availableRoutingProviders: ['osrm', 'valhalla', 'mock'],
       defaultCenter: { latitude: 28.6139, longitude: 77.2090 },
       defaultZoom: 12,
       isFreeFirst: true,

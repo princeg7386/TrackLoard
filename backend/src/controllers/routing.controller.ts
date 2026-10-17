@@ -185,5 +185,23 @@ export class RoutingController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/routing/evaluate
+   * Evaluate and benchmark routing engines (OSRM, Valhalla, Mock)
+   */
+  public static async evaluateRoutingEngines(
+    _req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const evaluation = await RoutingService.evaluateEngines();
+      sendSuccess(res, evaluation, 'Routing engines evaluated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
 
