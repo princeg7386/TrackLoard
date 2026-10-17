@@ -2914,9 +2914,17 @@ export const DriverWhatsAppInboundResponseSchema = z.object({
   handled: z.boolean(),
   driverId: z.string().uuid().optional(),
   schoolId: z.string().uuid().optional(),
-  actionTriggered: z.union([z.nativeEnum(DriverWhatsAppAction), z.literal('MENU'), z.literal('UNREGISTERED')]),
+  actionTriggered: z.union([
+    z.nativeEnum(DriverWhatsAppAction),
+    z.literal('MENU'),
+    z.literal('UNREGISTERED'),
+    z.literal('UNKNOWN_COMMAND'),
+    z.literal('DUPLICATE_COMMAND'),
+  ]),
   replyText: z.string(),
   menu: DriverWhatsAppMenuResponseSchema.optional(),
+  whatsappDelivered: z.boolean().optional(),
+  errorCode: z.string().optional(),
 });
 export type DriverWhatsAppInboundResponse = z.infer<typeof DriverWhatsAppInboundResponseSchema>;
 

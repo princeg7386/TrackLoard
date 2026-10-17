@@ -430,15 +430,68 @@ export class DriverWhatsappService {
     };
   }
 
+  private static recentCommands = new Map<
+    string,
+    { timestamp: number; response: DriverWhatsAppInboundResponse }
+  >();
+
+  public static clearCommandCache(): void {
+    this.recentCommands.clear();
+  }
+
+  private static checkDuplicateCommand(
+    driverId: string,
+    actionKey: string
+  ): DriverWhatsAppInboundResponse | null {
+    const key = `${driverId}:${actionKey.trim().toLowerCase()}`;
+    const now = Date.now();
+    const existing = this.recentCommands.get(key);
+    if (existing && now - existing.timestamp < 2500) {
+      return {
+        ...existing.response,
+        actionTriggered: 'DUPLICATE_COMMAND',
+        errorCode: 'DUPLICATE_COMMAND',
+        replyText:
+          `⏳ *Duplicate Request Received*\n\n` +
+          `Your previous request was just received and processed. Please wait a moment before sending another request.\n\n` +
+          `Reply *menu* to view your current trip status.`,
+      };
+    }
+    return null;
+  }
+
+  private static recordCommandResponse(
+    driverId: string,
+    actionKey: string,
+    response: DriverWhatsAppInboundResponse
+  ): void {
+    const key = `${driverId}:${actionKey.trim().toLowerCase()}`;
+    this.recentCommands.set(key, {
+      timestamp: Date.now(),
+      response,
+    });
+    if (this.recentCommands.size > 1000) {
+      const cutoff = Date.now() - 10000;
+      for (const [k, v] of this.recentCommands.entries()) {
+        if (v.timestamp < cutoff) {
+          this.recentCommands.delete(k);
+        }
+      }
+    }
+  }
+
   /**
    * Resolves inbound message text to a specific DriverWhatsAppAction
    */
-  public static parseActionFromInput(text?: string, action?: DriverWhatsAppAction): DriverWhatsAppAction | 'MENU' {
+  public static parseActionFromInput(
+    text?: string,
+    action?: DriverWhatsAppAction
+  ): DriverWhatsAppAction | 'MENU' | 'UNKNOWN_COMMAND' {
     if (action && Object.values(DriverWhatsAppAction).includes(action)) {
       return action;
     }
 
-    if (!text) {
+    if (!text || !text.trim()) {
       return 'MENU';
     }
 
@@ -515,13 +568,14 @@ export class DriverWhatsappService {
       clean === 'hi' ||
       clean === 'hello' ||
       clean === 'namaste' ||
-      clean === 'start' ||
+      clean === 'support' ||
+      clean === 'info' ||
       clean === 'driver_action_help'
     ) {
       return DriverWhatsAppAction.HELP;
     }
 
-    return 'MENU';
+    return 'UNKNOWN_COMMAND';
   }
 
   /**
@@ -544,18 +598,49 @@ export class DriverWhatsappService {
         `Your phone number (*${international}*) is not registered as an active bus driver in our school transport safety platform.\n\n` +
         `Please contact your School Transport Coordinator to register your mobile number before accessing driver operations.`;
 
-      await MessagingService.sendMessage({
-        recipientPhone: international,
-        recipientRole: 'DRIVER',
-        directText: unregisteredReply,
-        schoolId: schoolId,
-      });
+      let whatsappDelivered = true;
+      let errorCode: string | undefined;
+      try {
+        await MessagingService.sendMessage({
+          recipientPhone: international,
+          recipientRole: 'DRIVER',
+          directText: unregisteredReply,
+          schoolId: schoolId,
+        });
+      } catch (err: any) {
+        logger.warn(`[DriverWhatsApp] Outbound WhatsApp dispatch failed for unregistered driver: ${err.message}`);
+        whatsappDelivered = false;
+        errorCode = 'TEMPORARY_WHATSAPP_FAILURE';
+      }
 
       return {
         handled: false,
         actionTriggered: 'UNREGISTERED',
         replyText: unregisteredReply,
+        whatsappDelivered,
+        errorCode,
       };
+    }
+
+    const resolvedAction = this.parseActionFromInput(text, action);
+    const commandKey = `${resolvedAction}:${(text || '').trim().toLowerCase()}`;
+
+    // Rapid-submission deduplication check
+    if (resolvedAction !== 'UNKNOWN_COMMAND') {
+      const duplicate = this.checkDuplicateCommand(driver.id, commandKey);
+      if (duplicate) {
+        try {
+          await MessagingService.sendMessage({
+            recipientPhone: international,
+            recipientRole: 'DRIVER',
+            schoolId: driver.schoolId,
+            directText: duplicate.replyText,
+          });
+        } catch {
+          // Non-crashing dispatch failure
+        }
+        return duplicate;
+      }
     }
 
     // 2. Fetch driver menu and current operational context
@@ -564,8 +649,8 @@ export class DriverWhatsappService {
       throw new Error(`Failed to load driver menu for driver ${driver.id}`);
     }
 
-    const resolvedAction = this.parseActionFromInput(text, action);
     let replyText = '';
+    let errorCode: string | undefined;
 
     switch (resolvedAction) {
       case DriverWhatsAppAction.START_TRIP: {
@@ -576,10 +661,22 @@ export class DriverWhatsappService {
           });
           replyText = startResult.replyText;
         } catch (err: any) {
-          replyText =
-            `⚠️ *Could Not Start Trip*\n\n` +
-            `${err.message || 'Unable to start trip departure at this moment.'}\n\n` +
-            `Please contact your School Transport Coordinator for assistance.`;
+          if (
+            err.details?.errorCode === 'NO_ASSIGNED_BUS' ||
+            (err.message && err.message.toLowerCase().includes('no assigned bus'))
+          ) {
+            errorCode = 'NO_ASSIGNED_BUS';
+            replyText =
+              `⚠️ *No Assigned Bus Found*\n\n` +
+              `You do not have a bus assigned to your driver profile or route.\n\n` +
+              `Please contact your School Transport Coordinator to assign a bus before starting your trip.`;
+          } else {
+            errorCode = err.details?.errorCode || 'START_TRIP_FAILED';
+            replyText =
+              `⚠️ *Could Not Start Trip*\n\n` +
+              `${err.message || 'Unable to start trip departure at this moment.'}\n\n` +
+              `Please contact your School Transport Coordinator for assistance.`;
+          }
         }
         break;
       }
@@ -592,10 +689,22 @@ export class DriverWhatsappService {
           });
           replyText = endResult.replyText;
         } catch (err: any) {
-          replyText =
-            `ℹ️ *Could Not End Trip*\n\n` +
-            `${err.message || 'Unable to conclude trip at this moment.'}\n\n` +
-            `Reply *menu* to view your current status and options.`;
+          if (
+            err.details?.errorCode === 'NO_ACTIVE_TRIP' ||
+            (err.message && err.message.toLowerCase().includes('active trip'))
+          ) {
+            errorCode = 'NO_ACTIVE_TRIP';
+            replyText =
+              `⚠️ *No Active Trip Found*\n\n` +
+              `You do not currently have an active trip in transit to complete.\n\n` +
+              `Reply *1* to start today's scheduled trip or *menu* to view your options.`;
+          } else {
+            errorCode = err.details?.errorCode || 'END_TRIP_FAILED';
+            replyText =
+              `ℹ️ *Could Not End Trip*\n\n` +
+              `${err.message || 'Unable to conclude trip at this moment.'}\n\n` +
+              `Reply *menu* to view your current status and options.`;
+          }
         }
         break;
       }
@@ -609,8 +718,12 @@ export class DriverWhatsappService {
       }
 
       case DriverWhatsAppAction.REPORT_PROBLEM: {
+        const routeInfo = menu.activeTrip
+          ? `Active Route: *${menu.activeTrip.routeName || 'Assigned Route'}*\n\n`
+          : '';
         replyText =
           `⚠️ *Report Operational Problem*\n\n` +
+          routeInfo +
           `Please reply with your issue code:\n` +
           `• *TRAFFIC* <minutes> (e.g., Traffic 15 mins)\n` +
           `• *BREAKDOWN* (mechanical issue)\n` +
@@ -629,35 +742,85 @@ export class DriverWhatsappService {
       }
 
       case DriverWhatsAppAction.HELP:
-      case 'MENU':
-      default: {
+      case 'MENU': {
         replyText = menu.formattedText;
+        break;
+      }
+
+      case 'UNKNOWN_COMMAND':
+      default: {
+        errorCode = 'UNKNOWN_COMMAND';
+        replyText =
+          `❓ *Command Not Recognized*\n\n` +
+          `We didn't recognize: "${text || ''}".\n\n` +
+          `Please reply with a valid number (1-6) or command:\n` +
+          `1️⃣ *Start Trip* — Begin trip departure\n` +
+          `2️⃣ *End Trip* — Complete trip & lock attendance\n` +
+          `3️⃣ *Student Search* — Find student & stop info\n` +
+          `4️⃣ *Report Problem* — Report delay, traffic, or issue\n` +
+          `5️⃣ *Emergency* — Send SOS emergency alert\n` +
+          `6️⃣ *Help* — Support & emergency helpline\n\n` +
+          `_Type any number (1-6) or reply *menu* anytime._`;
         break;
       }
     }
 
-    // 3. Dispatch reply to driver via WhatsApp
-    await MessagingService.sendMessage({
-      recipientPhone: international,
-      recipientRole: 'DRIVER',
-      schoolId: driver.schoolId,
-      directText: replyText,
-      interactiveType: 'list',
-      actionButtons: [
-        { title: 'Start Trip', payload: 'DRIVER_ACTION_START_TRIP' },
-        { title: 'End Trip', payload: 'DRIVER_ACTION_END_TRIP' },
-        { title: 'Emergency', payload: 'DRIVER_ACTION_EMERGENCY' },
-      ],
-    });
+    // 3. Dispatch reply to driver via WhatsApp (with resilience against provider failures)
+    let whatsappDelivered = true;
+    try {
+      await MessagingService.sendMessage({
+        recipientPhone: international,
+        recipientRole: 'DRIVER',
+        schoolId: driver.schoolId,
+        directText: replyText,
+        interactiveType: 'list',
+        actionButtons: [
+          { title: 'Start Trip', payload: 'DRIVER_ACTION_START_TRIP' },
+          { title: 'End Trip', payload: 'DRIVER_ACTION_END_TRIP' },
+          { title: 'Emergency', payload: 'DRIVER_ACTION_EMERGENCY' },
+        ],
+      });
+    } catch (dispatchErr: any) {
+      logger.warn(`[DriverWhatsApp] Outbound WhatsApp dispatch failed for driver ${driver.id}: ${dispatchErr.message}`);
+      whatsappDelivered = false;
+      if (!errorCode) {
+        errorCode = 'TEMPORARY_WHATSAPP_FAILURE';
+      }
+      try {
+        await query(
+          `INSERT INTO notifications (
+             school_id, recipient_phone, recipient_role, channel,
+             template_name, message_body, status, failure_reason
+           ) VALUES ($1, $2, 'DRIVER', 'WHATSAPP', 'DIRECT_TEXT', $3, $4, $5)`,
+          [
+            driver.schoolId,
+            international,
+            replyText,
+            'FAILED',
+            dispatchErr.message || 'Temporary WhatsApp/API failure',
+          ]
+        );
+      } catch {
+        // Notification table insert failure should not throw
+      }
+    }
 
-    return {
-      handled: true,
+    const response: DriverWhatsAppInboundResponse = {
+      handled: resolvedAction !== 'UNKNOWN_COMMAND',
       driverId: driver.id,
       schoolId: driver.schoolId,
       actionTriggered: resolvedAction,
       replyText,
       menu,
+      whatsappDelivered,
+      ...(errorCode ? { errorCode } : {}),
     };
+
+    if (resolvedAction !== 'UNKNOWN_COMMAND') {
+      this.recordCommandResponse(driver.id, commandKey, response);
+    }
+
+    return response;
   }
 
   /**
@@ -860,7 +1023,8 @@ export class DriverWhatsappService {
 
       if (!resolvedBus) {
         throw new BadRequestError(
-          'No assigned bus found for this driver or route. Please assign a bus before starting the trip.'
+          'No assigned bus found for this driver or route. Please assign a bus before starting the trip.',
+          { errorCode: 'NO_ASSIGNED_BUS' }
         );
       }
 
@@ -883,7 +1047,8 @@ export class DriverWhatsappService {
 
     if (!resolvedBus) {
       throw new BadRequestError(
-        'No assigned bus found for this driver. Please assign a bus before starting the trip.'
+        'No assigned bus found for this driver. Please assign a bus before starting the trip.',
+        { errorCode: 'NO_ASSIGNED_BUS' }
       );
     }
 
@@ -1112,7 +1277,8 @@ export class DriverWhatsappService {
         }
 
         throw new BadRequestError(
-          'You do not currently have an active trip in transit to complete. Reply 1 to start today’s trip.'
+          'You do not currently have an active trip in transit to complete. Reply 1 to start today’s trip.',
+          { errorCode: 'NO_ACTIVE_TRIP' }
         );
       }
 
