@@ -2162,3 +2162,107 @@ export const PaidMapPolicyResponseSchema = z.object({
   dailyQuotaBudget: z.number().int(),
 });
 export type PaidMapPolicyResponse = z.infer<typeof PaidMapPolicyResponseSchema>;
+
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 14.1 — Dynamic Pickup Engine: Parent Location Sharing & Verification
+ * -----------------------------------------------------------------------------
+ */
+
+export const SendMessageOptionsSchema = z.object({
+  recipientPhone: z.string(),
+  schoolId: z.string().optional(),
+  studentId: z.string().optional(),
+  templateId: z.string().optional(),
+  variables: z.record(z.string(), z.string()).optional(),
+  directText: z.string().optional(),
+  interactiveType: z.enum(['location_request_message', 'button', 'list']).optional(),
+  actionButtons: z.array(z.object({ title: z.string(), payload: z.string() })).optional(),
+});
+export type SendMessageOptions = z.infer<typeof SendMessageOptionsSchema>;
+
+export const MessageSendResultSchema = z.object({
+  messageId: z.string(),
+  status: z.enum(['sent', 'queued', 'failed']),
+  provider: z.string(),
+  timestamp: z.string(),
+});
+export type MessageSendResult = z.infer<typeof MessageSendResultSchema>;
+
+export interface IMessagingProvider {
+  readonly providerName: string;
+  sendMessage(options: SendMessageOptions): Promise<MessageSendResult>;
+  sendLocationRequest(
+    recipientPhone: string,
+    promptText: string,
+    context?: {
+      schoolId?: string;
+      studentId?: string;
+      parentName?: string;
+      studentName?: string;
+      schoolName?: string;
+    }
+  ): Promise<MessageSendResult>;
+  isHealthy(): Promise<boolean>;
+}
+
+export const RequestParentLocationSchema = z.object({
+  schoolId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  parentPhone: z.string().optional(),
+  customPrompt: z.string().optional(),
+});
+export type RequestParentLocation = z.infer<typeof RequestParentLocationSchema>;
+
+export const ParentLocationShareRequestSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  senderPhone: z.string().optional(),
+  studentId: z.string().uuid().optional(),
+  schoolId: z.string().uuid().optional(),
+  locationName: z.string().optional(),
+  address: z.string().optional(),
+  notes: z.string().optional(),
+});
+export type ParentLocationShareRequest = z.infer<typeof ParentLocationShareRequestSchema>;
+
+export const ValidateCoordinatesQuerySchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  schoolId: z.string().uuid().optional(),
+  maxCatchmentKm: z.number().min(1).max(100).default(35),
+});
+export type ValidateCoordinatesQuery = z.infer<typeof ValidateCoordinatesQuerySchema>;
+
+export const ParentLocationValidationResultSchema = z.object({
+  isValid: z.boolean(),
+  coordinates: GeoCoordinatesSchema,
+  formattedAddress: z.string(),
+  distanceToSchoolKm: z.number().min(0),
+  isWithinCatchment: z.boolean(),
+  roadAccessible: z.boolean(),
+  isWithinIndia: z.boolean(),
+  validationErrors: z.array(z.string()).default([]),
+  suggestedStopName: z.string().optional(),
+  studentId: z.string().optional(),
+  schoolId: z.string().optional(),
+});
+export type ParentLocationValidationResult = z.infer<typeof ParentLocationValidationResultSchema>;
+
+export const WhatsAppInboundMessageSchema = z.object({
+  from: z.string(),
+  messageId: z.string().optional(),
+  type: z.enum(['location', 'text', 'interactive', 'unknown']).default('unknown'),
+  location: z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+      name: z.string().optional(),
+      address: z.string().optional(),
+    })
+    .optional(),
+  text: z.object({ body: z.string() }).optional(),
+  timestamp: z.string().optional(),
+});
+export type WhatsAppInboundMessage = z.infer<typeof WhatsAppInboundMessageSchema>;
+

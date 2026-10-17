@@ -9,6 +9,7 @@ import driverRouter from './driver.routes.js';
 import studentRouter from './student.routes.js';
 import telemetryRouter from './telemetry.routes.js';
 import routingRouter from './routing.routes.js';
+import dynamicPickupRouter from './dynamic-pickup.routes.js';
 
 const apiRouter = Router();
 
@@ -16,6 +17,7 @@ const apiRouter = Router();
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/driver/auth', driverAuthRouter);
 apiRouter.use('/parent', parentRouter);
+apiRouter.use('/parent', dynamicPickupRouter);
 apiRouter.use('/telemetry', telemetryRouter);
 apiRouter.use('/routing', routingRouter);
 apiRouter.use('/schools', schoolProfileRouter);
