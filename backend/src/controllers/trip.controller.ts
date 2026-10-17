@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import {
   CreateTripRequest,
+  CreateTodayTripRequest,
+  GenerateDailyTripsRequest,
   UpdateTripProgressRequest,
   CancelTripRequest,
   TripStatus,
@@ -34,6 +36,44 @@ export class TripController {
       const actor = extractTripActor(req);
       const result = await TripService.createTrip(schoolId, req.body, actor);
       sendSuccess(res, result, 'Trip scheduled successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/schools/:schoolId/trips/today
+   * Creates / schedules today's transit trip
+   */
+  public static async createTodayTrip(
+    req: Request<{ schoolId: string }, {}, CreateTodayTripRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const actor = extractTripActor(req);
+      const result = await TripService.createTodayTrip(schoolId, req.body, actor);
+      sendSuccess(res, result, "Today's trip scheduled successfully", 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/schools/:schoolId/trips/generate-daily
+   * Automatically schedules trips for today across all active routes with attached bus/driver
+   */
+  public static async generateDailyTrips(
+    req: Request<{ schoolId: string }, {}, GenerateDailyTripsRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const actor = extractTripActor(req);
+      const result = await TripService.generateDailyTrips(schoolId, req.body, actor);
+      sendSuccess(res, result, 'Daily trips generated successfully', 201);
     } catch (error) {
       next(error);
     }

@@ -1050,15 +1050,36 @@ export const TripSchema = z.object({
 });
 export type Trip = z.infer<typeof TripSchema>;
 
-// Trip Engine (Micro-phase 16.1)
+// Trip Engine (Micro-phase 16.1 & 16.2)
 export const CreateTripRequestSchema = z.object({
   routeId: z.string().uuid('Valid route ID required'),
-  busId: z.string().uuid('Valid bus ID required'),
-  driverId: z.string().uuid('Valid driver ID required'),
+  busId: z.string().uuid('Valid bus ID required').optional(),
+  driverId: z.string().uuid('Valid driver ID required').optional(),
   scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD').optional(),
-  scheduledStartTime: z.string().min(1, 'Scheduled start time required'),
+  scheduledStartTime: z.string().min(1, 'Scheduled start time required').optional(),
 });
 export type CreateTripRequest = z.infer<typeof CreateTripRequestSchema>;
+
+export const CreateTodayTripRequestSchema = z.object({
+  routeId: z.string().uuid('Valid route ID required'),
+  busId: z.string().uuid('Valid bus ID required').optional(),
+  driverId: z.string().uuid('Valid driver ID required').optional(),
+  scheduledStartTime: z.string().min(1, 'Scheduled start time required').optional(),
+});
+export type CreateTodayTripRequest = z.infer<typeof CreateTodayTripRequestSchema>;
+
+export const GenerateDailyTripsRequestSchema = z.object({
+  scheduledDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD').optional(),
+  shift: z.enum(['MORNING', 'AFTERNOON', 'CUSTOM']).optional(),
+});
+export type GenerateDailyTripsRequest = z.infer<typeof GenerateDailyTripsRequestSchema>;
+
+export const GenerateDailyTripsResponseSchema = z.object({
+  scheduledCount: z.number().int(),
+  skippedCount: z.number().int(),
+  createdTrips: z.array(z.lazy(() => TripDetailResponseSchema)),
+});
+export type GenerateDailyTripsResponse = z.infer<typeof GenerateDailyTripsResponseSchema>;
 
 export const UpdateTripProgressRequestSchema = z.object({
   currentStopSequence: z.number().int().min(0),

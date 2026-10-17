@@ -1,6 +1,9 @@
 import {
   TripDetailResponse,
   CreateTripRequest,
+  CreateTodayTripRequest,
+  GenerateDailyTripsRequest,
+  GenerateDailyTripsResponse,
   UpdateTripProgressRequest,
   CancelTripRequest,
   TripStatus,
@@ -51,6 +54,32 @@ export class TripApiService {
     return apiRequest<TripDetailResponse>(`/schools/${schoolId}/trips`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  /**
+   * Create today's trip with route, bus, driver attachment
+   */
+  public static async createTodayTrip(
+    schoolId: string,
+    payload: CreateTodayTripRequest
+  ): Promise<TripDetailResponse> {
+    return apiRequest<TripDetailResponse>(`/schools/${schoolId}/trips/today`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /**
+   * Generate today's trips in bulk across active routes
+   */
+  public static async generateDailyTrips(
+    schoolId: string,
+    payload?: GenerateDailyTripsRequest
+  ): Promise<GenerateDailyTripsResponse> {
+    return apiRequest<GenerateDailyTripsResponse>(`/schools/${schoolId}/trips/generate-daily`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
     });
   }
 

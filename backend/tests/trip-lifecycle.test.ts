@@ -143,7 +143,13 @@ describe('Phase 16.1: Trip Engine — Trip Lifecycle State Machine', () => {
       querySpy.mockResolvedValueOnce([
         { id: driverAId, full_name: 'Rajesh Kumar', phone: '+919876543210' },
       ] as any);
-      // 5. Insert trip RETURNING ...
+      // 5. Active bus check
+      querySpy.mockResolvedValueOnce([] as any);
+      // 6. Active driver check
+      querySpy.mockResolvedValueOnce([] as any);
+      // 7. Duplicate trip check
+      querySpy.mockResolvedValueOnce([] as any);
+      // 8. Insert trip RETURNING ...
       querySpy.mockResolvedValueOnce([
         {
           id: tripAId,

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import {
   CreateTripRequestSchema,
+  CreateTodayTripRequestSchema,
+  GenerateDailyTripsRequestSchema,
   UpdateTripProgressRequestSchema,
   CancelTripRequestSchema,
   UserRole,
@@ -24,6 +26,34 @@ tripRouter.post(
   ),
   validateBody(CreateTripRequestSchema),
   TripController.createTrip
+);
+
+// 1b. Create Today's Trip (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/today',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(CreateTodayTripRequestSchema),
+  TripController.createTodayTrip
+);
+
+// 1c. Generate Daily Trips from Active Routes (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/generate-daily',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(GenerateDailyTripsRequestSchema),
+  TripController.generateDailyTrips
 );
 
 // 2. List Trips with filters (Admin, Coordinator, Driver)

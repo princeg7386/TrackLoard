@@ -2,6 +2,9 @@ import {
   TripStatus,
   TripLifecycleStage,
   CreateTripRequest,
+  CreateTodayTripRequest,
+  GenerateDailyTripsRequest,
+  GenerateDailyTripsResponse,
   TripDetailResponse,
   UpdateTripProgressRequest,
 } from '@school-bus/shared';
@@ -97,7 +100,8 @@ export class TripService {
   }
 
   /**
-   * Micro-phase 16.1: Create / Schedule a new Trip
+   * Micro-phase 16.1 & 16.2: Create / Schedule a new Trip
+   * Attaches route, bus, and driver with validation and conflict checks
    */
   public static async createTrip(
     schoolId: string,
@@ -119,36 +123,99 @@ export class TripService {
 
     const { routeId, busId, driverId, scheduledDate, scheduledStartTime } = payload;
 
-    // 2. Verify Route belongs to this school
-    const routeRows = await query<{ id: string; name: string; code: string }>(
-      `SELECT id, name, code FROM routes WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+    // 2. Attach Route: Verify route belongs to this school
+    const routeRows = await query<{
+      id: string;
+      name: string;
+      code: string;
+      default_bus_id: string | null;
+      default_driver_id: string | null;
+    }>(
+      `SELECT id, name, code, default_bus_id, default_driver_id
+       FROM routes
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
       [routeId, schoolId]
     );
     if (routeRows.length === 0 || !routeRows[0]) {
       throw new NotFoundError(`Route ${routeId} not found for this school`);
     }
 
-    // 3. Verify Bus belongs to this school
+    const route = routeRows[0];
+
+    // 3. Attach Bus: Use explicit busId or fallback to route's default_bus_id
+    const effectiveBusId = busId || route.default_bus_id;
+    if (!effectiveBusId) {
+      throw new BadRequestError('Bus is required. Please specify busId or attach a default bus to route');
+    }
+
     const busRows = await query<{ id: string; bus_number: string; registration_number: string }>(
-      `SELECT id, bus_number, registration_number FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
-      [busId, schoolId]
+      `SELECT id, bus_number, registration_number
+       FROM buses
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [effectiveBusId, schoolId]
     );
     if (busRows.length === 0 || !busRows[0]) {
-      throw new NotFoundError(`Bus ${busId} not found for this school`);
+      throw new NotFoundError(`Bus ${effectiveBusId} not found for this school`);
     }
 
-    // 4. Verify Driver belongs to this school
+    // 4. Attach Driver: Use explicit driverId or fallback to route's default_driver_id
+    const effectiveDriverId = driverId || route.default_driver_id;
+    if (!effectiveDriverId) {
+      throw new BadRequestError('Driver is required. Please specify driverId or attach a default driver to route');
+    }
+
     const driverRows = await query<{ id: string; full_name: string; phone: string }>(
-      `SELECT id, full_name, phone FROM drivers WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
-      [driverId, schoolId]
+      `SELECT id, full_name, phone
+       FROM drivers
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [effectiveDriverId, schoolId]
     );
     if (driverRows.length === 0 || !driverRows[0]) {
-      throw new NotFoundError(`Driver ${driverId} not found for this school`);
+      throw new NotFoundError(`Driver ${effectiveDriverId} not found for this school`);
     }
 
-    const todayDate = scheduledDate || new Date().toISOString().split('T')[0]!;
+    // 5. Conflict Validation: Verify bus is not currently in transit on another active trip
+    const activeBusTrip = await query<{ id: string }>(
+      `SELECT id FROM trips
+       WHERE bus_id = $1 AND school_id = $2 AND status = 'IN_TRANSIT' AND deleted_at IS NULL
+       LIMIT 1`,
+      [effectiveBusId, schoolId]
+    );
+    if (activeBusTrip.length > 0) {
+      throw new ConflictError('Bus is currently in transit on another active trip');
+    }
 
-    // 5. Insert scheduled trip
+    // 6. Conflict Validation: Verify driver is not currently in transit on another active trip
+    const activeDriverTrip = await query<{ id: string }>(
+      `SELECT id FROM trips
+       WHERE driver_id = $1 AND school_id = $2 AND status = 'IN_TRANSIT' AND deleted_at IS NULL
+       LIMIT 1`,
+      [effectiveDriverId, schoolId]
+    );
+    if (activeDriverTrip.length > 0) {
+      throw new ConflictError('Driver is currently in transit on another active trip');
+    }
+
+    // 7. Resolve Scheduled Date & Start Time
+    const todayDate = scheduledDate || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    const rawTime = scheduledStartTime || '07:30';
+    const effectiveStartTime = rawTime.includes('T') ? rawTime : `${todayDate}T${rawTime.padStart(5, '0')}:00Z`;
+
+    // 8. Conflict Validation: Prevent duplicate scheduled trip on same route, date, and start time
+    const duplicateTrip = await query<{ id: string }>(
+      `SELECT id FROM trips
+       WHERE school_id = $1 AND route_id = $2 AND scheduled_date = $3::date AND scheduled_start_time = $4::timestamptz AND status != 'CANCELLED' AND deleted_at IS NULL
+       LIMIT 1`,
+      [schoolId, routeId, todayDate, effectiveStartTime]
+    );
+    if (duplicateTrip.length > 0) {
+      throw new ConflictError('A trip is already scheduled for this route, date, and start time');
+    }
+
+    // 9. Insert scheduled trip
     const insertResult = await query<{
       id: string;
       school_id: string;
@@ -174,20 +241,20 @@ export class TripService {
                  actual_start_time::text AS actual_start_time,
                  actual_end_time::text AS actual_end_time,
                  current_stop_sequence, delay_minutes, created_at, updated_at`,
-      [schoolId, routeId, busId, driverId, todayDate, scheduledStartTime]
+      [schoolId, routeId, effectiveBusId, effectiveDriverId, todayDate, effectiveStartTime]
     );
 
     const r = insertResult[0]!;
     logger.info(`[TripService] Scheduled trip ${r.id} for route ${routeId} on ${todayDate}`);
 
-    // 6. Record audit log
+    // 10. Record audit log
     await this.recordTripAudit({
       schoolId,
       tripId: r.id,
       action: 'TRIP_CREATED',
       userId: actor?.userId,
       userRole: actor?.userRole,
-      changeSummary: `Trip scheduled for route ${routeRows[0].name} (${routeRows[0].code}) on ${todayDate}`,
+      changeSummary: `Trip scheduled for route ${route.name} (${route.code}) on ${todayDate}`,
       previousState: null,
       newState: {
         status: r.status,
@@ -201,6 +268,101 @@ export class TripService {
     });
 
     return this.getTripById(schoolId, r.id, actor);
+  }
+
+  /**
+   * Micro-phase 16.2: Create Today's Trip
+   * Concurrently attaches route, bus, and driver defaulting to today's Indian local date
+   */
+  public static async createTodayTrip(
+    schoolId: string,
+    payload: CreateTodayTripRequest,
+    actor?: TripActorContext
+  ): Promise<TripDetailResponse> {
+    const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+    return this.createTrip(
+      schoolId,
+      {
+        ...payload,
+        scheduledDate: todayDate,
+      },
+      actor
+    );
+  }
+
+  /**
+   * Micro-phase 16.2: Generate Daily Trips
+   * Automatically instantiates today's trips for all active routes with attached bus & driver
+   */
+  public static async generateDailyTrips(
+    schoolId: string,
+    payload?: GenerateDailyTripsRequest,
+    actor?: TripActorContext
+  ): Promise<GenerateDailyTripsResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant daily trips generation attempt');
+    }
+
+    const targetDate = payload?.scheduledDate || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+
+    // 1. Fetch active routes that have both default bus and driver attached
+    const routes = await query<{
+      id: string;
+      name: string;
+      code: string;
+      default_bus_id: string;
+      default_driver_id: string;
+    }>(
+      `SELECT id, name, code, default_bus_id, default_driver_id
+       FROM routes
+       WHERE school_id = $1 AND default_bus_id IS NOT NULL AND default_driver_id IS NOT NULL AND deleted_at IS NULL
+       ORDER BY code ASC`,
+      [schoolId]
+    );
+
+    const createdTrips: TripDetailResponse[] = [];
+    let skippedCount = 0;
+
+    for (const route of routes) {
+      // Check if a trip is already scheduled for this route today
+      const existing = await query<{ id: string }>(
+        `SELECT id FROM trips
+         WHERE school_id = $1 AND route_id = $2 AND scheduled_date = $3::date AND status != 'CANCELLED' AND deleted_at IS NULL
+         LIMIT 1`,
+        [schoolId, route.id, targetDate]
+      );
+
+      if (existing.length > 0) {
+        skippedCount++;
+        continue;
+      }
+
+      try {
+        const trip = await this.createTrip(
+          schoolId,
+          {
+            routeId: route.id,
+            busId: route.default_bus_id,
+            driverId: route.default_driver_id,
+            scheduledDate: targetDate,
+            scheduledStartTime: '07:30',
+          },
+          actor
+        );
+        createdTrips.push(trip);
+      } catch (err: any) {
+        logger.warn(`[TripService] Failed to generate daily trip for route ${route.code}: ${err.message}`);
+        skippedCount++;
+      }
+    }
+
+    logger.info(`[TripService] Generated ${createdTrips.length} daily trips for school ${schoolId} on ${targetDate} (${skippedCount} skipped)`);
+
+    return {
+      scheduledCount: createdTrips.length,
+      skippedCount,
+      createdTrips,
+    };
   }
 
   /**
