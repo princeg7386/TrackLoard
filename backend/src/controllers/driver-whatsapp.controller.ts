@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import {
   DriverWhatsAppInboundRequest,
+  DriverWhatsAppStartTripRequest,
   DriverWhatsAppAction,
 } from '@school-bus/shared';
 import { DriverWhatsappService } from '../services/driver-whatsapp.service.js';
@@ -86,4 +87,34 @@ export class DriverWhatsappController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/driver/whatsapp/start-trip
+   * Direct Start Trip trigger endpoint via WhatsApp flow (Micro-Phase 17.2)
+   */
+  public static async startTrip(
+    req: Request<{}, {}, DriverWhatsAppStartTripRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { from, schoolId, tripId, routeId, busId } = req.body;
+      if (!from) {
+        throw new BadRequestError('Sender phone number (from) is required');
+      }
+
+      const result = await DriverWhatsappService.startTripViaWhatsApp({
+        from,
+        schoolId,
+        tripId,
+        routeId,
+        busId,
+      });
+
+      sendSuccess(res, result, 'Trip started via WhatsApp successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

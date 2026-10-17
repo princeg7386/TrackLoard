@@ -1,5 +1,8 @@
 import { Router } from 'express';
-import { DriverWhatsAppInboundRequestSchema } from '@school-bus/shared';
+import {
+  DriverWhatsAppInboundRequestSchema,
+  DriverWhatsAppStartTripRequestSchema,
+} from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { DriverWhatsappController } from '../controllers/driver-whatsapp.controller.js';
 
@@ -18,4 +21,12 @@ driverWhatsappRouter.post(
 // 3. Get driver menu definition and status
 driverWhatsappRouter.get('/menu', DriverWhatsappController.getMenu);
 
+// 4. Start trip via WhatsApp flow (Micro-Phase 17.2)
+driverWhatsappRouter.post(
+  '/start-trip',
+  validateBody(DriverWhatsAppStartTripRequestSchema),
+  DriverWhatsappController.startTrip
+);
+
 export default driverWhatsappRouter;
+

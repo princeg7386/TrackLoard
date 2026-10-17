@@ -2920,4 +2920,37 @@ export const DriverWhatsAppInboundResponseSchema = z.object({
 });
 export type DriverWhatsAppInboundResponse = z.infer<typeof DriverWhatsAppInboundResponseSchema>;
 
+/**
+ * Driver WhatsApp Start Trip Types (Micro-Phase 17.2)
+ */
+export const DriverWhatsAppStartTripRequestSchema = z.object({
+  from: z.string().min(6),
+  schoolId: z.string().uuid().optional(),
+  tripId: z.string().uuid().optional(),
+  routeId: z.string().uuid().optional(),
+  busId: z.string().uuid().optional(),
+});
+export type DriverWhatsAppStartTripRequest = z.infer<typeof DriverWhatsAppStartTripRequestSchema>;
+
+export const DriverWhatsAppStartTripResponseSchema = z.object({
+  success: z.boolean(),
+  alreadyInTransit: z.boolean().default(false),
+  trip: TripDetailResponseSchema,
+  driver: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    phone: z.string(),
+  }),
+  bus: z.object({
+    id: z.string().uuid(),
+    busNumber: z.string(),
+    registrationNumber: z.string(),
+  }),
+  parentNotificationsSent: z.number().int().min(0),
+  trackingSessionActive: z.boolean(),
+  replyText: z.string(),
+});
+export type DriverWhatsAppStartTripResponse = z.infer<typeof DriverWhatsAppStartTripResponseSchema>;
+
+
 

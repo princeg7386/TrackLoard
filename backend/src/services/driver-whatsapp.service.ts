@@ -4,11 +4,16 @@ import {
   DriverWhatsAppMenuResponse,
   DriverWhatsAppInboundRequest,
   DriverWhatsAppInboundResponse,
+  DriverWhatsAppStartTripRequest,
+  DriverWhatsAppStartTripResponse,
   TripStatus,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { MessagingService } from './messaging/messaging.service.js';
 import { logger } from './logger.service.js';
+import { TripService } from './trip.service.js';
+import { ParentIdentityService } from './parent-identity.service.js';
+import { BadRequestError, NotFoundError } from '../middlewares/error.middleware.js';
 
 export class DriverWhatsappService {
   /**
@@ -562,24 +567,17 @@ export class DriverWhatsappService {
 
     switch (resolvedAction) {
       case DriverWhatsAppAction.START_TRIP: {
-        if (menu.activeTrip) {
+        try {
+          const startResult = await this.startTripViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+          });
+          replyText = startResult.replyText;
+        } catch (err: any) {
           replyText =
-            `🟢 *Trip Already In Transit*\n\n` +
-            `You are currently driving Route *${menu.activeTrip.routeCode || menu.activeTrip.routeName || 'Active Route'}*.\n` +
-            `Current stop sequence: *Stop #${menu.activeTrip.currentStopSequence} of ${menu.activeTrip.totalStops}*.\n\n` +
-            `Reply *2* to End Trip when arrived at school, or *3* to search student details.`;
-        } else if (menu.scheduledTrip) {
-          const departure = menu.scheduledTrip.scheduledStartTime.substring(11, 16) || menu.scheduledTrip.scheduledStartTime;
-          replyText =
-            `🚀 *Ready to Start Today’s Trip*\n\n` +
-            `Route: *${menu.scheduledTrip.routeCode || menu.scheduledTrip.routeName || 'Assigned Route'}*\n` +
-            `Bus: *${menu.bus?.busNumber || 'Assigned Bus'}*\n` +
-            `Scheduled Departure: *${departure}*\n\n` +
-            `To start live parent tracking and departure, please use your Driver App or confirm via coordination desk.`;
-        } else {
-          replyText =
-            `ℹ️ *No Scheduled Trip Found*\n\n` +
-            `You have no trips scheduled for today. Please contact your transport coordinator to assign your daily route.`;
+            `⚠️ *Could Not Start Trip*\n\n` +
+            `${err.message || 'Unable to start trip departure at this moment.'}\n\n` +
+            `Please contact your School Transport Coordinator for assistance.`;
         }
         break;
       }
@@ -656,6 +654,353 @@ export class DriverWhatsappService {
       actionTriggered: resolvedAction,
       replyText,
       menu,
+    };
+  }
+
+  /**
+   * Micro-phase 17.2: Start Trip Flow via WhatsApp
+   * 1. Identifies driver by phone number
+   * 2. Identifies assigned bus
+   * 3. Starts today's scheduled trip or auto-creates today's trip from assigned route
+   * 4. Activates tracking session & links parent tracking tokens (via TripService.startTrip)
+   * 5. Triggers parent departure notifications with secure tracking links
+   * 6. Updates school dashboard via RealtimeFeedService
+   */
+  public static async startTripViaWhatsApp(params: {
+    from: string;
+    schoolId?: string;
+    tripId?: string;
+    routeId?: string;
+    busId?: string;
+  }): Promise<DriverWhatsAppStartTripResponse> {
+    const { from, tripId: explicitTripId, routeId: explicitRouteId, busId: explicitBusId } = params;
+
+    // 1. Identify driver by phone
+    const driver = await this.findDriverByPhone(from, params.schoolId);
+    if (!driver) {
+      throw new NotFoundError(
+        `Driver not registered with mobile number: ${from}`
+      );
+    }
+    const schoolId = params.schoolId || driver.schoolId;
+
+    // 2. Check for active trip in transit (Idempotency)
+    const activeRows = await query<{
+      id: string;
+      route_id: string;
+      bus_id: string;
+      status: TripStatus;
+      current_stop_sequence: number;
+      actual_start_time: string | null;
+      route_name: string | null;
+      route_code: string | null;
+      bus_number: string | null;
+      registration_number: string | null;
+      total_stops: number;
+    }>(
+      `SELECT t.id, t.route_id, t.bus_id, t.status, t.current_stop_sequence,
+              t.actual_start_time::text AS actual_start_time,
+              r.name AS route_name, r.code AS route_code,
+              b.bus_number, b.registration_number,
+              (SELECT COUNT(*)::int FROM pickup_locations pl WHERE pl.route_id = t.route_id AND pl.deleted_at IS NULL) AS total_stops
+       FROM trips t
+       LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       WHERE t.driver_id = $1 AND t.school_id = $2
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED')
+         AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+      [driver.id, schoolId]
+    );
+
+    if (activeRows.length > 0 && activeRows[0]) {
+      const active = activeRows[0];
+      const tripDetail = await TripService.getTripById(schoolId, active.id, {
+        userId: driver.id,
+        isDriver: true,
+        userRole: 'DRIVER',
+      });
+
+      const routeLabel = active.route_code
+        ? `${active.route_code} - ${active.route_name || 'Active Route'}`
+        : active.route_name || 'Active Route';
+
+      const replyText =
+        `🟢 *Trip Already In Transit*\n\n` +
+        `You are currently driving Route *${routeLabel}* on Bus *${active.bus_number || 'Assigned Bus'}*.\n` +
+        `Current Progress: *Stop #${active.current_stop_sequence} of ${active.total_stops}*.\n\n` +
+        `Live GPS tracking session is active. Reply *2* to End Trip when arrived at school, or *3* to search student details.`;
+
+      return {
+        success: true,
+        alreadyInTransit: true,
+        trip: tripDetail,
+        driver: {
+          id: driver.id,
+          fullName: driver.fullName,
+          phone: driver.phone,
+        },
+        bus: {
+          id: active.bus_id,
+          busNumber: active.bus_number || '',
+          registrationNumber: active.registration_number || '',
+        },
+        parentNotificationsSent: 0,
+        trackingSessionActive: true,
+        replyText,
+      };
+    }
+
+    // 3. Resolve Target Bus
+    let resolvedBus: { id: string; busNumber: string; registrationNumber: string } | null = null;
+    if (explicitBusId) {
+      const busRows = await query<{ id: string; bus_number: string; registration_number: string }>(
+        `SELECT id, bus_number, registration_number FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+        [explicitBusId, schoolId]
+      );
+      if (busRows.length > 0 && busRows[0]) {
+        resolvedBus = {
+          id: busRows[0].id,
+          busNumber: busRows[0].bus_number,
+          registrationNumber: busRows[0].registration_number,
+        };
+      }
+    }
+
+    if (!resolvedBus && driver.busId) {
+      resolvedBus = {
+        id: driver.busId,
+        busNumber: driver.busNumber || '',
+        registrationNumber: driver.registrationNumber || '',
+      };
+    }
+
+    // 4. Resolve or Create Target Trip
+    let targetTripId: string | null = explicitTripId || null;
+
+    if (!targetTripId) {
+      const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+
+      // Check today's scheduled trip for this driver
+      const scheduledRows = await query<{ id: string; route_id: string; bus_id: string }>(
+        `SELECT t.id, t.route_id, t.bus_id
+         FROM trips t
+         WHERE t.driver_id = $1 AND t.school_id = $2
+           AND t.status = 'SCHEDULED'
+           AND t.scheduled_date = $3::date
+           AND t.deleted_at IS NULL
+         ORDER BY t.scheduled_start_time ASC
+         LIMIT 1`,
+        [driver.id, schoolId, todayDate]
+      );
+
+      if (scheduledRows.length > 0 && scheduledRows[0]) {
+        targetTripId = scheduledRows[0].id;
+        if (!resolvedBus) {
+          const sBusRows = await query<{ id: string; bus_number: string; registration_number: string }>(
+            `SELECT id, bus_number, registration_number FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+            [scheduledRows[0].bus_id, schoolId]
+          );
+          if (sBusRows.length > 0 && sBusRows[0]) {
+            resolvedBus = {
+              id: sBusRows[0].id,
+              busNumber: sBusRows[0].bus_number,
+              registrationNumber: sBusRows[0].registration_number,
+            };
+          }
+        }
+      }
+    }
+
+    // If still no trip found, look for assigned route to auto-create today's trip
+    if (!targetTripId) {
+      const routeRows = await query<{ id: string; name: string; code: string; default_bus_id: string | null }>(
+        `SELECT r.id, r.name, r.code, r.default_bus_id
+         FROM routes r
+         WHERE (
+           ($1::uuid IS NOT NULL AND r.id = $1::uuid)
+           OR r.default_driver_id = $2
+           OR ($3::uuid IS NOT NULL AND r.default_bus_id = $3::uuid)
+         )
+         AND r.school_id = $4
+         AND r.deleted_at IS NULL
+         ORDER BY r.created_at ASC
+         LIMIT 1`,
+        [explicitRouteId || null, driver.id, resolvedBus?.id || null, schoolId]
+      );
+
+      if (routeRows.length === 0 || !routeRows[0]) {
+        throw new BadRequestError(
+          'No scheduled trip or assigned route found for today. Please contact your transport coordinator.'
+        );
+      }
+
+      const assignedRoute = routeRows[0];
+
+      if (!resolvedBus) {
+        const routeBusId = assignedRoute.default_bus_id;
+        if (routeBusId) {
+          const bRows = await query<{ id: string; bus_number: string; registration_number: string }>(
+            `SELECT id, bus_number, registration_number FROM buses WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1`,
+            [routeBusId, schoolId]
+          );
+          if (bRows.length > 0 && bRows[0]) {
+            resolvedBus = {
+              id: bRows[0].id,
+              busNumber: bRows[0].bus_number,
+              registrationNumber: bRows[0].registration_number,
+            };
+          }
+        }
+      }
+
+      if (!resolvedBus) {
+        throw new BadRequestError(
+          'No assigned bus found for this driver or route. Please assign a bus before starting the trip.'
+        );
+      }
+
+      // Auto-create today's trip
+      const createdTrip = await TripService.createTodayTrip(
+        schoolId,
+        {
+          routeId: assignedRoute.id,
+          busId: resolvedBus.id,
+          driverId: driver.id,
+        },
+        {
+          userId: driver.id,
+          isDriver: true,
+          userRole: 'DRIVER',
+        }
+      );
+      targetTripId = createdTrip.id;
+    }
+
+    if (!resolvedBus) {
+      throw new BadRequestError(
+        'No assigned bus found for this driver. Please assign a bus before starting the trip.'
+      );
+    }
+
+    // 5. Start Trip via TripService (activates GPS session & parent tokens, updates dashboard)
+    const startedTrip = await TripService.startTrip(
+      schoolId,
+      targetTripId,
+      {
+        userId: driver.id,
+        isDriver: true,
+        userRole: 'DRIVER',
+      }
+    );
+
+    // 6. Trigger Parent Notifications
+    let parentNotifCount = 0;
+    try {
+      const parentRows = await query<{
+        parent_id: string;
+        parent_phone: string;
+        parent_name: string;
+        notifications_enabled: boolean | null;
+        student_id: string;
+        student_name: string;
+        admission_number: string;
+        stop_name: string | null;
+      }>(
+        `SELECT DISTINCT
+           p.id AS parent_id,
+           p.phone AS parent_phone,
+           p.full_name AS parent_name,
+           p.notifications_enabled,
+           s.id AS student_id,
+           s.full_name AS student_name,
+           s.admission_number,
+           pl.stop_name
+         FROM student_stop_assignments ssa
+         JOIN students s ON ssa.student_id = s.id AND s.deleted_at IS NULL
+         JOIN parents p ON p.student_id = s.id AND p.deleted_at IS NULL
+         JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id) AND pl.deleted_at IS NULL
+         WHERE pl.route_id = $1
+           AND ssa.school_id = $2
+           AND ssa.deleted_at IS NULL`,
+        [startedTrip.routeId, schoolId]
+      );
+
+      for (const p of parentRows) {
+        if (!p.parent_phone || p.notifications_enabled === false) {
+          continue;
+        }
+
+        try {
+          const tokenData = await ParentIdentityService.createTrackingToken({
+            parentId: p.parent_id,
+            studentId: p.student_id,
+            schoolId,
+            tripId: startedTrip.id,
+            purpose: 'TRIP_DEPARTURE',
+            ttlHours: 24,
+          });
+
+          const routeNameDisplay = startedTrip.routeCode
+            ? `${startedTrip.routeCode} - ${startedTrip.routeName || 'School Route'}`
+            : startedTrip.routeName || 'School Route';
+
+          const parentMsg =
+            `🚌 *School Bus Departed — Live Tracking Active*\n\n` +
+            `Namaste *${p.parent_name}*! Bus *${resolvedBus.busNumber}* has started Route *${routeNameDisplay}*.\n\n` +
+            `Student: *${p.student_name}* (${p.admission_number})\n` +
+            `Assigned Stop: *${p.stop_name || 'Designated Stop'}*\n\n` +
+            `📍 Track live bus location and arrival time here:\n${tokenData.trackingUrl}\n\n` +
+            `_Live updates are active. No native app download required._`;
+
+          await MessagingService.sendMessage({
+            recipientPhone: p.parent_phone,
+            recipientRole: 'PARENT',
+            schoolId,
+            directText: parentMsg,
+          });
+
+          parentNotifCount++;
+        } catch (err: any) {
+          logger.warn(`[DriverWhatsApp] Failed to notify parent ${p.parent_phone}: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      logger.error(`[DriverWhatsApp] Error querying parents for departure notifications: ${err.message}`);
+    }
+
+    const routeLabel = startedTrip.routeCode
+      ? `${startedTrip.routeCode} - ${startedTrip.routeName || 'Assigned Route'}`
+      : startedTrip.routeName || 'Assigned Route';
+
+    const departureTime = startedTrip.actualStartTime
+      ? new Date(startedTrip.actualStartTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
+      : 'Now';
+
+    const replyText =
+      `🚀 *Trip Started Successfully!*\n\n` +
+      `Route: *${routeLabel}*\n` +
+      `Bus: *${resolvedBus.busNumber}* (${resolvedBus.registrationNumber})\n` +
+      `Status: *In Transit* 🟢\n` +
+      `Departure: *${departureTime}*\n` +
+      `Notified Parents: *${parentNotifCount}*\n\n` +
+      `Live GPS tracking session is active. School dashboard and parents have been updated.\n\n` +
+      `Reply *2* to End Trip when arrived at school, or *3* to search student details.`;
+
+    return {
+      success: true,
+      alreadyInTransit: false,
+      trip: startedTrip,
+      driver: {
+        id: driver.id,
+        fullName: driver.fullName,
+        phone: driver.phone,
+      },
+      bus: resolvedBus,
+      parentNotificationsSent: parentNotifCount,
+      trackingSessionActive: true,
+      replyText,
     };
   }
 

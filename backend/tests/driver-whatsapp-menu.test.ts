@@ -253,6 +253,17 @@ describe('Phase 17.1: Driver WhatsApp Core — Menu & Daily Operations', () => {
         },
       ] as any);
 
+      vi.spyOn(DriverWhatsappService, 'startTripViaWhatsApp').mockResolvedValueOnce({
+        success: true,
+        alreadyInTransit: false,
+        trip: { id: tripAId, routeCode: 'R-101' } as any,
+        driver: { id: driverAId, fullName: 'Rajesh Driver', phone: '+919876543210' },
+        bus: { id: busAId, busNumber: 'BUS-01', registrationNumber: 'KA-01-AB-1234' },
+        parentNotificationsSent: 2,
+        trackingSessionActive: true,
+        replyText: 'Trip Started Successfully! Route: R-101 Bus: BUS-01',
+      });
+
       const res = await request(app)
         .post('/api/v1/driver/whatsapp/message')
         .send({
@@ -263,7 +274,7 @@ describe('Phase 17.1: Driver WhatsApp Core — Menu & Daily Operations', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.actionTriggered).toBe(DriverWhatsAppAction.START_TRIP);
-      expect(res.body.data.replyText).toContain('Ready to Start Today’s Trip');
+      expect(res.body.data.replyText).toContain('Trip Started Successfully!');
       expect(res.body.data.replyText).toContain('R-101');
     });
 
