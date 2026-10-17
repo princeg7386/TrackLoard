@@ -3,6 +3,7 @@ import {
   CreateTripRequest,
   CreateTodayTripRequest,
   GenerateDailyTripsRequest,
+  StartTripRequest,
   UpdateTripProgressRequest,
   CancelTripRequest,
   TripStatus,
@@ -134,14 +135,14 @@ export class TripController {
    * Transitions trip from NOT_STARTED to STARTED / IN_TRANSIT
    */
   public static async startTrip(
-    req: Request<{ schoolId: string; tripId: string }>,
+    req: Request<{ schoolId: string; tripId: string }, {}, StartTripRequest>,
     res: Response,
     next: NextFunction
   ): Promise<void> {
     try {
       const { schoolId, tripId } = req.params;
       const actor = extractTripActor(req);
-      const trip = await TripService.startTrip(schoolId, tripId, actor);
+      const trip = await TripService.startTrip(schoolId, tripId, actor, req.body);
       sendSuccess(res, trip, 'Trip started successfully');
     } catch (error) {
       next(error);

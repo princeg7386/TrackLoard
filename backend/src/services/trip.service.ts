@@ -6,7 +6,9 @@ import {
   GenerateDailyTripsRequest,
   GenerateDailyTripsResponse,
   TripDetailResponse,
+  StartTripRequest,
   UpdateTripProgressRequest,
+  GpsHealthStatus,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import {
@@ -16,6 +18,7 @@ import {
   ConflictError,
 } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
+import { RealtimeFeedService } from './realtime-feed.service.js';
 
 export interface TripActorContext {
   schoolId?: string;
@@ -466,6 +469,7 @@ export class TripService {
       currentStopSequence: Number(r.current_stop_sequence),
       delayMinutes: Number(r.delay_minutes),
       totalStops: Number(r.total_stops),
+      trackingSessionActive: r.status === TripStatus.IN_TRANSIT,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -583,34 +587,47 @@ export class TripService {
       currentStopSequence: Number(r.current_stop_sequence),
       delayMinutes: Number(r.delay_minutes),
       totalStops: Number(r.total_stops),
+      trackingSessionActive: r.status === TripStatus.IN_TRANSIT,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
   }
 
   /**
-   * Micro-phase 16.1: Transition from NOT_STARTED to STARTED (Lifecycle: STARTED)
+   * Micro-phase 16.3: Trip Start (Start timestamp, Activate tracking session, Update dashboard)
+   * Transitions from NOT_STARTED to STARTED / IN_TRANSIT, activates parent tracking tokens,
+   * and publishes real-time telemetry event.
    */
   public static async startTrip(
     schoolId: string,
     tripId: string,
-    actor?: TripActorContext
+    actor?: TripActorContext,
+    payload?: StartTripRequest
   ): Promise<TripDetailResponse> {
     if (actor?.schoolId && actor.schoolId !== schoolId) {
       throw new ForbiddenError('Cross-tenant trip start attempt');
     }
 
-    // 1. Fetch current trip state
+    // 1. Fetch current trip state and attached bus location cache
     const currentRows = await query<{
       id: string;
+      route_id: string;
+      bus_id: string;
       driver_id: string;
       status: TripStatus;
       actual_start_time: string | null;
       actual_end_time: string | null;
+      last_latitude: number | null;
+      last_longitude: number | null;
+      last_speed_kmh: number | null;
+      last_bearing_degrees: number | null;
+      gps_health_status: string | null;
     }>(
-      `SELECT id, driver_id, status, actual_start_time, actual_end_time
-       FROM trips
-       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+      `SELECT t.id, t.route_id, t.bus_id, t.driver_id, t.status, t.actual_start_time, t.actual_end_time,
+              b.last_latitude, b.last_longitude, b.last_speed_kmh, b.last_bearing_degrees, b.gps_health_status
+       FROM trips t
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
        LIMIT 1`,
       [tripId, schoolId]
     );
@@ -638,27 +655,75 @@ export class TripService {
       throw new BadRequestError('Cannot start a trip that has been cancelled');
     }
 
-    // 4. Update status to IN_TRANSIT and set actual_start_time
+    // 4. Update status to IN_TRANSIT and set actual_start_time (client payload or NOW())
+    const explicitStartTime = payload?.startedAt || null;
     await query(
       `UPDATE trips
        SET status = 'IN_TRANSIT',
-           actual_start_time = COALESCE(actual_start_time, NOW()),
+           actual_start_time = COALESCE($3::timestamptz, actual_start_time, NOW()),
            current_stop_sequence = 0,
            updated_at = NOW()
        WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
-      [tripId, schoolId]
+      [tripId, schoolId, explicitStartTime]
     );
 
-    logger.info(`[TripService] Trip ${tripId} STARTED by ${actor?.userId || 'admin'}`);
+    // 5. Activate tracking session:
+    // Connect and activate parent tracking tokens for all students on the trip's route
+    const activatedTokens = await query<{ id: string }>(
+      `UPDATE parent_tracking_tokens
+       SET trip_id = $1,
+           updated_at = NOW()
+       WHERE student_id IN (
+         SELECT ssa.student_id
+         FROM student_stop_assignments ssa
+         JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+         WHERE pl.route_id = $2
+           AND ssa.deleted_at IS NULL
+           AND pl.deleted_at IS NULL
+       )
+       AND school_id = $3
+       AND revoked_at IS NULL
+       AND expires_at > NOW()
+       AND deleted_at IS NULL
+       RETURNING id`,
+      [tripId, current.route_id, schoolId]
+    );
 
-    // 5. Audit log
+    const activatedTokensCount = activatedTokens.length;
+    logger.info(
+      `[TripService] Trip ${tripId} STARTED by ${actor?.userId || 'admin'}. Activated ${activatedTokensCount} parent tracking tokens.`
+    );
+
+    // 6. Broadcast real-time feed event to update dashboard and parent live tracking
+    const effectiveStartTime = explicitStartTime || new Date().toISOString();
+    const effectiveHealthStatus: GpsHealthStatus =
+      (current.gps_health_status as GpsHealthStatus) || 'HEALTHY';
+    RealtimeFeedService.publish({
+      type: 'INITIAL_STATE',
+      schoolId,
+      busId: current.bus_id,
+      tripId,
+      latitude: current.last_latitude != null ? Number(current.last_latitude) : 0,
+      longitude: current.last_longitude != null ? Number(current.last_longitude) : 0,
+      speedKmh: current.last_speed_kmh != null ? Number(current.last_speed_kmh) : 0,
+      bearingDegrees: current.last_bearing_degrees != null ? Number(current.last_bearing_degrees) : 0,
+      accuracyMeters: null,
+      batteryPercentage: null,
+      isCharging: null,
+      networkType: null,
+      healthStatus: effectiveHealthStatus,
+      recordedAt: effectiveStartTime,
+      timestamp: new Date().toISOString(),
+    });
+
+    // 7. Audit log
     await this.recordTripAudit({
       schoolId,
       tripId,
       action: 'TRIP_STARTED',
       userId: actor?.userId,
       userRole: actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN'),
-      changeSummary: 'Trip departed / started',
+      changeSummary: `Trip departed / started (${activatedTokensCount} tracking tokens activated)`,
       previousState: {
         status: current.status,
         stage: TripLifecycleStage.NOT_STARTED,
@@ -666,11 +731,18 @@ export class TripService {
       newState: {
         status: TripStatus.IN_TRANSIT,
         stage: TripLifecycleStage.STARTED,
-        actualStartTime: new Date().toISOString(),
+        actualStartTime: effectiveStartTime,
+        activatedTokensCount,
+        trackingSessionActive: true,
       },
     });
 
-    return this.getTripById(schoolId, tripId, actor);
+    const trip = await this.getTripById(schoolId, tripId, actor);
+    return {
+      ...trip,
+      trackingSessionActive: true,
+      activatedTrackingTokens: activatedTokensCount,
+    };
   }
 
   /**

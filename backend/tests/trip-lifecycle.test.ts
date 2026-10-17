@@ -258,10 +258,13 @@ describe('Phase 16.1: Trip Engine — Trip Lifecycle State Machine', () => {
       // 2. Update trip to IN_TRANSIT
       querySpy.mockResolvedValueOnce([{ id: tripAId }] as any);
 
-      // 3. Audit log
+      // 3. Activate parent tracking tokens on route
+      querySpy.mockResolvedValueOnce([] as any);
+
+      // 4. Audit log
       querySpy.mockResolvedValueOnce([{ id: 'audit-start' }] as any);
 
-      // 4. getTripById query
+      // 5. getTripById query
       const startTime = new Date().toISOString();
       querySpy.mockResolvedValueOnce([
         {

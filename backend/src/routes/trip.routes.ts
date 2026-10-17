@@ -3,6 +3,7 @@ import {
   CreateTripRequestSchema,
   CreateTodayTripRequestSchema,
   GenerateDailyTripsRequestSchema,
+  StartTripRequestSchema,
   UpdateTripProgressRequestSchema,
   CancelTripRequestSchema,
   UserRole,
@@ -95,6 +96,7 @@ tripRouter.post(
     UserRole.DRIVER,
     UserRole.SUPER_ADMIN
   ),
+  validateBody(StartTripRequestSchema.optional()),
   TripController.startTrip
 );
 

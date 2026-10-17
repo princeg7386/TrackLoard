@@ -4,6 +4,7 @@ import {
   CreateTodayTripRequest,
   GenerateDailyTripsRequest,
   GenerateDailyTripsResponse,
+  StartTripRequest,
   UpdateTripProgressRequest,
   CancelTripRequest,
   TripStatus,
@@ -86,9 +87,14 @@ export class TripApiService {
   /**
    * Start trip transition (NOT_STARTED -> STARTED)
    */
-  public static async startTrip(schoolId: string, tripId: string): Promise<TripDetailResponse> {
+  public static async startTrip(
+    schoolId: string,
+    tripId: string,
+    payload?: StartTripRequest
+  ): Promise<TripDetailResponse> {
     return apiRequest<TripDetailResponse>(`/schools/${schoolId}/trips/${tripId}/start`, {
       method: 'POST',
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
     });
   }
 

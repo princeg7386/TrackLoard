@@ -1081,6 +1081,11 @@ export const GenerateDailyTripsResponseSchema = z.object({
 });
 export type GenerateDailyTripsResponse = z.infer<typeof GenerateDailyTripsResponseSchema>;
 
+export const StartTripRequestSchema = z.object({
+  startedAt: z.string().datetime().optional(),
+});
+export type StartTripRequest = z.infer<typeof StartTripRequestSchema>;
+
 export const UpdateTripProgressRequestSchema = z.object({
   currentStopSequence: z.number().int().min(0),
   delayMinutes: z.number().int().min(0).optional(),
@@ -1114,6 +1119,8 @@ export const TripDetailResponseSchema = z.object({
   currentStopSequence: z.number().int(),
   delayMinutes: z.number().int(),
   totalStops: z.number().int().optional(),
+  trackingSessionActive: z.boolean().optional(),
+  activatedTrackingTokens: z.number().int().optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
 });

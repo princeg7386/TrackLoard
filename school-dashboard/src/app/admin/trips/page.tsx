@@ -180,8 +180,12 @@ export default function TripsManagementPage() {
   const handleStartTrip = async (tripId: string) => {
     try {
       setOperatingTripId(tripId);
-      await TripApiService.startTrip(schoolId, tripId);
-      setActionMessage({ text: 'Trip started successfully', type: 'success' });
+      const res = await TripApiService.startTrip(schoolId, tripId);
+      const tokenNote =
+        res.activatedTrackingTokens != null && res.activatedTrackingTokens > 0
+          ? ` (${res.activatedTrackingTokens} parent tracking tokens activated)`
+          : '';
+      setActionMessage({ text: `Trip started successfully${tokenNote}`, type: 'success' });
       await loadTrips();
     } catch (err: any) {
       setActionMessage({ text: err?.message || 'Failed to start trip', type: 'error' });
@@ -444,6 +448,11 @@ export default function TripsManagementPage() {
                           <span className="font-semibold">{trip.scheduledStartTime}</span>
                         </div>
                         <div className="text-[11px] text-slate-500">{trip.scheduledDate}</div>
+                        {trip.actualStartTime && (
+                          <div className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                            Started: {new Date(trip.actualStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        )}
                       </td>
 
                       <td className="px-4 py-3">
@@ -468,7 +477,15 @@ export default function TripsManagementPage() {
                       </td>
 
                       <td className="px-4 py-3">
-                        <TripLifecycleBadge stage={trip.lifecycleStage} status={trip.status} />
+                        <div className="space-y-1">
+                          <TripLifecycleBadge stage={trip.lifecycleStage} status={trip.status} />
+                          {trip.trackingSessionActive && (
+                            <div className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Tracking Active
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-4 py-3 text-right">
