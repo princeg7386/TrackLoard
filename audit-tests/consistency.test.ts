@@ -32,7 +32,8 @@ const method = (src: string, name: string) => {
 };
 
 describe('Trip status vocabulary (Phase 2 ↔ 10 ↔ 11)', () => {
-  const check = migrations.match(/chk_trips_status[\s\S]*?CHECK\s*\(status IN \(([^)]*)\)/);
+  const matches = [...migrations.matchAll(/chk_trips_status[\s\S]*?CHECK\s*\(status IN \(([^)]*)\)/g)];
+  const check = matches.length > 0 ? matches[matches.length - 1] : null;
   const allowed = check ? check[1]!.match(/'([A-Z_]+)'/g)!.map((s) => s.replace(/'/g, '')) : null;
   test('every shared TripStatus value is allowed by the DB CHECK constraint', () => {
     if (!allowed) return;

@@ -69,11 +69,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_code_active
   WHERE deleted_at IS NULL;
 
 -- 4. Trip status CHECK constraint — aligned with shared TripStatus enum:
---    SCHEDULED | IN_TRANSIT | DELAYED | ARRIVED_SCHOOL | COMPLETED | CANCELLED | EMERGENCY
+--    SCHEDULED | IN_TRANSIT | DELAYED | COMPLETED | CANCELLED | EMERGENCY
 --    Drop old constraint first (previous attempt used IN_PROGRESS which is wrong).
 DO $$
 BEGIN
   ALTER TABLE trips DROP CONSTRAINT IF EXISTS chk_trips_status;
   ALTER TABLE trips ADD CONSTRAINT chk_trips_status
-    CHECK (status IN ('SCHEDULED', 'IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL', 'COMPLETED', 'CANCELLED', 'EMERGENCY'));
+    CHECK (status IN ('SCHEDULED', 'IN_TRANSIT', 'DELAYED', 'COMPLETED', 'CANCELLED', 'EMERGENCY'));
 END $$;
