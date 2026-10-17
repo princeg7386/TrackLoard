@@ -885,6 +885,38 @@ export const RouteSchema = z.object({
 });
 export type Route = z.infer<typeof RouteSchema>;
 
+// Micro-phase 15.1: Route Management (Create route, Assign bus, Assign driver)
+export const CreateRouteRequestSchema = z.object({
+  name: z.string().trim().min(2, 'Route name must be at least 2 characters').max(255),
+  code: z.string().trim().min(2, 'Route code must be at least 2 characters').max(50),
+  routeType: z.nativeEnum(RouteType).optional().default(RouteType.MORNING_PICKUP),
+  defaultBusId: z.string().uuid('Valid bus UUID required').nullable().optional(),
+  defaultDriverId: z.string().uuid('Valid driver UUID required').nullable().optional(),
+  estimatedDurationMinutes: z.number().int().min(5).max(300).optional().default(45),
+});
+export type CreateRouteRequest = z.infer<typeof CreateRouteRequestSchema>;
+
+export const RouteDetailSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  name: z.string(),
+  code: z.string(),
+  routeType: z.nativeEnum(RouteType),
+  defaultBusId: z.string().uuid().nullable().optional(),
+  defaultDriverId: z.string().uuid().nullable().optional(),
+  busNumber: z.string().nullable().optional(),
+  busRegistrationNumber: z.string().nullable().optional(),
+  driverName: z.string().nullable().optional(),
+  driverPhone: z.string().nullable().optional(),
+  pathPolyline: z.string().nullable().optional(),
+  estimatedDurationMinutes: z.number().int(),
+  stopsCount: z.number().int().optional().default(0),
+  studentsCount: z.number().int().optional().default(0),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
+});
+export type RouteDetail = z.infer<typeof RouteDetailSchema>;
+
 // 8. Pickup Location / Stop
 export const PickupLocationSchema = z.object({
   id: z.string().uuid().optional(),

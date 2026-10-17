@@ -3,12 +3,14 @@ import {
   CreateBusRequestSchema,
   UpdateBusRequestSchema,
   AssignBusPayloadSchema,
+  CreateRouteRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
 import { requireTenantScope } from '../middlewares/tenant-isolation.middleware.js';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { BusController } from '../controllers/bus.controller.js';
+import { RouteController } from '../controllers/route.controller.js';
 
 const busRouter = Router({ mergeParams: true });
 
@@ -100,6 +102,33 @@ busRouter.get(
     UserRole.SUPER_ADMIN
   ),
   BusController.listRoutes
+);
+
+// 7a. Create Route (Micro-phase 15.1)
+busRouter.post(
+  '/:schoolId/routes',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(CreateRouteRequestSchema),
+  RouteController.createRoute
+);
+
+// 7b. Get Route Details by ID (Micro-phase 15.1)
+busRouter.get(
+  '/:schoolId/routes/:routeId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RouteController.getRoute
 );
 
 // 9. Full Vehicle History (Bus profile, trips, safety incidents, attendance)
