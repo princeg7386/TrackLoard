@@ -6,6 +6,8 @@ import {
   DriverWhatsAppInboundResponse,
   DriverWhatsAppStartTripRequest,
   DriverWhatsAppStartTripResponse,
+  DriverWhatsAppEndTripRequest,
+  DriverWhatsAppEndTripResponse,
   TripStatus,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
@@ -583,16 +585,17 @@ export class DriverWhatsappService {
       }
 
       case DriverWhatsAppAction.END_TRIP: {
-        if (menu.activeTrip) {
+        try {
+          const endResult = await this.endTripViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+          });
+          replyText = endResult.replyText;
+        } catch (err: any) {
           replyText =
-            `🏁 *End Trip Confirmation*\n\n` +
-            `Route: *${menu.activeTrip.routeCode || menu.activeTrip.routeName || 'Active Route'}*\n` +
-            `Completed Stops: *${menu.activeTrip.currentStopSequence} / ${menu.activeTrip.totalStops}*\n\n` +
-            `To finalize trip completion and lock attendance records, tap 'Complete Trip' in your Driver App or contact transport desk.`;
-        } else {
-          replyText =
-            `ℹ️ *No Active Trip in Transit*\n\n` +
-            `You do not currently have an active trip to complete. Reply *1* to view today’s scheduled trip.`;
+            `ℹ️ *Could Not End Trip*\n\n` +
+            `${err.message || 'Unable to conclude trip at this moment.'}\n\n` +
+            `Reply *menu* to view your current status and options.`;
         }
         break;
       }
@@ -1000,6 +1003,189 @@ export class DriverWhatsappService {
       bus: resolvedBus,
       parentNotificationsSent: parentNotifCount,
       trackingSessionActive: true,
+      replyText,
+    };
+  }
+
+  /**
+   * Micro-phase 17.3: End Trip Flow via WhatsApp
+   * 1. Identifies driver by phone number
+   * 2. Identifies active trip in transit (or specified tripId)
+   * 3. Concludes trip via TripService.completeTrip (stops tracking session, locks attendance)
+   * 4. Retrieves comprehensive operational summary via TripService.getTripSummary
+   * 5. Formats structured trip summary reply and notifies driver on WhatsApp
+   */
+  public static async endTripViaWhatsApp(params: {
+    from: string;
+    schoolId?: string;
+    tripId?: string;
+    summaryNotes?: string;
+    endedAt?: string;
+  }): Promise<DriverWhatsAppEndTripResponse> {
+    const { from, tripId: explicitTripId, summaryNotes, endedAt } = params;
+
+    // 1. Identify driver by phone
+    const driver = await this.findDriverByPhone(from, params.schoolId);
+    if (!driver) {
+      throw new NotFoundError(`Driver not registered with mobile number: ${from}`);
+    }
+    const schoolId = params.schoolId || driver.schoolId;
+
+    // 2. Identify target trip
+    let targetTripId = explicitTripId;
+
+    if (!targetTripId) {
+      // Find active trip in transit for this driver
+      const activeRows = await query<{
+        id: string;
+        bus_id: string;
+        status: TripStatus;
+      }>(
+        `SELECT t.id, t.bus_id, t.status
+         FROM trips t
+         WHERE t.driver_id = $1 AND t.school_id = $2
+           AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED')
+           AND t.deleted_at IS NULL
+         ORDER BY t.created_at DESC
+         LIMIT 1`,
+        [driver.id, schoolId]
+      );
+
+      if (activeRows.length === 0 || !activeRows[0]) {
+        // Check if driver has a trip already completed today (idempotency check)
+        const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+        const recentlyCompleted = await query<{ id: string }>(
+          `SELECT t.id FROM trips t
+           WHERE t.driver_id = $1 AND t.school_id = $2
+             AND t.status = 'COMPLETED'
+             AND t.scheduled_date = $3::date
+             AND t.deleted_at IS NULL
+           ORDER BY t.actual_end_time DESC NULLS LAST, t.updated_at DESC
+           LIMIT 1`,
+          [driver.id, schoolId, todayDate]
+        );
+
+        if (recentlyCompleted.length > 0 && recentlyCompleted[0]) {
+          const tripId = recentlyCompleted[0].id;
+          const trip = await TripService.getTripById(schoolId, tripId, {
+            userId: driver.id,
+            isDriver: true,
+            userRole: 'DRIVER',
+          });
+          const summary = await TripService.getTripSummary(schoolId, tripId, {
+            userId: driver.id,
+            isDriver: true,
+            userRole: 'DRIVER',
+          });
+
+          const routeLabel = summary.routeCode
+            ? `${summary.routeCode} - ${summary.routeName || 'Assigned Route'}`
+            : summary.routeName || 'Assigned Route';
+
+          const replyText =
+            `🏁 *Trip Already Completed*\n\n` +
+            `Route: *${routeLabel}*\n` +
+            `Bus: *${summary.busNumber || trip.busNumber || 'Assigned Bus'}*\n` +
+            `Duration: *${summary.durationMinutes} mins*\n` +
+            `Attendance: *${summary.attendance.totalBoarded} / ${summary.attendance.totalExpected} boarded*\n\n` +
+            `Attendance ledger is locked. Reply *menu* to return to the main menu.`;
+
+          return {
+            success: true,
+            alreadyCompleted: true,
+            trip,
+            summary,
+            driver: {
+              id: driver.id,
+              fullName: driver.fullName,
+              phone: driver.phone,
+            },
+            bus: {
+              id: trip.busId,
+              busNumber: trip.busNumber || '',
+              registrationNumber: trip.busRegistrationNumber || '',
+            },
+            attendanceLocked: true,
+            trackingSessionActive: false,
+            replyText,
+          };
+        }
+
+        throw new BadRequestError(
+          'You do not currently have an active trip in transit to complete. Reply 1 to start today’s trip.'
+        );
+      }
+
+      targetTripId = activeRows[0].id;
+    }
+
+    // 3. Complete trip via TripService (stops tracking, locks attendance, publishes real-time event)
+    const completedTrip = await TripService.completeTrip(
+      schoolId,
+      targetTripId,
+      {
+        userId: driver.id,
+        isDriver: true,
+        userRole: 'DRIVER',
+      },
+      {
+        endedAt,
+        summaryNotes,
+      }
+    );
+
+    // 4. Retrieve operational summary
+    const summary = await TripService.getTripSummary(
+      schoolId,
+      targetTripId,
+      {
+        userId: driver.id,
+        isDriver: true,
+        userRole: 'DRIVER',
+      }
+    );
+
+    // 5. Format structured WhatsApp message for driver
+    const routeLabel = summary.routeCode
+      ? `${summary.routeCode} - ${summary.routeName || 'Assigned Route'}`
+      : summary.routeName || 'Assigned Route';
+
+    const boardingRate =
+      summary.attendance.totalExpected > 0
+        ? Math.round((summary.attendance.totalBoarded / summary.attendance.totalExpected) * 100)
+        : 100;
+
+    const replyText =
+      `🏁 *Trip Completed Successfully!*\n\n` +
+      `Route: *${routeLabel}*\n` +
+      `Bus: *${summary.busNumber || completedTrip.busNumber}* (${summary.busRegistrationNumber || completedTrip.busRegistrationNumber})\n` +
+      `Duration: *${summary.durationMinutes} minutes*\n` +
+      `Stops Completed: *${summary.stopsCompleted} / ${summary.totalStops}*\n\n` +
+      `📋 *Attendance Summary:*\n` +
+      `• Expected Students: *${summary.attendance.totalExpected}*\n` +
+      `• Boarded: *${summary.attendance.totalBoarded}* (${boardingRate}%)\n` +
+      `• Deboarded: *${summary.attendance.totalDeboarded}*\n` +
+      `• Absent / Not Boarded: *${summary.attendance.totalAbsent}*\n\n` +
+      `🔒 Attendance ledger is locked. Live tracking session concluded.\n\n` +
+      `Reply *menu* to return to the main menu.`;
+
+    return {
+      success: true,
+      alreadyCompleted: false,
+      trip: completedTrip,
+      summary,
+      driver: {
+        id: driver.id,
+        fullName: driver.fullName,
+        phone: driver.phone,
+      },
+      bus: {
+        id: completedTrip.busId,
+        busNumber: completedTrip.busNumber || '',
+        registrationNumber: completedTrip.busRegistrationNumber || '',
+      },
+      attendanceLocked: true,
+      trackingSessionActive: false,
       replyText,
     };
   }

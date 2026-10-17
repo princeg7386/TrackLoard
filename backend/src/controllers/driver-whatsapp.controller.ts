@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import {
   DriverWhatsAppInboundRequest,
   DriverWhatsAppStartTripRequest,
+  DriverWhatsAppEndTripRequest,
   DriverWhatsAppAction,
 } from '@school-bus/shared';
 import { DriverWhatsappService } from '../services/driver-whatsapp.service.js';
@@ -116,5 +117,35 @@ export class DriverWhatsappController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/driver/whatsapp/end-trip
+   * Direct End Trip trigger endpoint via WhatsApp flow (Micro-Phase 17.3)
+   */
+  public static async endTrip(
+    req: Request<{}, {}, DriverWhatsAppEndTripRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { from, schoolId, tripId, summaryNotes, endedAt } = req.body;
+      if (!from) {
+        throw new BadRequestError('Sender phone number (from) is required');
+      }
+
+      const result = await DriverWhatsappService.endTripViaWhatsApp({
+        from,
+        schoolId,
+        tripId,
+        summaryNotes,
+        endedAt,
+      });
+
+      sendSuccess(res, result, 'Trip ended via WhatsApp successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+
 

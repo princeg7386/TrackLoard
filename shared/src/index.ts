@@ -2952,5 +2952,39 @@ export const DriverWhatsAppStartTripResponseSchema = z.object({
 });
 export type DriverWhatsAppStartTripResponse = z.infer<typeof DriverWhatsAppStartTripResponseSchema>;
 
+/**
+ * Driver WhatsApp End Trip Types (Micro-Phase 17.3)
+ */
+export const DriverWhatsAppEndTripRequestSchema = z.object({
+  from: z.string().min(6),
+  schoolId: z.string().uuid().optional(),
+  tripId: z.string().uuid().optional(),
+  summaryNotes: z.string().max(500).optional(),
+  endedAt: z.string().datetime().optional(),
+});
+export type DriverWhatsAppEndTripRequest = z.infer<typeof DriverWhatsAppEndTripRequestSchema>;
+
+export const DriverWhatsAppEndTripResponseSchema = z.object({
+  success: z.boolean(),
+  alreadyCompleted: z.boolean().default(false),
+  trip: TripDetailResponseSchema,
+  summary: TripSummaryResponseSchema,
+  driver: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    phone: z.string(),
+  }),
+  bus: z.object({
+    id: z.string().uuid(),
+    busNumber: z.string(),
+    registrationNumber: z.string(),
+  }),
+  attendanceLocked: z.boolean(),
+  trackingSessionActive: z.boolean(),
+  replyText: z.string(),
+});
+export type DriverWhatsAppEndTripResponse = z.infer<typeof DriverWhatsAppEndTripResponseSchema>;
+
+
 
 

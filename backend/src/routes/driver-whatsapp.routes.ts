@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   DriverWhatsAppInboundRequestSchema,
   DriverWhatsAppStartTripRequestSchema,
+  DriverWhatsAppEndTripRequestSchema,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { DriverWhatsappController } from '../controllers/driver-whatsapp.controller.js';
@@ -28,5 +29,13 @@ driverWhatsappRouter.post(
   DriverWhatsappController.startTrip
 );
 
+// 5. End trip via WhatsApp flow (Micro-Phase 17.3)
+driverWhatsappRouter.post(
+  '/end-trip',
+  validateBody(DriverWhatsAppEndTripRequestSchema),
+  DriverWhatsappController.endTrip
+);
+
 export default driverWhatsappRouter;
+
 
