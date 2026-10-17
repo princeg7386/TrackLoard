@@ -933,6 +933,48 @@ export const PickupLocationSchema = z.object({
 });
 export type PickupLocation = z.infer<typeof PickupLocationSchema>;
 
+// 8a. Route Stop Detail & Management (Micro-phase 15.2)
+export const RouteStopDetailSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  stopName: z.string().min(2),
+  sequenceOrder: z.number().int().min(1),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  scheduledTime: z.string(),
+  geofenceRadiusMeters: z.number().int(),
+  assignedStudentsCount: z.number().int().default(0),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type RouteStopDetail = z.infer<typeof RouteStopDetailSchema>;
+
+export const AddRouteStopRequestSchema = z.object({
+  stopName: z.string().min(2, 'Stop name must be at least 2 characters').max(255),
+  latitude: z.number().min(-90, 'Latitude must be between -90 and 90').max(90, 'Latitude must be between -90 and 90'),
+  longitude: z.number().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180'),
+  scheduledTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/, 'Scheduled time must be HH:MM or HH:MM:SS format'),
+  geofenceRadiusMeters: z.number().int().min(50).max(2000).optional().default(300),
+  sequenceOrder: z.number().int().min(1, 'Sequence order must be at least 1').optional(),
+});
+export type AddRouteStopRequest = z.infer<typeof AddRouteStopRequestSchema>;
+
+export const ReorderRouteStopsRequestSchema = z.object({
+  stopIds: z.array(z.string().uuid('Invalid stop ID format')).min(1, 'At least one stop ID is required to reorder'),
+});
+export type ReorderRouteStopsRequest = z.infer<typeof ReorderRouteStopsRequestSchema>;
+
+export const UpdateRouteStopRequestSchema = z.object({
+  stopName: z.string().min(2, 'Stop name must be at least 2 characters').max(255).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  scheduledTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/, 'Scheduled time must be HH:MM or HH:MM:SS format').optional(),
+  geofenceRadiusMeters: z.number().int().min(50).max(2000).optional(),
+  sequenceOrder: z.number().int().min(1).optional(),
+});
+export type UpdateRouteStopRequest = z.infer<typeof UpdateRouteStopRequestSchema>;
+
 // 9. Student Stop Assignment
 export const StudentStopAssignmentSchema = z.object({
   id: z.string().uuid().optional(),

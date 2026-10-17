@@ -4,6 +4,9 @@ import {
   UpdateBusRequestSchema,
   AssignBusPayloadSchema,
   CreateRouteRequestSchema,
+  AddRouteStopRequestSchema,
+  ReorderRouteStopsRequestSchema,
+  UpdateRouteStopRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -129,6 +132,74 @@ busRouter.get(
     UserRole.SUPER_ADMIN
   ),
   RouteController.getRoute
+);
+
+// 7c. List Route Stops (Micro-phase 15.2)
+busRouter.get(
+  '/:schoolId/routes/:routeId/stops',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RouteController.listStops
+);
+
+// 7d. Add Route Stop (Micro-phase 15.2)
+busRouter.post(
+  '/:schoolId/routes/:routeId/stops',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(AddRouteStopRequestSchema),
+  RouteController.addStop
+);
+
+// 7e. Reorder Route Stops (Micro-phase 15.2)
+busRouter.put(
+  '/:schoolId/routes/:routeId/stops/reorder',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(ReorderRouteStopsRequestSchema),
+  RouteController.reorderStops
+);
+
+// 7f. Update Route Stop Details or Sequence (Micro-phase 15.2)
+busRouter.put(
+  '/:schoolId/routes/:routeId/stops/:stopId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateRouteStopRequestSchema),
+  RouteController.updateStop
+);
+
+// 7g. Remove / Soft-Delete Route Stop (Micro-phase 15.2)
+busRouter.delete(
+  '/:schoolId/routes/:routeId/stops/:stopId',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RouteController.removeStop
 );
 
 // 9. Full Vehicle History (Bus profile, trips, safety incidents, attendance)
