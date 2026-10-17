@@ -55,6 +55,8 @@ class AppFormatters {
         return 'In Transit';
       case 'DELAYED':
         return 'Delayed';
+      case 'ARRIVED_SCHOOL':
+        return 'Arrived at School';
       case 'COMPLETED':
         return 'Completed';
       case 'CANCELLED':

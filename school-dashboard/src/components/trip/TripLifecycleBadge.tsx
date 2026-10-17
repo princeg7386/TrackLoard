@@ -9,8 +9,14 @@ interface TripLifecycleBadgeProps {
 }
 
 export function TripLifecycleBadge({ stage, status, className }: TripLifecycleBadgeProps) {
-  if (status === TripStatus.CANCELLED) {
+  if (status === TripStatus.CANCELLED || status === 'CANCELLED') {
     return <StatusBadge status="incident" label="Cancelled" className={className} />;
+  }
+  if (status === TripStatus.ARRIVED_SCHOOL || status === 'ARRIVED_SCHOOL') {
+    return <StatusBadge status="info" label="Arrived at School" className={className} />;
+  }
+  if (status === TripStatus.DELAYED || status === 'DELAYED') {
+    return <StatusBadge status="warning" label="Delayed" className={className} />;
   }
 
   switch (stage) {

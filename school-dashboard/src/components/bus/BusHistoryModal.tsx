@@ -317,6 +317,8 @@ export function BusHistoryModal({
                                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border ${
                                     tr.status === 'COMPLETED'
                                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : tr.status === 'ARRIVED_SCHOOL'
+                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                                       : tr.status === 'IN_TRANSIT'
                                       ? 'bg-sky-50 text-sky-700 border-sky-200'
                                       : tr.status === 'SCHEDULED'

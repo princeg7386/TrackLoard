@@ -472,6 +472,8 @@ export function SchoolMapFeedCanvas({
                     className={`px-1.5 py-0.2 rounded text-3xs font-semibold ${
                       selectedBusDetail.tripStatus === 'IN_TRANSIT'
                         ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                        : selectedBusDetail.tripStatus === 'ARRIVED_SCHOOL'
+                        ? 'bg-sky-950 text-sky-300 border border-sky-800'
                         : 'bg-slate-800 text-slate-300'
                     }`}
                   >

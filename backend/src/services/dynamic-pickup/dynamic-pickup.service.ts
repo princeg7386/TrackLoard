@@ -942,7 +942,7 @@ export class DynamicPickupService {
            FROM trips t
            LEFT JOIN buses b ON t.bus_id = b.id
            LEFT JOIN drivers d ON t.driver_id = d.id
-           WHERE t.route_id = $1 AND t.school_id = $2 AND t.status IN ('IN_TRANSIT', 'DELAYED') AND t.deleted_at IS NULL
+           WHERE t.route_id = $1 AND t.school_id = $2 AND t.status IN ('IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL') AND t.deleted_at IS NULL
            ORDER BY t.created_at DESC
            LIMIT 1`,
           [r.id, schoolId]

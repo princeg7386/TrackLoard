@@ -463,6 +463,8 @@ export default function LiveOperationsPage() {
                       className={`px-2 py-0.5 rounded text-2xs font-semibold ${
                         selectedBusState.tripStatus === 'IN_TRANSIT'
                           ? 'bg-emerald-100 text-emerald-800'
+                          : selectedBusState.tripStatus === 'ARRIVED_SCHOOL'
+                          ? 'bg-sky-100 text-sky-800'
                           : selectedBusState.tripStatus === 'DELAYED'
                           ? 'bg-amber-100 text-amber-800'
                           : selectedBusState.tripStatus === 'EMERGENCY'

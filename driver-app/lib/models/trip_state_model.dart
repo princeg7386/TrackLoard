@@ -3,6 +3,7 @@ enum TripLifecycleStatus {
   scheduled,
   inTransit,
   delayed,
+  arrivedSchool,
   completed,
   cancelled,
 }
@@ -58,6 +59,9 @@ class ActiveTripProgress {
         break;
       case 'DELAYED':
         parsedStatus = TripLifecycleStatus.delayed;
+        break;
+      case 'ARRIVED_SCHOOL':
+        parsedStatus = TripLifecycleStatus.arrivedSchool;
         break;
       case 'COMPLETED':
         parsedStatus = TripLifecycleStatus.completed;

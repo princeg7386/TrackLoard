@@ -986,6 +986,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         statusColor = AppTheme.statusWarning;
         statusBgColor = AppTheme.statusWarningLight;
         break;
+      case 'ARRIVED_SCHOOL':
+        statusColor = AppTheme.accentSky;
+        statusBgColor = const Color(0xFFF0F9FF);
+        break;
       case 'COMPLETED':
         statusColor = AppTheme.statusNeutral;
         statusBgColor = AppTheme.statusNeutralLight;

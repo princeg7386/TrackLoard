@@ -39,3 +39,8 @@ We maintain full semantic fidelity with PDF 16.1 while preserving cross-layer to
 ## Single Running Token Invariant
 - **Rule**: Code across `backend/src`, `school-dashboard/src`, and `driver-app/lib` MUST use `IN_TRANSIT` as the single canonical running trip status. Literal string `'IN_PROGRESS'` is prohibited in source files to prevent vocabulary drift and race conditions.
 - **Verification**: Enforced by `audit-tests/consistency.test.ts` test: `"backend, dashboard and driver app use ONE name for a running trip"`.
+
+## Telemetry Ingestion In `ARRIVED_SCHOOL` State
+- **Rule**: GPS telemetry ingestion **IS STILL ACCEPTED** when `status = 'ARRIVED_SCHOOL'`.
+- **Ingestion Policy**: `TelemetryService.ingestLocation` and `TelemetryService.ingestBatch` reject incoming telemetry only when a trip is permanently terminated (`COMPLETED` or `CANCELLED`). When the bus reaches the school campus and transitions to `ARRIVED_SCHOOL`, students are actively alighting and staff are recording student drop-off attendance.
+- **Operational Value**: Ingesting telemetry during `ARRIVED_SCHOOL` ensures that school admins and parents viewing the live tracking map observe the bus stationary within school grounds in real time until the driver formally completes the trip (`COMPLETED`).

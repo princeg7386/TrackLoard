@@ -372,6 +372,8 @@ export default function TripsManagementPage() {
             <option value="ALL">All Statuses</option>
             <option value={TripStatus.SCHEDULED}>Scheduled</option>
             <option value={TripStatus.IN_TRANSIT}>In Transit</option>
+            <option value={TripStatus.DELAYED}>Delayed</option>
+            <option value={TripStatus.ARRIVED_SCHOOL}>Arrived School</option>
             <option value={TripStatus.COMPLETED}>Completed</option>
             <option value={TripStatus.CANCELLED}>Cancelled</option>
           </select>

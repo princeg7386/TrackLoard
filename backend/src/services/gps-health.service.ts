@@ -93,7 +93,7 @@ export class GpsHealthService {
         b.last_gps_recorded_at,
         t.id as active_trip_id
        FROM buses b
-       LEFT JOIN trips t ON t.bus_id = b.id AND t.status IN ('IN_TRANSIT', 'DELAYED')
+       LEFT JOIN trips t ON t.bus_id = b.id AND t.status IN ('IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL')
        WHERE b.id = $1 AND b.deleted_at IS NULL${schoolFilter}
        LIMIT 1;`,
       params
@@ -164,7 +164,7 @@ export class GpsHealthService {
         b.last_gps_recorded_at,
         t.id as active_trip_id
        FROM buses b
-       LEFT JOIN trips t ON t.bus_id = b.id AND t.status IN ('IN_TRANSIT', 'DELAYED')
+       LEFT JOIN trips t ON t.bus_id = b.id AND t.status IN ('IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL')
        WHERE b.school_id = $1 AND b.deleted_at IS NULL
        ORDER BY b.bus_number ASC;`,
       [schoolId]

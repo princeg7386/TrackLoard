@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -364,6 +364,8 @@ export function DriverHistoryModal({
                                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
                                     trip.status === 'COMPLETED'
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : trip.status === 'ARRIVED_SCHOOL'
+                                      ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                                       : trip.status === 'IN_TRANSIT'
                                       ? 'bg-sky-50 text-sky-700 border border-sky-200 animate-pulse'
                                       : trip.status === 'CANCELLED'

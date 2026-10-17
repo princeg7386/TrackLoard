@@ -1,4 +1,4 @@
-﻿import { query } from '../config/database.js';
+import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
 
 export interface DashboardMetricSummary {
@@ -70,7 +70,7 @@ export class DashboardService {
           (SELECT COUNT(*)::int FROM drivers WHERE school_id = $1 AND deleted_at IS NULL) AS "totalDrivers",
           (SELECT COUNT(*)::int FROM routes WHERE school_id = $1 AND deleted_at IS NULL) AS "totalRoutes",
           (SELECT COUNT(*)::int FROM students WHERE school_id = $1 AND deleted_at IS NULL) AS "totalStudents",
-          (SELECT COUNT(*)::int FROM trips WHERE school_id = $1 AND status = 'IN_TRANSIT' AND deleted_at IS NULL) AS "activeTripsCount",
+          (SELECT COUNT(*)::int FROM trips WHERE school_id = $1 AND status IN ('IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL') AND deleted_at IS NULL) AS "activeTripsCount",
           (SELECT COUNT(*)::int FROM incidents WHERE school_id = $1 AND status = 'OPEN' AND deleted_at IS NULL) AS "activeIncidentsCount",
           (SELECT COUNT(*)::int FROM delays WHERE school_id = $1 AND resolved_at IS NULL AND deleted_at IS NULL) AS "activeDelaysCount",
           (SELECT COUNT(*)::int FROM sos_events WHERE school_id = $1 AND status = 'TRIGGERED' AND deleted_at IS NULL) AS "activeSosCount",
@@ -121,7 +121,7 @@ export class DashboardService {
 
       for (const row of tripsRes) {
         if (row.status === 'SCHEDULED') scheduled += Number(row.count);
-        else if (row.status === 'IN_TRANSIT') inProgress += Number(row.count);
+        else if (row.status === 'IN_TRANSIT' || row.status === 'DELAYED' || row.status === 'ARRIVED_SCHOOL') inProgress += Number(row.count);
         else if (row.status === 'COMPLETED') completed += Number(row.count);
         else if (row.status === 'CANCELLED' || row.status === 'ABORTED') cancelled += Number(row.count);
       }

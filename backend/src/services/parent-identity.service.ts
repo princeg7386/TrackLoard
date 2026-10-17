@@ -375,14 +375,14 @@ export class ParentIdentityService {
       // Find trip on the stop's route that is currently in-transit or scheduled today
       tripQuery += ` 
         AND t.route_id = (SELECT route_id FROM pickup_locations WHERE id = $2)
-        AND t.status IN ('IN_TRANSIT', 'SCHEDULED', 'DELAYED')
+        AND t.status IN ('IN_TRANSIT', 'SCHEDULED', 'DELAYED', 'ARRIVED_SCHOOL')
         ORDER BY t.scheduled_start_time DESC
         LIMIT 1
       `;
       tripParams.push(row.stop_id);
     } else {
-      tripQuery += `
-        AND t.status = 'IN_TRANSIT'
+      tripQuery += ` 
+        AND t.status IN ('IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL')
         ORDER BY t.scheduled_start_time DESC
         LIMIT 1
       `;

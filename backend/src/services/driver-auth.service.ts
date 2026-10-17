@@ -1,4 +1,4 @@
-﻿import bcrypt from 'bcryptjs';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/database.js';
 import { env } from '../config/env.js';
@@ -255,7 +255,7 @@ export class DriverAuthService {
       [driverId, today]
     );
 
-    const activeTrip = tripRows.find((t) => t.status === 'IN_TRANSIT' || t.status === 'DELAYED') || null;
+    const activeTrip = tripRows.find((t) => t.status === 'IN_TRANSIT' || t.status === 'DELAYED' || t.status === 'ARRIVED_SCHOOL') || null;
 
     return {
       driver: {

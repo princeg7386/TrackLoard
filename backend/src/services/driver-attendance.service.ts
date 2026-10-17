@@ -109,7 +109,7 @@ export class DriverAttendanceService {
            FROM drivers d
            LEFT JOIN buses b ON b.default_driver_id = d.id AND b.deleted_at IS NULL
            LEFT JOIN trips t ON t.driver_id = d.id AND t.school_id = d.school_id
-                             AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED')
+                             AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
                              AND t.deleted_at IS NULL
            LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
            WHERE d.id = $1 AND d.school_id = $2 AND d.deleted_at IS NULL

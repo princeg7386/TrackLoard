@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
@@ -261,6 +261,8 @@ export function BusDetailModal({
                       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border ${
                         busDetail.currentTrip.status === 'IN_TRANSIT'
                           ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : busDetail.currentTrip.status === 'ARRIVED_SCHOOL'
+                          ? 'bg-sky-50 text-sky-700 border-sky-200'
                           : busDetail.currentTrip.status === 'SCHEDULED'
                           ? 'bg-amber-50 text-amber-700 border-amber-200'
                           : 'bg-slate-100 text-slate-700 border-slate-200'

@@ -155,7 +155,7 @@ export class DriverWhatsappService {
        LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
        LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
        WHERE t.driver_id = $1 AND t.school_id = $2
-         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED')
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
          AND t.deleted_at IS NULL
        ORDER BY t.created_at DESC
        LIMIT 1`,
@@ -522,6 +522,22 @@ export class DriverWhatsappService {
       return DriverWhatsAppAction.END_TRIP;
     }
 
+    // 2b. Arrive at School Campus
+    if (
+      clean === 'arrive' ||
+      clean === 'arrived' ||
+      clean === 'reach' ||
+      clean === 'reached' ||
+      clean === 'arrive school' ||
+      clean === 'arrived school' ||
+      clean === 'reach school' ||
+      clean === 'reached school' ||
+      clean === 'school arrived' ||
+      clean === 'driver_action_arrive_school'
+    ) {
+      return 'ARRIVE_SCHOOL' as any;
+    }
+
     // 3. Student Search
     if (
       clean === '3' ||
@@ -709,6 +725,23 @@ export class DriverWhatsappService {
         break;
       }
 
+      case 'ARRIVE_SCHOOL' as any: {
+        try {
+          const arriveResult = await this.arriveAtSchoolViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+          });
+          replyText = arriveResult.replyText;
+        } catch (err: any) {
+          errorCode = err.details?.errorCode || 'ARRIVE_SCHOOL_FAILED';
+          replyText =
+            `⚠️ *Could Not Mark Arrival*\n\n` +
+            `${err.message || 'Unable to mark school arrival at this moment.'}\n\n` +
+            `Reply *menu* to view your current status and options.`;
+        }
+        break;
+      }
+
       case DriverWhatsAppAction.STUDENT_SEARCH: {
         replyText =
           `🔍 *Student Search*\n\n` +
@@ -873,7 +906,7 @@ export class DriverWhatsappService {
        LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
        LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
        WHERE t.driver_id = $1 AND t.school_id = $2
-         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED')
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
          AND t.deleted_at IS NULL
        ORDER BY t.created_at DESC
        LIMIT 1`,
@@ -1173,6 +1206,83 @@ export class DriverWhatsappService {
   }
 
   /**
+   * Arrive At School Flow via WhatsApp (Lifecycle: ARRIVED_SCHOOL)
+   * 1. Identifies driver by phone number
+   * 2. Finds active trip in transit
+   * 3. Calls TripService.arriveAtSchool (updates status, audit log, triggers parent notification)
+   * 4. Responds with arrival confirmation and prompt to End Trip when ready
+   */
+  public static async arriveAtSchoolViaWhatsApp(params: {
+    from: string;
+    schoolId?: string;
+  }): Promise<{
+    success: boolean;
+    trip: any;
+    replyText: string;
+  }> {
+    const { from, schoolId: overrideSchoolId } = params;
+    const { international } = this.normalizeIndianPhone(from);
+
+    const driver = await this.findDriverByPhone(from, overrideSchoolId);
+    if (!driver) {
+      throw new NotFoundError(`No driver registered for mobile ${international}`);
+    }
+
+    const schoolId = overrideSchoolId || driver.schoolId;
+
+    const activeRows = await query<{
+      id: string;
+      bus_id: string;
+      status: TripStatus;
+      route_name: string | null;
+      route_code: string | null;
+      bus_number: string | null;
+    }>(
+      `SELECT t.id, t.bus_id, t.status,
+              r.name AS route_name, r.code AS route_code,
+              b.bus_number
+       FROM trips t
+       LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       WHERE t.driver_id = $1 AND t.school_id = $2
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
+         AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+      [driver.id, schoolId]
+    );
+
+    if (activeRows.length === 0 || !activeRows[0]) {
+      const error: any = new BadRequestError('No active trip currently in transit to mark arrived');
+      error.details = { errorCode: 'NO_ACTIVE_TRIP' };
+      throw error;
+    }
+
+    const active = activeRows[0];
+    const trip = await TripService.arriveAtSchool(schoolId, active.id, {
+      userId: driver.id,
+      isDriver: true,
+      userRole: 'DRIVER',
+    });
+
+    const routeLabel = active.route_code
+      ? `${active.route_code} - ${active.route_name || 'Assigned Route'}`
+      : active.route_name || 'Assigned Route';
+
+    const replyText =
+      `🏫 *Arrived at School Campus*\n\n` +
+      `Trip on Route *${routeLabel}* (Bus *${active.bus_number || 'Assigned Bus'}*) has reached the destination school campus.\n\n` +
+      `Students can now safely alight. Parents have been notified of your safe arrival.\n\n` +
+      `Reply *2* to End Trip and finalize attendance.`;
+
+    return {
+      success: true,
+      trip,
+      replyText,
+    };
+  }
+
+  /**
    * Micro-phase 17.3: End Trip Flow via WhatsApp
    * 1. Identifies driver by phone number
    * 2. Identifies active trip in transit (or specified tripId)
@@ -1209,7 +1319,7 @@ export class DriverWhatsappService {
         `SELECT t.id, t.bus_id, t.status
          FROM trips t
          WHERE t.driver_id = $1 AND t.school_id = $2
-           AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED')
+           AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
            AND t.deleted_at IS NULL
          ORDER BY t.created_at DESC
          LIMIT 1`,
@@ -1393,3 +1503,5 @@ export class DriverWhatsappService {
     });
   }
 }
+
+export const DriverWhatsAppService = DriverWhatsappService;
