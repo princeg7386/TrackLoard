@@ -175,6 +175,45 @@ class ApiService {
     }
   }
 
+  /// Records boarding attendance for an individual student (Micro-Phase 18.2)
+  /// Tasks: Boarded, Not boarded (ABSENT), Timestamp, Location
+  Future<ApiResponse<Map<String, dynamic>>> recordBoarding({
+    required String tripId,
+    required String studentId,
+    String? stopId,
+    required String status,
+    double? latitude,
+    double? longitude,
+    String? recordedAt,
+  }) async {
+    final payload = <String, dynamic>{
+      'tripId': tripId,
+      'studentId': studentId,
+      'status': status,
+      if (stopId != null) 'stopId': stopId,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      'recordedAt': recordedAt ?? DateTime.now().toUtc().toIso8601String(),
+    };
+
+    return post(ApiConstants.attendanceBoardingEndpoint, body: payload);
+  }
+
+  /// Records boarding attendance for a batch of students (Micro-Phase 18.2)
+  Future<ApiResponse<Map<String, dynamic>>> recordBoardingBatch({
+    required String tripId,
+    String? stopId,
+    required List<Map<String, dynamic>> records,
+  }) async {
+    final payload = <String, dynamic>{
+      'tripId': tripId,
+      if (stopId != null) 'stopId': stopId,
+      'records': records,
+    };
+
+    return post(ApiConstants.attendanceBoardingBatchEndpoint, body: payload);
+  }
+
   ApiResponse<Map<String, dynamic>> _processResponse(http.Response response) {
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));

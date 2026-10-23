@@ -9,12 +9,14 @@ import {
   DriverWhatsAppEndTripRequest,
   DriverWhatsAppEndTripResponse,
   TripStatus,
+  RecordBoardingResponse,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { MessagingService } from './messaging/messaging.service.js';
 import { logger } from './logger.service.js';
 import { TripService } from './trip.service.js';
 import { ParentIdentityService } from './parent-identity.service.js';
+import { DriverAttendanceService } from './driver-attendance.service.js';
 import { BadRequestError, NotFoundError } from '../middlewares/error.middleware.js';
 
 export class DriverWhatsappService {
@@ -538,6 +540,23 @@ export class DriverWhatsappService {
       return 'ARRIVE_SCHOOL' as any;
     }
 
+    // 2c. Student Boarding Attendance (Micro-phase 18.2)
+    if (
+      clean.startsWith('board ') ||
+      clean.startsWith('boarded ') ||
+      clean.startsWith('b ')
+    ) {
+      return 'BOARD_STUDENT' as any;
+    }
+
+    if (
+      clean.startsWith('absent ') ||
+      clean.startsWith('not boarded ') ||
+      clean.startsWith('ab ')
+    ) {
+      return 'ABSENT_STUDENT' as any;
+    }
+
     // 3. Student Search
     if (
       clean === '3' ||
@@ -738,6 +757,46 @@ export class DriverWhatsappService {
             `⚠️ *Could Not Mark Arrival*\n\n` +
             `${err.message || 'Unable to mark school arrival at this moment.'}\n\n` +
             `Reply *menu* to view your current status and options.`;
+        }
+        break;
+      }
+
+      case 'BOARD_STUDENT' as any: {
+        const queryText = (text || '').replace(/^(board|boarded|b)\s+/i, '').trim();
+        try {
+          const boardResult = await this.recordBoardingViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+            queryText,
+            status: 'BOARDED',
+            driver,
+          });
+          replyText = boardResult.replyText;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Mark Boarding*\n\n` +
+            `${err.message || 'Unable to record boarding at this moment.'}\n\n` +
+            `Reply *menu* to view your options.`;
+        }
+        break;
+      }
+
+      case 'ABSENT_STUDENT' as any: {
+        const queryText = (text || '').replace(/^(absent|not boarded|ab)\s+/i, '').trim();
+        try {
+          const absentResult = await this.recordBoardingViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+            queryText,
+            status: 'ABSENT',
+            driver,
+          });
+          replyText = absentResult.replyText;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Mark Absent*\n\n` +
+            `${err.message || 'Unable to mark student absent at this moment.'}\n\n` +
+            `Reply *menu* to view your options.`;
         }
         break;
       }
@@ -1279,6 +1338,150 @@ export class DriverWhatsappService {
       success: true,
       trip,
       replyText,
+    };
+  }
+
+  /**
+   * Micro-phase 18.2: Record Student Boarding Attendance via WhatsApp
+   * Commands:
+   *   "board <Name/AdmNo>"
+   *   "absent <Name/AdmNo>"
+   */
+  public static async recordBoardingViaWhatsApp(params: {
+    from: string;
+    schoolId?: string;
+    queryText: string;
+    status: 'BOARDED' | 'ABSENT';
+    driver?: any;
+  }): Promise<{
+    success: boolean;
+    replyText: string;
+    result?: RecordBoardingResponse;
+  }> {
+    const { from, queryText, status } = params;
+    const driver = params.driver || (await this.findDriverByPhone(from, params.schoolId));
+
+    if (!driver) {
+      throw new NotFoundError('Driver phone number not registered in school transport directory');
+    }
+
+    const schoolId = driver.schoolId;
+
+    if (!queryText || queryText.trim().length === 0) {
+      const actionWord = status === 'BOARDED' ? 'board' : 'absent';
+      return {
+        success: false,
+        replyText:
+          `ℹ️ *Please provide a student name or admission number.*\n\n` +
+          `_Example: "${actionWord} Aarav" or "${actionWord} 1042"_`,
+      };
+    }
+
+    // 1. Find active trip for this driver
+    const activeRows = await query<{
+      id: string;
+      bus_id: string;
+      route_id: string;
+      status: string;
+    }>(
+      `SELECT t.id, t.bus_id, t.route_id, t.status
+       FROM trips t
+       WHERE t.driver_id = $1 AND t.school_id = $2
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
+         AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+      [driver.id, schoolId]
+    );
+
+    if (activeRows.length === 0 || !activeRows[0]) {
+      return {
+        success: false,
+        replyText:
+          `⚠️ *No Active Trip Found*\n\n` +
+          `You do not have an active trip currently in progress to record boarding attendance.\n\n` +
+          `Reply *1* to Start Trip before marking students.`,
+      };
+    }
+
+    const activeTrip = activeRows[0];
+    const cleanQuery = queryText.trim();
+
+    // 2. Search for student on this trip's route or school
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      stop_id: string | null;
+      stop_name: string | null;
+    }>(
+      `SELECT s.id, s.full_name, s.admission_number, pl.id AS stop_id, pl.stop_name
+       FROM students s
+       LEFT JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
+       LEFT JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id) AND pl.route_id = $2 AND pl.deleted_at IS NULL
+       WHERE s.school_id = $1 AND s.deleted_at IS NULL
+         AND (s.admission_number ILIKE $3 OR s.full_name ILIKE $4)
+       ORDER BY (CASE WHEN pl.id IS NOT NULL THEN 0 ELSE 1 END), s.full_name ASC
+       LIMIT 1`,
+      [schoolId, activeTrip.route_id, cleanQuery, `%${cleanQuery}%`]
+    );
+
+    if (studentRows.length === 0 || !studentRows[0]) {
+      return {
+        success: false,
+        replyText:
+          `❌ *Student Not Found*\n\n` +
+          `No student matching "${cleanQuery}" was found on your assigned route or school roster.\n\n` +
+          `Please check the name or admission number and try again, or reply *3* to search the roster.`,
+      };
+    }
+
+    const matchedStudent = studentRows[0];
+
+    // 3. Record boarding via DriverAttendanceService
+    const result = await DriverAttendanceService.recordBoarding(
+      schoolId,
+      {
+        tripId: activeTrip.id,
+        studentId: matchedStudent.id,
+        stopId: matchedStudent.stop_id || undefined,
+        status,
+        recordedAt: new Date().toISOString(),
+      },
+      {
+        userId: driver.id,
+        isDriver: true,
+        userRole: 'DRIVER',
+        schoolId,
+      }
+    );
+
+    const timeStr = new Date().toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    const isBoarded = status === 'BOARDED';
+    const statusEmoji = isBoarded ? '✅' : '❌';
+    const actionLabel = isBoarded ? 'Marked as BOARDED' : 'Marked as ABSENT / NOT BOARDED';
+
+    const replyText =
+      `${statusEmoji} *${matchedStudent.full_name}* ${actionLabel}\n\n` +
+      `• Admission No: *${matchedStudent.admission_number}*\n` +
+      `• Recorded At: *${timeStr}*\n` +
+      (matchedStudent.stop_name ? `• Stop: *${matchedStudent.stop_name}*\n` : '') +
+      `\n` +
+      `📋 *Live Trip Attendance:*\n` +
+      `• Boarded: *${result.summary.boardedCount} / ${result.summary.totalStudents}*\n` +
+      `• Absent: *${result.summary.absentCount}*\n` +
+      `• Pending: *${result.summary.pendingCount}*\n\n` +
+      `Reply *board <Name>* or *absent <Name>* for next student.`;
+
+    return {
+      success: true,
+      replyText,
+      result,
     };
   }
 

@@ -2,6 +2,12 @@ import {
   AttendanceStatus,
   DriverStudentAttendanceItem,
   DriverStudentListResponse,
+  RecordBoardingRequest,
+  RecordBoardingResponse,
+  RecordBoardingBatchRequest,
+  RecordBoardingBatchResponse,
+  RecordBoardingStatus,
+  BoardingEventRecord,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
@@ -428,5 +434,304 @@ export class DriverAttendanceService {
 
     text += `_Legend: ⏳ Pending • ✅ Boarded • ❌ Absent • 🏫 Deboarded_\nReply *3 <Name>* to search a specific student.`;
     return text;
+  }
+
+  /**
+   * Micro-phase 18.2: Record Student Boarding Attendance
+   * Tasks: Boarded, Not boarded (Absent), Timestamp, Location
+   * Idempotent upsert into boarding_events ledger with PostGIS coordinates.
+   */
+  public static async recordBoarding(
+    schoolId: string,
+    payload: RecordBoardingRequest,
+    actor?: DriverAttendanceActorContext
+  ): Promise<RecordBoardingResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant driver attendance access attempt');
+    }
+
+    // 1. Fetch trip and verify existence, tenant isolation, status, and driver assignment
+    const tripRows = await query<{
+      id: string;
+      school_id: string;
+      bus_id: string;
+      route_id: string;
+      driver_id: string;
+      status: string;
+    }>(
+      `SELECT id, school_id, bus_id, route_id, driver_id, status
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [payload.tripId, schoolId]
+    );
+
+    if (tripRows.length === 0 || !tripRows[0]) {
+      throw new NotFoundError(`Trip ${payload.tripId} not found in this school context`);
+    }
+
+    const trip = tripRows[0];
+
+    // Driver verification
+    if (actor?.isDriver && actor.userId && trip.driver_id !== actor.userId) {
+      throw new ForbiddenError('Driver is not authorized to mark attendance for another driver\'s trip');
+    }
+
+    // Attendance ledger lock verification
+    if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
+      throw new BadRequestError(`Cannot mark attendance on a ${trip.status.toLowerCase()} trip. Attendance ledger is permanently locked.`);
+    }
+
+    // 2. Fetch and verify student belongs to this school
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      school_id: string;
+    }>(
+      `SELECT id, full_name, admission_number, school_id
+       FROM students
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [payload.studentId, schoolId]
+    );
+
+    if (studentRows.length === 0 || !studentRows[0]) {
+      throw new NotFoundError(`Student ${payload.studentId} not found in this school context`);
+    }
+
+    const student = studentRows[0];
+
+    // 3. Resolve pickup stop ID
+    let resolvedStopId: string | undefined = payload.stopId;
+
+    if (resolvedStopId) {
+      const stopCheck = await query<{ id: string }>(
+        `SELECT id
+         FROM pickup_locations
+         WHERE id = $1 AND route_id = $2 AND school_id = $3 AND deleted_at IS NULL
+         LIMIT 1`,
+        [resolvedStopId, trip.route_id, schoolId]
+      );
+      if (stopCheck.length === 0) {
+        throw new BadRequestError(`Pickup stop ${resolvedStopId} is not on route ${trip.route_id}`);
+      }
+    } else {
+      // Lookup assigned pickup stop for this student on this route
+      const assignmentRows = await query<{ stop_id: string }>(
+        `SELECT pl.id AS stop_id
+         FROM student_stop_assignments ssa
+         JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+         WHERE ssa.student_id = $1 AND pl.route_id = $2 AND ssa.deleted_at IS NULL AND pl.deleted_at IS NULL
+         ORDER BY pl.sequence_order ASC
+         LIMIT 1`,
+        [payload.studentId, trip.route_id]
+      );
+
+      if (assignmentRows.length > 0 && assignmentRows[0]) {
+        resolvedStopId = assignmentRows[0].stop_id;
+      } else {
+        // Fallback to first stop of route if assignment not explicitly mapped
+        const routeStops = await query<{ id: string }>(
+          `SELECT id
+           FROM pickup_locations
+           WHERE route_id = $1 AND school_id = $2 AND deleted_at IS NULL
+           ORDER BY sequence_order ASC
+           LIMIT 1`,
+          [trip.route_id, schoolId]
+        );
+        if (routeStops.length > 0 && routeStops[0]) {
+          resolvedStopId = routeStops[0].id;
+        } else {
+          throw new BadRequestError(`No valid pickup stops found for route ${trip.route_id}`);
+        }
+      }
+    }
+
+    // 4. Upsert into boarding_events ledger (Idempotent per trip + student)
+    const markedBy = actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN');
+    const recordedAt = payload.recordedAt || new Date().toISOString();
+    const lat = payload.latitude != null ? payload.latitude : null;
+    const lng = payload.longitude != null ? payload.longitude : null;
+
+    const eventRows = await query<{
+      id: string;
+      trip_id: string;
+      student_id: string;
+      stop_id: string;
+      status: string;
+      marked_by: string;
+      latitude: number | null;
+      longitude: number | null;
+      recorded_at: string;
+    }>(
+      `INSERT INTO boarding_events (
+         trip_id,
+         student_id,
+         stop_id,
+         status,
+         marked_by,
+         latitude,
+         longitude,
+         location,
+         recorded_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7,
+         CASE WHEN $6::double precision IS NOT NULL AND $7::double precision IS NOT NULL
+              THEN ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography
+              ELSE NULL END,
+         $8::timestamptz
+       )
+       ON CONFLICT (trip_id, student_id)
+       DO UPDATE SET
+         stop_id = EXCLUDED.stop_id,
+         status = EXCLUDED.status,
+         marked_by = EXCLUDED.marked_by,
+         latitude = EXCLUDED.latitude,
+         longitude = EXCLUDED.longitude,
+         location = EXCLUDED.location,
+         recorded_at = EXCLUDED.recorded_at
+       RETURNING id, trip_id, student_id, stop_id, status, marked_by, latitude, longitude, recorded_at::text`,
+      [
+        payload.tripId,
+        payload.studentId,
+        resolvedStopId,
+        payload.status,
+        markedBy,
+        lat,
+        lng,
+        recordedAt,
+      ]
+    );
+
+    const event = eventRows[0]!;
+
+    logger.info(
+      `[DriverAttendance] Recorded boarding for student ${student.full_name} (${student.admission_number}): ${payload.status} at stop ${resolvedStopId} (Trip: ${payload.tripId})`
+    );
+
+    // 5. Query updated attendance summary counts for this trip
+    const countsRows = await query<{
+      total_students: number;
+      boarded_count: number;
+      absent_count: number;
+    }>(
+      `SELECT
+         (SELECT COUNT(DISTINCT ssa.student_id)::int
+          FROM student_stop_assignments ssa
+          JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+          WHERE pl.route_id = $2 AND ssa.deleted_at IS NULL AND pl.deleted_at IS NULL) AS total_students,
+         (SELECT COUNT(DISTINCT be.student_id)::int
+          FROM boarding_events be
+          WHERE be.trip_id = $1 AND be.status = 'BOARDED') AS boarded_count,
+         (SELECT COUNT(DISTINCT be.student_id)::int
+          FROM boarding_events be
+          WHERE be.trip_id = $1 AND be.status = 'ABSENT') AS absent_count`,
+      [payload.tripId, trip.route_id]
+    );
+
+    const totalStudents = Number(countsRows[0]?.total_students || 0);
+    const boardedCount = Number(countsRows[0]?.boarded_count || 0);
+    const absentCount = Number(countsRows[0]?.absent_count || 0);
+    const pendingCount = Math.max(0, totalStudents - boardedCount - absentCount);
+
+    return {
+      event: {
+        id: event.id,
+        tripId: event.trip_id,
+        studentId: event.student_id,
+        stopId: event.stop_id,
+        status: event.status as RecordBoardingStatus,
+        markedBy: event.marked_by,
+        latitude: event.latitude != null ? Number(event.latitude) : undefined,
+        longitude: event.longitude != null ? Number(event.longitude) : undefined,
+        recordedAt: new Date(event.recorded_at).toISOString(),
+      },
+      student: {
+        id: student.id,
+        fullName: student.full_name,
+        admissionNumber: student.admission_number,
+      },
+      summary: {
+        totalStudents,
+        boardedCount,
+        absentCount,
+        pendingCount,
+      },
+    };
+  }
+
+  /**
+   * Micro-phase 18.2: Batch Record Student Boarding Attendance
+   * Records multiple students boarding at a designated pickup stop.
+   */
+  public static async recordBoardingBatch(
+    schoolId: string,
+    payload: RecordBoardingBatchRequest,
+    actor?: DriverAttendanceActorContext
+  ): Promise<RecordBoardingBatchResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant driver attendance access attempt');
+    }
+
+    if (!payload.records || payload.records.length === 0) {
+      throw new BadRequestError('At least one boarding record is required in batch payload');
+    }
+
+    const events: BoardingEventRecord[] = [];
+
+    for (const item of payload.records) {
+      const res = await this.recordBoarding(
+        schoolId,
+        {
+          tripId: payload.tripId,
+          studentId: item.studentId,
+          stopId: item.stopId || payload.stopId,
+          status: item.status,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          recordedAt: item.recordedAt,
+        },
+        actor
+      );
+      events.push(res.event);
+    }
+
+    // Retrieve final summary from the last record or trip
+    const countsRows = await query<{
+      total_students: number;
+      boarded_count: number;
+      absent_count: number;
+    }>(
+      `SELECT
+         (SELECT COUNT(DISTINCT ssa.student_id)::int
+          FROM student_stop_assignments ssa
+          JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+          JOIN trips t ON t.route_id = pl.route_id
+          WHERE t.id = $1 AND ssa.deleted_at IS NULL AND pl.deleted_at IS NULL) AS total_students,
+         (SELECT COUNT(DISTINCT be.student_id)::int
+          FROM boarding_events be
+          WHERE be.trip_id = $1 AND be.status = 'BOARDED') AS boarded_count,
+         (SELECT COUNT(DISTINCT be.student_id)::int
+          FROM boarding_events be
+          WHERE be.trip_id = $1 AND be.status = 'ABSENT') AS absent_count`,
+      [payload.tripId]
+    );
+
+    const totalStudents = Number(countsRows[0]?.total_students || 0);
+    const boardedCount = Number(countsRows[0]?.boarded_count || 0);
+    const absentCount = Number(countsRows[0]?.absent_count || 0);
+    const pendingCount = Math.max(0, totalStudents - boardedCount - absentCount);
+
+    return {
+      events,
+      updatedCount: events.length,
+      summary: {
+        totalStudents,
+        boardedCount,
+        absentCount,
+        pendingCount,
+      },
+    };
   }
 }

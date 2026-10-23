@@ -101,6 +101,29 @@ class StudentAttendanceItem {
       markedBy: json['markedBy']?.toString(),
     );
   }
+
+  StudentAttendanceItem copyWith({
+    String? attendanceStatus,
+    String? boardedAt,
+    String? droppedAt,
+    String? markedBy,
+  }) {
+    return StudentAttendanceItem(
+      studentId: studentId,
+      admissionNumber: admissionNumber,
+      fullName: fullName,
+      grade: grade,
+      section: section,
+      emergencyPhone: emergencyPhone,
+      pickupStop: pickupStop,
+      dropStop: dropStop,
+      parent: parent,
+      attendanceStatus: attendanceStatus ?? this.attendanceStatus,
+      boardedAt: boardedAt ?? this.boardedAt,
+      droppedAt: droppedAt ?? this.droppedAt,
+      markedBy: markedBy ?? this.markedBy,
+    );
+  }
 }
 
 /// Model representing the full student roster returned by the backend
@@ -134,6 +157,30 @@ class DriverStudentListModel {
     required this.pendingCount,
     required this.students,
   });
+
+  DriverStudentListModel copyWith({
+    int? boardedCount,
+    int? droppedCount,
+    int? absentCount,
+    int? pendingCount,
+    List<StudentAttendanceItem>? students,
+  }) {
+    return DriverStudentListModel(
+      tripId: tripId,
+      busId: busId,
+      busNumber: busNumber,
+      registrationNumber: registrationNumber,
+      routeId: routeId,
+      routeName: routeName,
+      routeCode: routeCode,
+      totalStudents: totalStudents,
+      boardedCount: boardedCount ?? this.boardedCount,
+      droppedCount: droppedCount ?? this.droppedCount,
+      absentCount: absentCount ?? this.absentCount,
+      pendingCount: pendingCount ?? this.pendingCount,
+      students: students ?? this.students,
+    );
+  }
 
   factory DriverStudentListModel.fromJson(Map<String, dynamic> json) {
     final list = (json['students'] as List<dynamic>?) ?? [];

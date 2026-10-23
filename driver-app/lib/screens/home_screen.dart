@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/app_formatters.dart';
 import '../models/assigned_trip.dart';
@@ -757,176 +758,389 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   );
                 }
 
-                final manifest = snapshot.data!.data!;
-                final students = manifest.students;
+                DriverStudentListModel manifest = snapshot.data!.data!;
+                final activeTripId = manifest.tripId ?? _profileData?.activeTrip?['id']?.toString();
 
-                return Column(
-                  children: [
-                    // Sheet Header
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(
-                                      'Student Manifest (${manifest.totalStudents})',
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppTheme.textPrimary,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: AppTheme.primaryNavy.withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        manifest.busNumber.isNotEmpty ? manifest.busNumber : 'Bus',
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                          color: AppTheme.primaryNavy,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                if (manifest.routeName != null)
-                                  Text(
-                                    manifest.routeCode != null
-                                        ? '${manifest.routeCode} - ${manifest.routeName}'
-                                        : manifest.routeName!,
-                                    style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
-                                  ),
-                              ],
+                return StatefulBuilder(
+                  builder: (sheetContext, setModalState) {
+                    final students = manifest.students;
+
+                    Future<void> handleRecordBoarding(StudentAttendanceItem student, String status) async {
+                      if (activeTripId == null) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('Cannot mark attendance: No active trip in progress.'),
+                            backgroundColor: AppTheme.statusEmergency,
+                          ),
+                        );
+                        return;
+                      }
+
+                      final oldStatus = student.attendanceStatus;
+                      if (oldStatus == status) return;
+
+                      // Optimistic UI calculation
+                      final updatedStudent = student.copyWith(
+                        attendanceStatus: status,
+                        boardedAt: status == 'BOARDED' ? DateTime.now().toIso8601String() : null,
+                      );
+                      final updatedList = manifest.students
+                          .map((s) => s.studentId == student.studentId ? updatedStudent : s)
+                          .toList();
+
+                      int newBoarded = manifest.boardedCount;
+                      int newAbsent = manifest.absentCount;
+                      int newPending = manifest.pendingCount;
+
+                      if (oldStatus == 'PENDING') {
+                        newPending = (newPending - 1).clamp(0, 9999);
+                        if (status == 'BOARDED') newBoarded++;
+                        if (status == 'ABSENT') newAbsent++;
+                      } else if (oldStatus == 'BOARDED' && status == 'ABSENT') {
+                        newBoarded = (newBoarded - 1).clamp(0, 9999);
+                        newAbsent++;
+                      } else if (oldStatus == 'ABSENT' && status == 'BOARDED') {
+                        newAbsent = (newAbsent - 1).clamp(0, 9999);
+                        newBoarded++;
+                      }
+
+                      setModalState(() {
+                        manifest = manifest.copyWith(
+                          boardedCount: newBoarded,
+                          absentCount: newAbsent,
+                          pendingCount: newPending,
+                          students: updatedList,
+                        );
+                      });
+
+                      // Capture GPS position
+                      double? lat;
+                      double? lng;
+                      try {
+                        final pos = await Geolocator.getLastKnownPosition();
+                        if (pos != null) {
+                          lat = pos.latitude;
+                          lng = pos.longitude;
+                        }
+                      } catch (_) {}
+
+                      final res = await ApiService().recordBoarding(
+                        tripId: activeTripId,
+                        studentId: student.studentId,
+                        stopId: student.pickupStop.id,
+                        status: status,
+                        latitude: lat,
+                        longitude: lng,
+                        recordedAt: DateTime.now().toUtc().toIso8601String(),
+                      );
+
+                      if (!res.success) {
+                        // Revert on failure
+                        setModalState(() {
+                          final revertedList = manifest.students
+                              .map((s) => s.studentId == student.studentId ? student : s)
+                              .toList();
+                          manifest = manifest.copyWith(
+                            boardedCount: manifest.boardedCount + (oldStatus == 'BOARDED' ? 1 : 0) - (status == 'BOARDED' ? 1 : 0),
+                            absentCount: manifest.absentCount + (oldStatus == 'ABSENT' ? 1 : 0) - (status == 'ABSENT' ? 1 : 0),
+                            pendingCount: manifest.pendingCount + (oldStatus == 'PENDING' ? 1 : 0),
+                            students: revertedList,
+                          );
+                        });
+
+                        if (sheetContext.mounted) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to record attendance: ${res.message}'),
+                              backgroundColor: AppTheme.statusEmergency,
                             ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () => Navigator.pop(ctx),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: students.isEmpty
-                          ? const Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(32.0),
-                                child: Text(
-                                  'No registered students found for this route.\nContact your transport coordinator.',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
-                                ),
+                          );
+                        }
+                      } else {
+                        if (sheetContext.mounted) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                '${student.fullName} marked as ${status == 'BOARDED' ? 'BOARDED' : 'ABSENT'}',
                               ),
-                            )
-                          : ListView.builder(
-                              controller: scrollController,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              itemCount: students.length,
-                              itemBuilder: (context, index) {
-                                final student = students[index];
-                                final isFirstOfStop = index == 0 ||
-                                    students[index - 1].pickupStop.id != student.pickupStop.id;
+                              duration: const Duration(seconds: 2),
+                              backgroundColor: status == 'BOARDED' ? AppTheme.statusSuccess : AppTheme.statusEmergency,
+                            ),
+                          );
+                        }
+                      }
+                    }
 
-                                return Column(
+                    return Column(
+                      children: [
+                        // Sheet Header
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    if (isFirstOfStop) ...[
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 14, bottom: 6),
-                                        child: Row(
-                                          children: [
-                                            const Icon(Icons.place_rounded, size: 16, color: AppTheme.primaryNavy),
-                                            const SizedBox(width: 6),
-                                            Expanded(
-                                              child: Text(
-                                                'Stop #${student.pickupStop.sequenceOrder}: ${student.pickupStop.name}',
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 13,
-                                                  color: AppTheme.primaryNavy,
-                                                ),
-                                              ),
-                                            ),
-                                            if (student.pickupStop.expectedTimeOffsetMinutes != null)
-                                              Text(
-                                                '+${student.pickupStop.expectedTimeOffsetMinutes}m',
-                                                style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                    Card(
-                                      margin: const EdgeInsets.only(bottom: 6),
-                                      elevation: 0,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        side: BorderSide(color: Colors.grey.shade200),
-                                      ),
-                                      child: ListTile(
-                                        dense: true,
-                                        leading: CircleAvatar(
-                                          radius: 16,
-                                          backgroundColor: AppTheme.primaryNavy.withOpacity(0.08),
-                                          child: Text(
-                                            student.fullName.isNotEmpty ? student.fullName[0].toUpperCase() : 'S',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              color: AppTheme.primaryNavy,
-                                              fontSize: 12,
-                                            ),
+                                    Row(
+                                      children: [
+                                        Text(
+                                          'Student Manifest (${manifest.totalStudents})',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            color: AppTheme.textPrimary,
                                           ),
                                         ),
-                                        title: Text(
-                                          student.fullName,
-                                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                                        ),
-                                        subtitle: Text(
-                                          'Adm: ${student.admissionNumber}${student.grade != null ? ' • Class ${student.grade}' : ''}',
-                                          style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-                                        ),
-                                        trailing: Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                           decoration: BoxDecoration(
-                                            color: student.attendanceStatus == 'BOARDED'
-                                                ? AppTheme.statusSuccessLight
-                                                : (student.attendanceStatus == 'ABSENT'
-                                                    ? AppTheme.statusEmergencyLight
-                                                    : Colors.grey.shade100),
+                                            color: AppTheme.primaryNavy.withOpacity(0.1),
                                             borderRadius: BorderRadius.circular(4),
                                           ),
                                           child: Text(
-                                            student.attendanceStatus,
-                                            style: TextStyle(
-                                              fontSize: 10,
+                                            manifest.busNumber.isNotEmpty ? manifest.busNumber : 'Bus',
+                                            style: const TextStyle(
+                                              fontSize: 11,
                                               fontWeight: FontWeight.bold,
-                                              color: student.attendanceStatus == 'BOARDED'
-                                                  ? AppTheme.statusSuccess
-                                                  : (student.attendanceStatus == 'ABSENT'
-                                                      ? AppTheme.statusEmergency
-                                                      : AppTheme.textMuted),
+                                              color: AppTheme.primaryNavy,
                                             ),
                                           ),
                                         ),
-                                      ),
+                                      ],
                                     ),
+                                    if (manifest.routeName != null)
+                                      Text(
+                                        manifest.routeCode != null
+                                            ? '${manifest.routeCode} - ${manifest.routeName}'
+                                            : manifest.routeName!,
+                                        style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                                      ),
                                   ],
-                                );
-                              },
-                            ),
-                    ),
-                  ],
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close),
+                                onPressed: () => Navigator.pop(ctx),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Live Attendance Summary Breakdown
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.statusSuccessLight,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'Boarded: ${manifest.boardedCount}',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.statusSuccess),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.statusEmergencyLight,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'Absent: ${manifest.absentCount}',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.statusEmergency),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade100,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'Pending: ${manifest.pendingCount}',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textMuted),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Divider(height: 1),
+
+                        Expanded(
+                          child: students.isEmpty
+                              ? const Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(32.0),
+                                    child: Text(
+                                      'No registered students found for this route.\nContact your transport coordinator.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  controller: scrollController,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  itemCount: students.length,
+                                  itemBuilder: (context, index) {
+                                    final student = students[index];
+                                    final isFirstOfStop = index == 0 ||
+                                        students[index - 1].pickupStop.id != student.pickupStop.id;
+
+                                    return Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (isFirstOfStop) ...[
+                                          Padding(
+                                            padding: const EdgeInsets.only(top: 14, bottom: 6),
+                                            child: Row(
+                                              children: [
+                                                const Icon(Icons.place_rounded, size: 16, color: AppTheme.primaryNavy),
+                                                const SizedBox(width: 6),
+                                                Expanded(
+                                                  child: Text(
+                                                    'Stop #${student.pickupStop.sequenceOrder}: ${student.pickupStop.name}',
+                                                    style: const TextStyle(
+                                                      fontWeight: FontWeight.bold,
+                                                      fontSize: 13,
+                                                      color: AppTheme.primaryNavy,
+                                                    ),
+                                                  ),
+                                                ),
+                                                if (student.pickupStop.expectedTimeOffsetMinutes != null)
+                                                  Text(
+                                                    '+${student.pickupStop.expectedTimeOffsetMinutes}m',
+                                                    style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                        Card(
+                                          margin: const EdgeInsets.only(bottom: 6),
+                                          elevation: 0,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                            side: BorderSide(color: Colors.grey.shade200),
+                                          ),
+                                          child: ListTile(
+                                            dense: true,
+                                            leading: CircleAvatar(
+                                              radius: 16,
+                                              backgroundColor: AppTheme.primaryNavy.withOpacity(0.08),
+                                              child: Text(
+                                                student.fullName.isNotEmpty ? student.fullName[0].toUpperCase() : 'S',
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppTheme.primaryNavy,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ),
+                                            title: Text(
+                                              student.fullName,
+                                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                            ),
+                                            subtitle: Text(
+                                              'Adm: ${student.admissionNumber}${student.grade != null ? ' • Class ${student.grade}' : ''}',
+                                              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                            ),
+                                            trailing: activeTripId != null
+                                                ? (student.attendanceStatus == 'PENDING'
+                                                    ? Row(
+                                                        mainAxisSize: MainAxisSize.min,
+                                                        children: [
+                                                          IconButton(
+                                                            icon: const Icon(Icons.check_circle_outline, color: AppTheme.statusSuccess, size: 24),
+                                                            tooltip: 'Mark Boarded',
+                                                            onPressed: () => handleRecordBoarding(student, 'BOARDED'),
+                                                          ),
+                                                          IconButton(
+                                                            icon: const Icon(Icons.cancel_outlined, color: AppTheme.statusEmergency, size: 24),
+                                                            tooltip: 'Mark Absent',
+                                                            onPressed: () => handleRecordBoarding(student, 'ABSENT'),
+                                                          ),
+                                                        ],
+                                                      )
+                                                    : Row(
+                                                        mainAxisSize: MainAxisSize.min,
+                                                        children: [
+                                                          Container(
+                                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                            decoration: BoxDecoration(
+                                                              color: student.attendanceStatus == 'BOARDED'
+                                                                  ? AppTheme.statusSuccessLight
+                                                                  : (student.attendanceStatus == 'ABSENT'
+                                                                      ? AppTheme.statusEmergencyLight
+                                                                      : Colors.grey.shade100),
+                                                              borderRadius: BorderRadius.circular(4),
+                                                            ),
+                                                            child: Text(
+                                                              student.attendanceStatus,
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                fontWeight: FontWeight.bold,
+                                                                color: student.attendanceStatus == 'BOARDED'
+                                                                    ? AppTheme.statusSuccess
+                                                                    : (student.attendanceStatus == 'ABSENT'
+                                                                        ? AppTheme.statusEmergency
+                                                                        : AppTheme.textMuted),
+                                                              ),
+                                                            ),
+                                                          ),
+                                                          PopupMenuButton<String>(
+                                                            icon: const Icon(Icons.more_vert, size: 18, color: AppTheme.textMuted),
+                                                            onSelected: (val) => handleRecordBoarding(student, val),
+                                                            itemBuilder: (popCtx) => [
+                                                              if (student.attendanceStatus != 'BOARDED')
+                                                                const PopupMenuItem(value: 'BOARDED', child: Text('Mark Boarded')),
+                                                              if (student.attendanceStatus != 'ABSENT')
+                                                                const PopupMenuItem(value: 'ABSENT', child: Text('Mark Absent')),
+                                                            ],
+                                                          ),
+                                                        ],
+                                                      ))
+                                                : Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                                    decoration: BoxDecoration(
+                                                      color: student.attendanceStatus == 'BOARDED'
+                                                          ? AppTheme.statusSuccessLight
+                                                          : (student.attendanceStatus == 'ABSENT'
+                                                              ? AppTheme.statusEmergencyLight
+                                                              : Colors.grey.shade100),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: Text(
+                                                      student.attendanceStatus,
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: student.attendanceStatus == 'BOARDED'
+                                                            ? AppTheme.statusSuccess
+                                                            : (student.attendanceStatus == 'ABSENT'
+                                                                ? AppTheme.statusEmergency
+                                                                : AppTheme.textMuted),
+                                                      ),
+                                                    ),
+                                                  ),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    );
+                  },
                 );
               },
             );

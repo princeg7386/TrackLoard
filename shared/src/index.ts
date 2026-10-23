@@ -3048,6 +3048,81 @@ export const DriverStudentListResponseSchema = z.object({
 });
 export type DriverStudentListResponse = z.infer<typeof DriverStudentListResponseSchema>;
 
+/**
+ * Driver Boarding Attendance (Micro-Phase 18.2)
+ * Tasks: Boarded, Not boarded, Timestamp, Location
+ */
+export const RecordBoardingStatusEnum = z.enum(['BOARDED', 'ABSENT']);
+export type RecordBoardingStatus = z.infer<typeof RecordBoardingStatusEnum>;
+
+export const RecordBoardingRequestSchema = z.object({
+  tripId: z.string().uuid('Valid trip UUID is required'),
+  studentId: z.string().uuid('Valid student UUID is required'),
+  stopId: z.string().uuid('Valid pickup stop UUID is required').optional(),
+  status: RecordBoardingStatusEnum.default('BOARDED'),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  recordedAt: z.string().datetime({ offset: true }).optional().nullable(),
+});
+export type RecordBoardingRequest = z.infer<typeof RecordBoardingRequestSchema>;
+
+export const BoardingBatchItemSchema = z.object({
+  studentId: z.string().uuid('Valid student UUID is required'),
+  status: RecordBoardingStatusEnum.default('BOARDED'),
+  stopId: z.string().uuid('Valid pickup stop UUID is required').optional(),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  recordedAt: z.string().datetime({ offset: true }).optional().nullable(),
+});
+export type BoardingBatchItem = z.infer<typeof BoardingBatchItemSchema>;
+
+export const RecordBoardingBatchRequestSchema = z.object({
+  tripId: z.string().uuid('Valid trip UUID is required'),
+  stopId: z.string().uuid('Valid pickup stop UUID is required').optional(),
+  records: z.array(BoardingBatchItemSchema).min(1, 'At least one student boarding record is required'),
+});
+export type RecordBoardingBatchRequest = z.infer<typeof RecordBoardingBatchRequestSchema>;
+
+export const BoardingEventRecordSchema = z.object({
+  id: z.string().uuid(),
+  tripId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  status: RecordBoardingStatusEnum,
+  markedBy: z.string(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  recordedAt: z.string(),
+});
+export type BoardingEventRecord = z.infer<typeof BoardingEventRecordSchema>;
+
+export const BoardingSummaryCountsSchema = z.object({
+  totalStudents: z.number().int().min(0),
+  boardedCount: z.number().int().min(0),
+  absentCount: z.number().int().min(0),
+  pendingCount: z.number().int().min(0),
+});
+export type BoardingSummaryCounts = z.infer<typeof BoardingSummaryCountsSchema>;
+
+export const RecordBoardingResponseSchema = z.object({
+  event: BoardingEventRecordSchema,
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string(),
+  }),
+  summary: BoardingSummaryCountsSchema,
+});
+export type RecordBoardingResponse = z.infer<typeof RecordBoardingResponseSchema>;
+
+export const RecordBoardingBatchResponseSchema = z.object({
+  events: z.array(BoardingEventRecordSchema),
+  updatedCount: z.number().int().min(0),
+  summary: BoardingSummaryCountsSchema,
+});
+export type RecordBoardingBatchResponse = z.infer<typeof RecordBoardingBatchResponseSchema>;
+
+
 
 
 

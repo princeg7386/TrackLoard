@@ -54,4 +54,90 @@ export class DriverAttendanceController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/driver/attendance/boarding
+   * Records boarding attendance for a student (BOARDED or ABSENT)
+   */
+  public static async recordBoarding(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.body.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const result = await DriverAttendanceService.recordBoarding(
+        targetSchoolId,
+        req.body,
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Student boarding attendance recorded successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/driver/attendance/boarding/batch
+   * Records batch boarding attendance for multiple students at once
+   */
+  public static async recordBoardingBatch(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.body.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const result = await DriverAttendanceService.recordBoardingBatch(
+        targetSchoolId,
+        req.body,
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Batch boarding attendance recorded successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
