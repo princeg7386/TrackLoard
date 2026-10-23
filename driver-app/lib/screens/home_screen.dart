@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/app_formatters.dart';
 import '../models/assigned_trip.dart';
@@ -1835,6 +1836,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             Icons.phone_outlined,
                             'Phone',
                             student.parent!.phone,
+                            onTap: () => _launchPhone(ctx, student.parent!.phone),
                             valueStyle: const TextStyle(
                               fontSize: 13,
                               color: AppTheme.primaryNavy,
@@ -1849,6 +1851,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             Icons.emergency_outlined,
                             'Emergency',
                             student.emergencyPhone!,
+                            onTap: () => _launchPhone(ctx, student.emergencyPhone!),
                             valueStyle: const TextStyle(
                               fontSize: 13,
                               color: AppTheme.statusEmergency,
@@ -1875,6 +1878,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           Icons.my_location_rounded,
                           'Location',
                           '${student.pickupStop.latitude.toStringAsFixed(5)}, ${student.pickupStop.longitude.toStringAsFixed(5)}',
+                          onTap: () => _launchMap(
+                            ctx,
+                            student.pickupStop.latitude,
+                            student.pickupStop.longitude,
+                            student.pickupStop.name,
+                          ),
                           valueStyle: const TextStyle(
                             fontSize: 12,
                             color: AppTheme.textSecondary,
@@ -1934,6 +1943,60 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           if (student.droppedAt != null)
                             _detailRow(Icons.logout_rounded, 'Dropped', _formatTimestamp(student.droppedAt!)),
                         ],
+
+                        // --- Phase 19.3: Actions ---
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            if (student.parent != null) ...[
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.call_rounded, size: 16),
+                                  label: const Text('Call Parent'),
+                                  onPressed: () => _launchPhone(ctx, student.parent!.phone),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppTheme.primaryNavy,
+                                    side: const BorderSide(color: AppTheme.primaryNavy),
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                icon: const Icon(Icons.map_rounded, size: 16),
+                                label: const Text('Open Map'),
+                                onPressed: () => _launchMap(
+                                  ctx,
+                                  student.pickupStop.latitude,
+                                  student.pickupStop.longitude,
+                                  student.pickupStop.name,
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppTheme.primaryNavy,
+                                  side: const BorderSide(color: AppTheme.primaryNavy),
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: double.infinity,
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.arrow_back_rounded, size: 16),
+                            label: const Text('Return to Roster'),
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppTheme.textMuted,
+                              textStyle: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -1955,6 +2018,46 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return '$h:$m';
     } catch (_) {
       return iso;
+    }
+  }
+
+  // Phase 19.3: Launches the device phone dialer for a given phone number.
+  // Uses tel: URI — Android opens the dialer; user confirms before calling.
+  // No CALL_PHONE permission required for dialer intent.
+  Future<void> _launchPhone(BuildContext ctx, String phone) async {
+    final cleaned = phone.replaceAll(RegExp(r'[^\d+]'), '');
+    final uri = Uri.parse('tel:$cleaned');
+    if (!await launchUrl(uri)) {
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(content: Text('Could not open phone dialer.')),
+        );
+      }
+    }
+  }
+
+  // Phase 19.3: Launches device maps app at the given coordinates.
+  // Uses geo: URI on Android (opens any installed maps app).
+  // Falls back to Google Maps browser URL if geo: is not handled.
+  Future<void> _launchMap(
+    BuildContext ctx,
+    double lat,
+    double lng,
+    String label,
+  ) async {
+    final encoded = Uri.encodeComponent(label);
+    final geoUri = Uri.parse('geo:$lat,$lng?q=$lat,$lng($encoded)');
+    if (!await launchUrl(geoUri, mode: LaunchMode.externalApplication)) {
+      final fallback = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
+      );
+      if (!await launchUrl(fallback, mode: LaunchMode.externalApplication)) {
+        if (ctx.mounted) {
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(content: Text('Could not open maps app.')),
+          );
+        }
+      }
     }
   }
 
@@ -1986,6 +2089,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     String label,
     String value, {
     TextStyle? valueStyle,
+    VoidCallback? onTap,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -2002,11 +2106,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           ),
           Expanded(
-            child: Text(
-              value,
-              style: valueStyle ??
-                  const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
-            ),
+            child: onTap != null
+                ? GestureDetector(
+                    onTap: onTap,
+                    child: Text(
+                      value,
+                      style: valueStyle ??
+                          const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
+                    ),
+                  )
+                : Text(
+                    value,
+                    style: valueStyle ??
+                        const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
+                  ),
           ),
         ],
       ),
