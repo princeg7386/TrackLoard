@@ -103,4 +103,16 @@ telemetryRouter.get(
   TelemetryController.streamBusFeed
 );
 
+// 10. Phase 20.2 — Real-time ETA for all remaining stops on a trip.
+//     Assembles EtaTripContext (bus position + remaining stops + speed)
+//     and computes per-stop estimated arrival times via RoutingService.
+//     requireActorTenantScope: ensures admin's schoolId matches the trip.
+telemetryRouter.get(
+  '/trips/:tripId/eta',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getTripEta
+);
+
 export default telemetryRouter;

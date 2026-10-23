@@ -23,6 +23,11 @@ import {
   EtaTripContext,
   EtaTripContextSchema,
   SpeedSource,
+  StopEtaResult,
+  RouteEtaSummary,
+  RouteEtaSummarySchema,
+  StopEtaResultSchema,
+  calculateHaversineDistanceMeters,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import {
@@ -30,6 +35,7 @@ import {
   ForbiddenError,
 } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
+import { RoutingService } from './routing/routing.service.js';
 
 /** Minimum speed used when bus appears stationary or GPS is offline */
 const MIN_SPEED_KMH = 5;
@@ -248,5 +254,144 @@ export class EtaService {
     );
 
     return parsed;
+  }
+
+  /**
+   * Phase 20.2 — Calculate per-stop ETAs from an assembled EtaTripContext.
+   *
+   * Algorithm:
+   *  - First stop: origin = currentPosition (or first stop coords when GPS unavailable)
+   *  - Each subsequent stop: origin = previous stop coordinates (sequential chaining)
+   *  - Duration and distance accumulate cumulatively so later stops include all
+   *    intermediate travel time.
+   *
+   * Uses RoutingService (OSRM / Mock fallback) — provider-independent.
+   */
+  static async calculateStopEtas(
+    context: EtaTripContext
+  ): Promise<RouteEtaSummary> {
+    const { tripId, schoolId, remainingStops, currentPosition, effectiveSpeedKmh, speedSource } =
+      context;
+
+    const now = Date.now();
+    const stopEtas: StopEtaResult[] = [];
+    let cumulativeDurationSeconds = 0;
+    let cumulativeDistanceMeters = 0;
+
+    if (remainingStops.length === 0) {
+      // No stops left — trip is complete or has no planned stops
+      const summary: RouteEtaSummary = RouteEtaSummarySchema.parse({
+        tripId,
+        totalRemainingDistanceMeters: 0,
+        totalRemainingDurationSeconds: 0,
+        estimatedRouteCompletionAt: null,
+        nextStopEta: null,
+        stopEtas: [],
+        effectiveSpeedKmh,
+        speedSource,
+        calculatedAt: new Date(now).toISOString(),
+      });
+      return summary;
+    }
+
+    for (let i = 0; i < remainingStops.length; i++) {
+      const stop = remainingStops[i]!;
+
+      // Determine the origin for this leg
+      const origin =
+        i === 0
+          ? (currentPosition ?? {
+              latitude: stop.latitude,
+              longitude: stop.longitude,
+            })
+          : {
+              latitude: remainingStops[i - 1]!.latitude,
+              longitude: remainingStops[i - 1]!.longitude,
+            };
+
+      const destination = { latitude: stop.latitude, longitude: stop.longitude };
+
+      // Skip leg if origin === destination (bus already at stop, or GPS fallback)
+      const isSamePoint =
+        origin.latitude === destination.latitude &&
+        origin.longitude === destination.longitude;
+
+      let legDistanceMeters = 0;
+      let legDurationSeconds = 0;
+      let provider = 'DIRECT';
+
+      if (!isSamePoint) {
+        try {
+          const etaResult = await RoutingService.calculateEta(
+            { origin, destination, averageSpeedKmh: effectiveSpeedKmh },
+            schoolId
+          );
+          legDistanceMeters = etaResult.distanceMeters;
+          legDurationSeconds = etaResult.durationSeconds;
+          provider = etaResult.provider;
+        } catch (err: any) {
+          logger.warn(
+            `[EtaService] ETA calculation failed for stop ${stop.stopId}: ${err.message}. Using haversine fallback.`
+          );
+          // Geometric fallback — never crash the ETA engine
+          const straight = calculateHaversineDistanceMeters(origin, destination);
+          legDistanceMeters = Math.round(straight * 1.25); // winding factor
+          const speedMs = effectiveSpeedKmh / 3.6;
+          legDurationSeconds = Math.round(legDistanceMeters / speedMs);
+          provider = 'HAVERSINE_FALLBACK';
+        }
+      }
+
+      cumulativeDistanceMeters += legDistanceMeters;
+      cumulativeDurationSeconds += legDurationSeconds;
+
+      stopEtas.push(
+        StopEtaResultSchema.parse({
+          stopId: stop.stopId,
+          stopName: stop.stopName,
+          sequenceOrder: stop.sequenceOrder,
+          distanceMeters: cumulativeDistanceMeters,
+          durationSeconds: cumulativeDurationSeconds,
+          estimatedArrivalAt: new Date(now + cumulativeDurationSeconds * 1000).toISOString(),
+          provider,
+        })
+      );
+    }
+
+    const lastStop = stopEtas[stopEtas.length - 1]!;
+
+    const summary: RouteEtaSummary = RouteEtaSummarySchema.parse({
+      tripId,
+      totalRemainingDistanceMeters: cumulativeDistanceMeters,
+      totalRemainingDurationSeconds: cumulativeDurationSeconds,
+      estimatedRouteCompletionAt: lastStop.estimatedArrivalAt,
+      nextStopEta: stopEtas[0] ?? null,
+      stopEtas,
+      effectiveSpeedKmh,
+      speedSource,
+      calculatedAt: new Date(now).toISOString(),
+    });
+
+    logger.info(
+      `[EtaService] ETA calculated for trip ${tripId}: ` +
+        `${stopEtas.length} stops, ` +
+        `totalDist=${cumulativeDistanceMeters}m, ` +
+        `totalDuration=${cumulativeDurationSeconds}s, ` +
+        `nextStop=${stopEtas[0]?.stopName ?? 'none'} in ${stopEtas[0]?.durationSeconds ?? 0}s`
+    );
+
+    return summary;
+  }
+
+  /**
+   * Phase 20.2 — Full pipeline: assemble context then calculate ETAs.
+   * Convenience wrapper for the controller.
+   */
+  static async calculateTripEta(
+    tripId: string,
+    schoolId: string
+  ): Promise<RouteEtaSummary> {
+    const context = await EtaService.assembleContext(tripId, schoolId);
+    return EtaService.calculateStopEtas(context);
   }
 }

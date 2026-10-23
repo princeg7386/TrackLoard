@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
+import { EtaService } from '../services/eta.service.js';
 import { TelemetryIngestPayload } from '@school-bus/shared';
 
 export class TelemetryController {
@@ -235,6 +236,30 @@ export class TelemetryController {
         clearInterval(heartbeatInterval);
         unsubscribe();
         res.end();
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/eta
+   * Phase 20.2 — Compute and return live ETA for all remaining stops on a trip.
+   *
+   * Tenant isolation: requireActorTenantScope ensures the caller's schoolId
+   * matches the trip's school_id (enforced inside EtaService.assembleContext).
+   */
+  static async getTripEta(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params as { tripId: string };
+      const schoolId: string = (req as any).user?.schoolId;
+
+      const summary = await EtaService.calculateTripEta(tripId, schoolId);
+
+      res.status(200).json({
+        success: true,
+        message: 'ETA calculated successfully',
+        data: summary,
       });
     } catch (error) {
       next(error);

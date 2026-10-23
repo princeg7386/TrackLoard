@@ -1273,6 +1273,10 @@ export interface TelemetryFeedEvent {
   healthStatus: GpsHealthStatus;
   recordedAt: string;
   timestamp: string;
+  // Phase 20.2: Optional ETA fields — populated on LOCATION_UPDATE when available
+  nextStopEtaSeconds?: number | null;
+  nextStopName?: string | null;
+  estimatedNextArrivalAt?: string | null;
 }
 
 export const TelemetryFeedQuerySchema = z.object({
@@ -2099,9 +2103,49 @@ export const EtaTripContextSchema = z.object({
 });
 export type EtaTripContext = z.infer<typeof EtaTripContextSchema>;
 
+/**
+ * Phase 20.2 — ETA Calculation Results
+ * Computed ephemeral values — not persisted to DB.
+ * Returned by GET /api/v1/telemetry/trips/:tripId/eta
+ */
+
+/** ETA result for a single remaining pickup stop */
+export const StopEtaResultSchema = z.object({
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int().min(0),
+  /** Road distance from bus position cumulated to this stop */
+  distanceMeters: z.number().min(0),
+  /** Time in seconds from now until bus reaches this stop */
+  durationSeconds: z.number().min(0),
+  /** ISO 8601 wall-clock arrival estimate */
+  estimatedArrivalAt: z.string().datetime(),
+  /** Routing provider that produced this estimate */
+  provider: z.string(),
+});
+export type StopEtaResult = z.infer<typeof StopEtaResultSchema>;
+
+/** Aggregated ETA summary for the full remaining route of a trip */
+export const RouteEtaSummarySchema = z.object({
+  tripId: z.string().uuid(),
+  totalRemainingDistanceMeters: z.number().min(0),
+  totalRemainingDurationSeconds: z.number().min(0),
+  /** Estimated wall-clock time the bus reaches the last stop */
+  estimatedRouteCompletionAt: z.string().datetime().nullable(),
+  /** ETA to the very next stop (null when no stops remain) */
+  nextStopEta: StopEtaResultSchema.nullable(),
+  /** ETA to every remaining stop in route order */
+  stopEtas: z.array(StopEtaResultSchema),
+  effectiveSpeedKmh: z.number().min(5).max(160),
+  speedSource: SpeedSourceSchema,
+  calculatedAt: z.string().datetime(),
+});
+export type RouteEtaSummary = z.infer<typeof RouteEtaSummarySchema>;
+
 export const SnapToRoadQuerySchema = z.object({
   points: z.array(GeoCoordinatesSchema).min(1),
 });
+
 
 export type SnapToRoadQuery = z.infer<typeof SnapToRoadQuerySchema>;
 
