@@ -15,6 +15,8 @@ class ApiConstants {
   static const String attendanceStudentsEndpoint = '/driver/attendance/students';
   static const String attendanceBoardingEndpoint = '/driver/attendance/boarding';
   static const String attendanceBoardingBatchEndpoint = '/driver/attendance/boarding/batch';
+  static const String attendanceDropEndpoint = '/driver/attendance/drop';
+  static const String attendanceDropBatchEndpoint = '/driver/attendance/drop/batch';
 
   // Telemetry Ingestion Endpoint (used in Phase 10.2 / 10.3)
   static const String telemetryEndpoint = '/telemetry/batch';

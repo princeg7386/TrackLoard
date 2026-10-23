@@ -871,6 +871,107 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       }
                     }
 
+                    Future<void> handleRecordDrop(StudentAttendanceItem student) async {
+                      if (activeTripId == null) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('Cannot mark drop: No active trip in progress.'),
+                            backgroundColor: AppTheme.statusEmergency,
+                          ),
+                        );
+                        return;
+                      }
+
+                      final oldStatus = student.attendanceStatus;
+                      if (oldStatus == 'DEBOARDED') return;
+
+                      // Optimistic UI calculation
+                      final updatedStudent = student.copyWith(
+                        attendanceStatus: 'DEBOARDED',
+                        droppedAt: DateTime.now().toIso8601String(),
+                      );
+                      final updatedList = manifest.students
+                          .map((s) => s.studentId == student.studentId ? updatedStudent : s)
+                          .toList();
+
+                      int newBoarded = manifest.boardedCount;
+                      int newDropped = manifest.droppedCount + 1;
+                      int newAbsent = manifest.absentCount;
+                      int newPending = manifest.pendingCount;
+
+                      if (oldStatus == 'PENDING') {
+                        newPending = (newPending - 1).clamp(0, 9999);
+                      } else if (oldStatus == 'ABSENT') {
+                        newAbsent = (newAbsent - 1).clamp(0, 9999);
+                      }
+
+                      setModalState(() {
+                        manifest = manifest.copyWith(
+                          boardedCount: newBoarded,
+                          droppedCount: newDropped,
+                          absentCount: newAbsent,
+                          pendingCount: newPending,
+                          students: updatedList,
+                        );
+                      });
+
+                      // Capture GPS position
+                      double? lat;
+                      double? lng;
+                      try {
+                        final pos = await Geolocator.getLastKnownPosition();
+                        if (pos != null) {
+                          lat = pos.latitude;
+                          lng = pos.longitude;
+                        }
+                      } catch (_) {}
+
+                      final res = await ApiService().recordDrop(
+                        tripId: activeTripId,
+                        studentId: student.studentId,
+                        stopId: student.dropStop?.id ?? student.pickupStop.id,
+                        status: 'DEBOARDED',
+                        latitude: lat,
+                        longitude: lng,
+                        recordedAt: DateTime.now().toUtc().toIso8601String(),
+                      );
+
+                      if (!res.success) {
+                        // Revert on failure
+                        setModalState(() {
+                          final revertedList = manifest.students
+                              .map((s) => s.studentId == student.studentId ? student : s)
+                              .toList();
+                          manifest = manifest.copyWith(
+                            boardedCount: manifest.boardedCount,
+                            droppedCount: (manifest.droppedCount - 1).clamp(0, 9999),
+                            absentCount: manifest.absentCount,
+                            pendingCount: manifest.pendingCount + (oldStatus == 'PENDING' ? 1 : 0),
+                            students: revertedList,
+                          );
+                        });
+
+                        if (sheetContext.mounted) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to record drop: ${res.message}'),
+                              backgroundColor: AppTheme.statusEmergency,
+                            ),
+                          );
+                        }
+                      } else {
+                        if (sheetContext.mounted) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            SnackBar(
+                              content: Text('${student.fullName} marked as DROPPED / DEBOARDED'),
+                              duration: const Duration(seconds: 2),
+                              backgroundColor: AppTheme.primaryNavy,
+                            ),
+                          );
+                        }
+                      }
+                    }
+
                     return Column(
                       children: [
                         // Sheet Header
@@ -931,44 +1032,59 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         // Live Attendance Summary Breakdown
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.statusSuccessLight,
-                                  borderRadius: BorderRadius.circular(4),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.statusSuccessLight,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Boarded: ${manifest.boardedCount}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.statusSuccess),
+                                  ),
                                 ),
-                                child: Text(
-                                  'Boarded: ${manifest.boardedCount}',
-                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.statusSuccess),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.primaryNavy.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Dropped: ${manifest.droppedCount}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.primaryNavy),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.statusEmergencyLight,
-                                  borderRadius: BorderRadius.circular(4),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.statusEmergencyLight,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Absent: ${manifest.absentCount}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.statusEmergency),
+                                  ),
                                 ),
-                                child: Text(
-                                  'Absent: ${manifest.absentCount}',
-                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.statusEmergency),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.shade100,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Pending: ${manifest.pendingCount}',
+                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textMuted),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade100,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  'Pending: ${manifest.pendingCount}',
-                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textMuted),
-                                ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1064,6 +1180,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                             onPressed: () => handleRecordBoarding(student, 'BOARDED'),
                                                           ),
                                                           IconButton(
+                                                            icon: const Icon(Icons.directions_walk_rounded, color: AppTheme.primaryNavy, size: 24),
+                                                            tooltip: 'Mark Dropped',
+                                                            onPressed: () => handleRecordDrop(student),
+                                                          ),
+                                                          IconButton(
                                                             icon: const Icon(Icons.cancel_outlined, color: AppTheme.statusEmergency, size: 24),
                                                             tooltip: 'Mark Absent',
                                                             onPressed: () => handleRecordBoarding(student, 'ABSENT'),
@@ -1078,30 +1199,48 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                             decoration: BoxDecoration(
                                                               color: student.attendanceStatus == 'BOARDED'
                                                                   ? AppTheme.statusSuccessLight
-                                                                  : (student.attendanceStatus == 'ABSENT'
-                                                                      ? AppTheme.statusEmergencyLight
-                                                                      : Colors.grey.shade100),
+                                                                  : (student.attendanceStatus == 'DEBOARDED'
+                                                                      ? AppTheme.primaryNavy.withOpacity(0.1)
+                                                                      : (student.attendanceStatus == 'ABSENT'
+                                                                          ? AppTheme.statusEmergencyLight
+                                                                          : Colors.grey.shade100)),
                                                               borderRadius: BorderRadius.circular(4),
                                                             ),
                                                             child: Text(
-                                                              student.attendanceStatus,
+                                                              student.attendanceStatus == 'DEBOARDED' ? 'DROPPED' : student.attendanceStatus,
                                                               style: TextStyle(
                                                                 fontSize: 10,
                                                                 fontWeight: FontWeight.bold,
                                                                 color: student.attendanceStatus == 'BOARDED'
                                                                     ? AppTheme.statusSuccess
-                                                                    : (student.attendanceStatus == 'ABSENT'
-                                                                        ? AppTheme.statusEmergency
-                                                                        : AppTheme.textMuted),
+                                                                    : (student.attendanceStatus == 'DEBOARDED'
+                                                                        ? AppTheme.primaryNavy
+                                                                        : (student.attendanceStatus == 'ABSENT'
+                                                                            ? AppTheme.statusEmergency
+                                                                            : AppTheme.textMuted)),
                                                               ),
                                                             ),
                                                           ),
+                                                          if (student.attendanceStatus == 'BOARDED')
+                                                            IconButton(
+                                                              icon: const Icon(Icons.directions_walk_rounded, color: AppTheme.primaryNavy, size: 22),
+                                                              tooltip: 'Mark Dropped',
+                                                              onPressed: () => handleRecordDrop(student),
+                                                            ),
                                                           PopupMenuButton<String>(
                                                             icon: const Icon(Icons.more_vert, size: 18, color: AppTheme.textMuted),
-                                                            onSelected: (val) => handleRecordBoarding(student, val),
+                                                            onSelected: (val) {
+                                                              if (val == 'DEBOARDED') {
+                                                                handleRecordDrop(student);
+                                                              } else {
+                                                                handleRecordBoarding(student, val);
+                                                              }
+                                                            },
                                                             itemBuilder: (popCtx) => [
                                                               if (student.attendanceStatus != 'BOARDED')
                                                                 const PopupMenuItem(value: 'BOARDED', child: Text('Mark Boarded')),
+                                                              if (student.attendanceStatus != 'DEBOARDED')
+                                                                const PopupMenuItem(value: 'DEBOARDED', child: Text('Mark Dropped (Deboarded)')),
                                                               if (student.attendanceStatus != 'ABSENT')
                                                                 const PopupMenuItem(value: 'ABSENT', child: Text('Mark Absent')),
                                                             ],
@@ -1113,24 +1252,28 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                     decoration: BoxDecoration(
                                                       color: student.attendanceStatus == 'BOARDED'
                                                           ? AppTheme.statusSuccessLight
-                                                          : (student.attendanceStatus == 'ABSENT'
-                                                              ? AppTheme.statusEmergencyLight
-                                                              : Colors.grey.shade100),
+                                                          : (student.attendanceStatus == 'DEBOARDED'
+                                                              ? AppTheme.primaryNavy.withOpacity(0.1)
+                                                              : (student.attendanceStatus == 'ABSENT'
+                                                                  ? AppTheme.statusEmergencyLight
+                                                                  : Colors.grey.shade100)),
                                                       borderRadius: BorderRadius.circular(4),
                                                     ),
                                                     child: Text(
-                                                      student.attendanceStatus,
+                                                      student.attendanceStatus == 'DEBOARDED' ? 'DROPPED' : student.attendanceStatus,
                                                       style: TextStyle(
                                                         fontSize: 10,
                                                         fontWeight: FontWeight.bold,
                                                         color: student.attendanceStatus == 'BOARDED'
                                                             ? AppTheme.statusSuccess
-                                                            : (student.attendanceStatus == 'ABSENT'
-                                                                ? AppTheme.statusEmergency
-                                                                : AppTheme.textMuted),
+                                                            : (student.attendanceStatus == 'DEBOARDED'
+                                                                ? AppTheme.primaryNavy
+                                                                : (student.attendanceStatus == 'ABSENT'
+                                                                    ? AppTheme.statusEmergency
+                                                                    : AppTheme.textMuted)),
                                                       ),
                                                     ),
-                                                  ),
+                                                  )
                                           ),
                                         ),
                                       ],

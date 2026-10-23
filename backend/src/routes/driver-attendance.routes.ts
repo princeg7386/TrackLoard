@@ -4,6 +4,8 @@ import {
   UserRole,
   RecordBoardingRequestSchema,
   RecordBoardingBatchRequestSchema,
+  RecordDropRequestSchema,
+  RecordDropBatchRequestSchema,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { DriverAttendanceController } from '../controllers/driver-attendance.controller.js';
@@ -37,6 +39,26 @@ driverAttendanceRouter.post(
   requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
   validateBody(RecordBoardingBatchRequestSchema),
   DriverAttendanceController.recordBoardingBatch
+);
+
+// POST /api/v1/driver/attendance/drop
+// Records student drop/deboarding attendance (DEBOARDED) with timestamp and GPS location
+driverAttendanceRouter.post(
+  '/drop',
+  authenticateToken,
+  requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  validateBody(RecordDropRequestSchema),
+  DriverAttendanceController.recordDrop
+);
+
+// POST /api/v1/driver/attendance/drop/batch
+// Records batch student drop attendance for a drop stop
+driverAttendanceRouter.post(
+  '/drop/batch',
+  authenticateToken,
+  requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  validateBody(RecordDropBatchRequestSchema),
+  DriverAttendanceController.recordDropBatch
 );
 
 export default driverAttendanceRouter;

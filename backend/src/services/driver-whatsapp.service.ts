@@ -10,6 +10,8 @@ import {
   DriverWhatsAppEndTripResponse,
   TripStatus,
   RecordBoardingResponse,
+  RecordDropResponse,
+  RecordDropStatus,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { MessagingService } from './messaging/messaging.service.js';
@@ -557,6 +559,17 @@ export class DriverWhatsappService {
       return 'ABSENT_STUDENT' as any;
     }
 
+    // 2d. Student Drop / Deboarding Attendance (Micro-phase 18.3)
+    if (
+      clean.startsWith('drop ') ||
+      clean.startsWith('dropped ') ||
+      clean.startsWith('deboard ') ||
+      clean.startsWith('deboarded ') ||
+      clean.startsWith('d ')
+    ) {
+      return 'DROP_STUDENT' as any;
+    }
+
     // 3. Student Search
     if (
       clean === '3' ||
@@ -796,6 +809,26 @@ export class DriverWhatsappService {
           replyText =
             `⚠️ *Could Not Mark Absent*\n\n` +
             `${err.message || 'Unable to mark student absent at this moment.'}\n\n` +
+            `Reply *menu* to view your options.`;
+        }
+        break;
+      }
+
+      case 'DROP_STUDENT' as any: {
+        const queryText = (text || '').replace(/^(drop|dropped|deboard|deboarded|d)\s+/i, '').trim();
+        try {
+          const dropResult = await this.recordDropViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+            queryText,
+            status: 'DEBOARDED',
+            driver,
+          });
+          replyText = dropResult.replyText;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Mark Drop*\n\n` +
+            `${err.message || 'Unable to record drop attendance at this moment.'}\n\n` +
             `Reply *menu* to view your options.`;
         }
         break;
@@ -1477,6 +1510,148 @@ export class DriverWhatsappService {
       `• Absent: *${result.summary.absentCount}*\n` +
       `• Pending: *${result.summary.pendingCount}*\n\n` +
       `Reply *board <Name>* or *absent <Name>* for next student.`;
+
+    return {
+      success: true,
+      replyText,
+      result,
+    };
+  }
+
+  /**
+   * Micro-phase 18.3: Record Student Drop (Deboarding) Attendance via WhatsApp
+   * Commands:
+   *   "drop <Name/AdmNo>"
+   *   "dropped <Name/AdmNo>"
+   *   "deboard <Name/AdmNo>"
+   *   "d <Name/AdmNo>"
+   */
+  public static async recordDropViaWhatsApp(params: {
+    from: string;
+    schoolId?: string;
+    queryText: string;
+    status?: RecordDropStatus;
+    driver?: any;
+  }): Promise<{
+    success: boolean;
+    replyText: string;
+    result?: RecordDropResponse;
+  }> {
+    const { from, queryText, status = 'DEBOARDED' } = params;
+    const driver = params.driver || (await this.findDriverByPhone(from, params.schoolId));
+
+    if (!driver) {
+      throw new NotFoundError('Driver phone number not registered in school transport directory');
+    }
+
+    const schoolId = driver.schoolId;
+
+    if (!queryText || queryText.trim().length === 0) {
+      return {
+        success: false,
+        replyText:
+          `ℹ️ *Please provide a student name or admission number.*\n\n` +
+          `_Example: "drop Aarav" or "drop 1042"_`,
+      };
+    }
+
+    // 1. Find active trip for this driver
+    const activeRows = await query<{
+      id: string;
+      bus_id: string;
+      route_id: string;
+      status: string;
+    }>(
+      `SELECT t.id, t.bus_id, t.route_id, t.status
+       FROM trips t
+       WHERE t.driver_id = $1 AND t.school_id = $2
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
+         AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+      [driver.id, schoolId]
+    );
+
+    if (activeRows.length === 0 || !activeRows[0]) {
+      return {
+        success: false,
+        replyText:
+          `⚠️ *No Active Trip Found*\n\n` +
+          `You do not have an active trip currently in progress to record drop attendance.\n\n` +
+          `Reply *1* to Start Trip before dropping students.`,
+      };
+    }
+
+    const activeTrip = activeRows[0];
+    const cleanQuery = queryText.trim();
+
+    // 2. Search for student on this trip's route or school roster
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      stop_id: string | null;
+      stop_name: string | null;
+    }>(
+      `SELECT s.id, s.full_name, s.admission_number, pl.id AS stop_id, pl.stop_name
+       FROM students s
+       LEFT JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
+       LEFT JOIN pickup_locations pl ON (ssa.drop_stop_id = pl.id OR ssa.pickup_stop_id = pl.id) AND pl.route_id = $2 AND pl.deleted_at IS NULL
+       WHERE s.school_id = $1 AND s.deleted_at IS NULL
+         AND (s.admission_number ILIKE $3 OR s.full_name ILIKE $4)
+       ORDER BY (CASE WHEN pl.id IS NOT NULL THEN 0 ELSE 1 END), s.full_name ASC
+       LIMIT 1`,
+      [schoolId, activeTrip.route_id, cleanQuery, `%${cleanQuery}%`]
+    );
+
+    if (studentRows.length === 0 || !studentRows[0]) {
+      return {
+        success: false,
+        replyText:
+          `❌ *Student Not Found*\n\n` +
+          `No student matching "${cleanQuery}" was found on your assigned route or school roster.\n\n` +
+          `Please check the name or admission number and try again, or reply *3* to search the roster.`,
+      };
+    }
+
+    const matchedStudent = studentRows[0];
+
+    // 3. Record drop via DriverAttendanceService
+    const result = await DriverAttendanceService.recordDrop(
+      schoolId,
+      {
+        tripId: activeTrip.id,
+        studentId: matchedStudent.id,
+        stopId: matchedStudent.stop_id || undefined,
+        status,
+        recordedAt: new Date().toISOString(),
+      },
+      {
+        userId: driver.id,
+        isDriver: true,
+        userRole: 'DRIVER',
+        schoolId,
+      }
+    );
+
+    const timeStr = new Date().toLocaleTimeString('en-IN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    const replyText =
+      `🚏 *${matchedStudent.full_name}* Marked as DROPPED / DEBOARDED\n\n` +
+      `• Admission No: *${matchedStudent.admission_number}*\n` +
+      `• Recorded At: *${timeStr}*\n` +
+      (matchedStudent.stop_name ? `• Drop Stop: *${matchedStudent.stop_name}*\n` : '') +
+      `\n` +
+      `📋 *Live Trip Drop Status:*\n` +
+      `• Dropped: *${result.summary.droppedCount} / ${result.summary.boardedCount || result.summary.totalStudents}*\n` +
+      `• Remaining On Bus: *${result.summary.inBusCount}*\n` +
+      `• Boarded: *${result.summary.boardedCount}*\n` +
+      `• Absent: *${result.summary.absentCount}*\n\n` +
+      `Reply *drop <Name>* for next student.`;
 
     return {
       success: true,

@@ -3122,8 +3122,78 @@ export const RecordBoardingBatchResponseSchema = z.object({
 });
 export type RecordBoardingBatchResponse = z.infer<typeof RecordBoardingBatchResponseSchema>;
 
+/**
+ * Driver Drop Attendance (Micro-Phase 18.3)
+ * Tasks: Dropped, Timestamp, Location
+ */
+export const RecordDropStatusEnum = z.enum(['DEBOARDED', 'HANDOVER_CONFIRMED', 'RETURNED_TO_SCHOOL']);
+export type RecordDropStatus = z.infer<typeof RecordDropStatusEnum>;
 
+export const RecordDropRequestSchema = z.object({
+  tripId: z.string().uuid('Valid trip UUID is required'),
+  studentId: z.string().uuid('Valid student UUID is required'),
+  stopId: z.string().uuid('Valid drop stop UUID is required').optional(),
+  status: RecordDropStatusEnum.default('DEBOARDED'),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  recordedAt: z.string().datetime({ offset: true }).optional().nullable(),
+});
+export type RecordDropRequest = z.infer<typeof RecordDropRequestSchema>;
 
+export const DropBatchItemSchema = z.object({
+  studentId: z.string().uuid('Valid student UUID is required'),
+  status: RecordDropStatusEnum.default('DEBOARDED'),
+  stopId: z.string().uuid('Valid drop stop UUID is required').optional(),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  recordedAt: z.string().datetime({ offset: true }).optional().nullable(),
+});
+export type DropBatchItem = z.infer<typeof DropBatchItemSchema>;
 
+export const RecordDropBatchRequestSchema = z.object({
+  tripId: z.string().uuid('Valid trip UUID is required'),
+  stopId: z.string().uuid('Valid drop stop UUID is required').optional(),
+  records: z.array(DropBatchItemSchema).min(1, 'At least one student drop record is required'),
+});
+export type RecordDropBatchRequest = z.infer<typeof RecordDropBatchRequestSchema>;
 
+export const DropEventRecordSchema = z.object({
+  id: z.string().uuid(),
+  tripId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  status: RecordDropStatusEnum,
+  markedBy: z.string(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  recordedAt: z.string(),
+});
+export type DropEventRecord = z.infer<typeof DropEventRecordSchema>;
 
+export const DropSummaryCountsSchema = z.object({
+  totalStudents: z.number().int().min(0),
+  boardedCount: z.number().int().min(0),
+  droppedCount: z.number().int().min(0),
+  absentCount: z.number().int().min(0),
+  pendingCount: z.number().int().min(0),
+  inBusCount: z.number().int().min(0),
+});
+export type DropSummaryCounts = z.infer<typeof DropSummaryCountsSchema>;
+
+export const RecordDropResponseSchema = z.object({
+  event: DropEventRecordSchema,
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string(),
+  }),
+  summary: DropSummaryCountsSchema,
+});
+export type RecordDropResponse = z.infer<typeof RecordDropResponseSchema>;
+
+export const RecordDropBatchResponseSchema = z.object({
+  events: z.array(DropEventRecordSchema),
+  updatedCount: z.number().int().min(0),
+  summary: DropSummaryCountsSchema,
+});
+export type RecordDropBatchResponse = z.infer<typeof RecordDropBatchResponseSchema>;

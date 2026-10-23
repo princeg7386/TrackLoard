@@ -214,6 +214,44 @@ class ApiService {
     return post(ApiConstants.attendanceBoardingBatchEndpoint, body: payload);
   }
 
+  /// Records drop / deboarding attendance for a single student (Micro-Phase 18.3)
+  Future<ApiResponse<Map<String, dynamic>>> recordDrop({
+    required String tripId,
+    required String studentId,
+    String? stopId,
+    String status = 'DEBOARDED',
+    double? latitude,
+    double? longitude,
+    String? recordedAt,
+  }) async {
+    final payload = <String, dynamic>{
+      'tripId': tripId,
+      'studentId': studentId,
+      'status': status,
+      if (stopId != null) 'stopId': stopId,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+      'recordedAt': recordedAt ?? DateTime.now().toUtc().toIso8601String(),
+    };
+
+    return post(ApiConstants.attendanceDropEndpoint, body: payload);
+  }
+
+  /// Records drop attendance for a batch of students (Micro-Phase 18.3)
+  Future<ApiResponse<Map<String, dynamic>>> recordDropBatch({
+    required String tripId,
+    String? stopId,
+    required List<Map<String, dynamic>> records,
+  }) async {
+    final payload = <String, dynamic>{
+      'tripId': tripId,
+      if (stopId != null) 'stopId': stopId,
+      'records': records,
+    };
+
+    return post(ApiConstants.attendanceDropBatchEndpoint, body: payload);
+  }
+
   ApiResponse<Map<String, dynamic>> _processResponse(http.Response response) {
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
