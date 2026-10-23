@@ -761,9 +761,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 DriverStudentListModel manifest = snapshot.data!.data!;
                 final activeTripId = manifest.tripId ?? _profileData?.activeTrip?['id']?.toString();
 
+                final TextEditingController searchController = TextEditingController();
+                String searchQuery = '';
+
                 return StatefulBuilder(
                   builder: (sheetContext, setModalState) {
-                    final students = manifest.students;
+                    final students = searchQuery.isEmpty
+                        ? manifest.students
+                        : manifest.students.where((s) =>
+                            s.fullName.toLowerCase().contains(searchQuery.toLowerCase()) ||
+                            s.admissionNumber.toLowerCase().contains(searchQuery.toLowerCase())).toList();
 
                     Future<void> handleRecordBoarding(StudentAttendanceItem student, String status) async {
                       if (activeTripId == null) {
@@ -1393,15 +1400,71 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         const SizedBox(height: 6),
                         const Divider(height: 1),
 
+                        // Search bar — client-side filter, no extra API call
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                          child: TextField(
+                            controller: searchController,
+                            onChanged: (val) => setModalState(() {
+                              searchQuery = val.trim();
+                            }),
+                            decoration: InputDecoration(
+                              hintText: 'Search student name or admission no…',
+                              hintStyle: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+                              prefixIcon: const Icon(Icons.search_rounded, size: 20, color: AppTheme.textMuted),
+                              suffixIcon: searchQuery.isNotEmpty
+                                  ? IconButton(
+                                      icon: const Icon(Icons.clear_rounded, size: 18),
+                                      onPressed: () => setModalState(() {
+                                        searchController.clear();
+                                        searchQuery = '';
+                                      }),
+                                    )
+                                  : null,
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey.shade300),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(color: AppTheme.primaryNavy),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.shade50,
+                            ),
+                          ),
+                        ),
+
                         Expanded(
                           child: students.isEmpty
-                              ? const Center(
+                              ? Center(
                                   child: Padding(
-                                    padding: EdgeInsets.all(32.0),
-                                    child: Text(
-                                      'No registered students found for this route.\nContact your transport coordinator.',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                                    padding: const EdgeInsets.all(32.0),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          searchQuery.isNotEmpty
+                                              ? Icons.search_off_rounded
+                                              : Icons.people_outline_rounded,
+                                          size: 40,
+                                          color: AppTheme.textMuted,
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          searchQuery.isNotEmpty
+                                              ? 'No students match "$searchQuery".\nTry the full name or admission number.'
+                                              : 'No registered students found for this route.\nContact your transport coordinator.',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 )

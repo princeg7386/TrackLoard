@@ -33,6 +33,8 @@ export class DriverAttendanceController {
       const busId = req.query.busId as string | undefined;
       const driverId = isDriver ? user.id : (req.query.driverId as string | undefined);
       const tripId = req.query.tripId as string | undefined;
+      // Phase 19.1: optional search query — matches name or admission number
+      const search = (req.query.q as string | undefined)?.trim() || undefined;
 
       const result = await DriverAttendanceService.getStudentsForAssignedBus(
         targetSchoolId,
@@ -40,6 +42,7 @@ export class DriverAttendanceController {
           busId,
           driverId,
           tripId,
+          search,
         },
         {
           userId: user.id,

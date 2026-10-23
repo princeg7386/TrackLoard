@@ -605,6 +605,7 @@ export class DriverWhatsappService {
       clean === 'student' ||
       clean === 'student search' ||
       clean.startsWith('search ') ||
+      clean.startsWith('3 ') || // "3 Aarav" style — digit prefix with name
       clean === 'driver_action_student_search'
     ) {
       return DriverWhatsAppAction.STUDENT_SEARCH;
@@ -918,10 +919,88 @@ export class DriverWhatsappService {
       }
 
       case DriverWhatsAppAction.STUDENT_SEARCH: {
-        replyText =
-          `🔍 *Student Search*\n\n` +
-          `Reply with the student's name or admission number to verify pickup/drop stop and parent emergency phone.\n\n` +
-          `_Example: "Search Aarav" or "Student 1042"_`;
+        // Extract search query from message text (after "search ", "3 ", "student ")
+        const rawClean = (text || '').trim().toLowerCase();
+        let searchQuery = '';
+        if (rawClean.startsWith('search ')) {
+          searchQuery = (text || '').trim().slice('search '.length).trim();
+        } else if (rawClean.startsWith('student ') && !rawClean.startsWith('student search')) {
+          searchQuery = (text || '').trim().slice('student '.length).trim();
+        } else if (/^\d+\s+/.test(rawClean)) {
+          // e.g. "3 Aarav" — strip leading digit(s) + space
+          searchQuery = (text || '').trim().replace(/^\d+\s+/, '').trim();
+        }
+
+        if (!searchQuery) {
+          replyText =
+            `🔍 *Student Search*\n\n` +
+            `Reply with a student name or admission number to find their stop and attendance status.\n\n` +
+            `_Examples:_\n` +
+            `• *search Aarav*\n` +
+            `• *search 1042* (admission number)\n` +
+            `• *3 Priya*`;
+        } else {
+          try {
+            const searchResult = await DriverAttendanceService.getStudentsForAssignedBus(
+              driver.schoolId,
+              {
+                driverId: driver.id,
+                search: searchQuery,
+              },
+              {
+                userId: driver.id,
+                isDriver: true,
+                schoolId: driver.schoolId,
+              }
+            );
+
+            if (searchResult.students.length === 0) {
+              replyText =
+                `🔍 *No Results for "${searchQuery}"*\n\n` +
+                `No student matching that name or admission number was found on your assigned bus route.\n\n` +
+                `Please check the spelling or try the admission number.\n` +
+                `_Your bus: *${searchResult.busNumber || 'Assigned Bus'}*_`;
+            } else {
+              const statusEmoji: Record<string, string> = {
+                BOARDED: '✅',
+                ABSENT: '❌',
+                DEBOARDED: '🏫',
+                SKIPPED: '⏭️',
+                PENDING: '⏳',
+              };
+
+              const lines = searchResult.students.slice(0, 5).map((s, i) => {
+                const emoji = statusEmoji[s.attendanceStatus] ?? '⏳';
+                const grade = s.grade ? ` (${s.grade}${s.section ? s.section : ''})` : '';
+                const stop = s.pickupStop.name;
+                const parentLine = s.parent?.phone
+                  ? `\n   👨‍👩‍👧 ${s.parent.fullName}: ${s.parent.phone}`
+                  : '';
+                return (
+                  `${i + 1}. ${emoji} *${s.fullName}*${grade}\n` +
+                  `   📍 Stop: ${stop} (Seq ${s.pickupStop.sequenceOrder})\n` +
+                  `   🎫 ${s.admissionNumber} | Status: *${s.attendanceStatus}*` +
+                  parentLine
+                );
+              });
+
+              const more = searchResult.students.length > 5
+                ? `\n\n_...and ${searchResult.students.length - 5} more. Narrow your search for precise results._`
+                : '';
+
+              replyText =
+                `🔍 *Search: "${searchQuery}"* — ${searchResult.students.length} result(s)\n` +
+                `_Bus: ${searchResult.busNumber || 'Assigned'}${searchResult.routeName ? ' | Route: ' + searchResult.routeName : ''}_\n\n` +
+                lines.join('\n\n') +
+                more;
+            }
+          } catch (err: any) {
+            replyText =
+              `⚠️ *Student Search Failed*\n\n` +
+              `${err.message || 'Could not search students at this time.'}\n\n` +
+              `Please ensure you have an active trip or assigned bus. Reply *menu* to check status.`;
+          }
+        }
         break;
       }
 

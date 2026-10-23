@@ -47,6 +47,8 @@ export class DriverAttendanceService {
       busId?: string;
       driverId?: string;
       tripId?: string;
+      /** Optional search query — matches full_name or admission_number (case-insensitive, partial) */
+      search?: string;
     },
     actor?: DriverAttendanceActorContext
   ): Promise<DriverStudentListResponse> {
@@ -305,8 +307,18 @@ export class DriverAttendanceService {
        WHERE s.school_id = $1
          AND (pl_pickup.route_id = $2 OR pl_drop.route_id = $2)
          AND s.deleted_at IS NULL
+         AND (
+           $4::text IS NULL
+           OR LOWER(s.full_name) LIKE LOWER($4::text)
+           OR LOWER(s.admission_number) LIKE LOWER($4::text)
+         )
        ORDER BY pl_pickup.sequence_order ASC, s.full_name ASC`,
-      [schoolId, targetRouteId, targetTripId || null]
+      [
+        schoolId,
+        targetRouteId,
+        targetTripId || null,
+        params.search?.trim() ? `%${params.search.trim()}%` : null,
+      ]
     );
 
     let boardedCount = 0;

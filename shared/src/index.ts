@@ -3049,6 +3049,25 @@ export const DriverStudentListResponseSchema = z.object({
 export type DriverStudentListResponse = z.infer<typeof DriverStudentListResponseSchema>;
 
 /**
+ * Driver Student Search (Micro-Phase 19.1)
+ * Tasks: Search by student name; Restrict results to assigned bus
+ */
+export const DriverStudentSearchQuerySchema = z.object({
+  /** Partial name or admission number to search for (case-insensitive) */
+  q: z
+    .string()
+    .min(1, 'Search query must be at least 1 character')
+    .max(100, 'Search query must be at most 100 characters')
+    .trim()
+    .optional(),
+  /** Scope results to a specific trip (overrides driver's active trip lookup) */
+  tripId: z.string().uuid('Valid trip UUID is required').optional(),
+  /** Scope results to a specific bus (requires admin; drivers are auto-scoped) */
+  busId: z.string().uuid('Valid bus UUID is required').optional(),
+});
+export type DriverStudentSearchQuery = z.infer<typeof DriverStudentSearchQuerySchema>;
+
+/**
  * Driver Boarding Attendance (Micro-Phase 18.2)
  * Tasks: Boarded, Not boarded, Timestamp, Location
  */
