@@ -2055,9 +2055,54 @@ export const EtaCalculationResultSchema = z.object({
 });
 export type EtaCalculationResult = z.infer<typeof EtaCalculationResultSchema>;
 
+/**
+ * Phase 20.1 — ETA Engine Input Context
+ * Assembled by EtaService before computing per-stop arrival estimates.
+ * Contains everything needed: bus position, ordered remaining stops,
+ * effective speed (live or fallback), and trip metadata.
+ */
+
+/** One remaining pickup stop in route order */
+export const EtaRemainingStopSchema = z.object({
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int().min(0),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  geofenceRadiusMeters: z.number().int().min(50),
+  scheduledTime: z.string(),
+});
+export type EtaRemainingStop = z.infer<typeof EtaRemainingStopSchema>;
+
+/** How the effective speed was derived */
+export const SpeedSourceSchema = z.enum(['rolling_avg', 'last_ping', 'fallback']);
+export type SpeedSource = z.infer<typeof SpeedSourceSchema>;
+
+/** Full assembled context object passed to the ETA calculator */
+export const EtaTripContextSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  busId: z.string().uuid(),
+  /** null when bus has no GPS fix yet (pre-trip or GPS offline) */
+  currentPosition: GeoCoordinatesSchema.nullable(),
+  /** Effective bus speed clamped to [5, 160] km/h */
+  effectiveSpeedKmh: z.number().min(5).max(160),
+  speedSource: SpeedSourceSchema,
+  /** sequence_order of the last stop the bus visited / passed */
+  currentStopSequence: z.number().int().min(0),
+  /** Stops ahead of the bus in route order */
+  remainingStops: z.array(EtaRemainingStopSchema),
+  tripStatus: z.string(),
+  actualStartTime: z.string().nullable(),
+  /** ISO 8601 timestamp when this context was assembled */
+  assembledAt: z.string().datetime(),
+});
+export type EtaTripContext = z.infer<typeof EtaTripContextSchema>;
+
 export const SnapToRoadQuerySchema = z.object({
   points: z.array(GeoCoordinatesSchema).min(1),
 });
+
 export type SnapToRoadQuery = z.infer<typeof SnapToRoadQuerySchema>;
 
 export const SnappedPointSchema = z.object({
