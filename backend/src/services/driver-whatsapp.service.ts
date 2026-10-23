@@ -570,6 +570,34 @@ export class DriverWhatsappService {
       return 'DROP_STUDENT' as any;
     }
 
+    // 2e. Attendance History & Summary (Micro-phase 18.4)
+    if (
+      clean === 'history' ||
+      clean === 'attendance' ||
+      clean === 'attendance history' ||
+      clean === 'summary' ||
+      clean === 'trip summary'
+    ) {
+      return 'ATTENDANCE_HISTORY' as any;
+    }
+
+    // 2f. Student Journey (Micro-phase 18.4)
+    if (
+      clean.startsWith('journey ') ||
+      clean.startsWith('j ')
+    ) {
+      return 'STUDENT_JOURNEY' as any;
+    }
+
+    // 2g. Correct Attendance (Micro-phase 18.4)
+    if (
+      clean.startsWith('correct ') ||
+      clean.startsWith('correction ') ||
+      clean.startsWith('fix ')
+    ) {
+      return 'CORRECT_ATTENDANCE' as any;
+    }
+
     // 3. Student Search
     if (
       clean === '3' ||
@@ -829,6 +857,61 @@ export class DriverWhatsappService {
           replyText =
             `⚠️ *Could Not Mark Drop*\n\n` +
             `${err.message || 'Unable to record drop attendance at this moment.'}\n\n` +
+            `Reply *menu* to view your options.`;
+        }
+        break;
+      }
+
+      case 'ATTENDANCE_HISTORY' as any: {
+        try {
+          const histResult = await this.getAttendanceHistoryViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+            driver,
+          });
+          replyText = histResult.replyText;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Retrieve Attendance Summary*\n\n` +
+            `${err.message || 'Unable to retrieve attendance summary at this moment.'}\n\n` +
+            `Reply *menu* to view your options.`;
+        }
+        break;
+      }
+
+      case 'STUDENT_JOURNEY' as any: {
+        const queryText = (text || '').replace(/^(journey|j)\s+/i, '').trim();
+        try {
+          const journeyResult = await this.getStudentJourneyViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+            queryText,
+            driver,
+          });
+          replyText = journeyResult.replyText;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Retrieve Student Journey*\n\n` +
+            `${err.message || 'Unable to load student journey at this moment.'}\n\n` +
+            `Reply *menu* to view your options.`;
+        }
+        break;
+      }
+
+      case 'CORRECT_ATTENDANCE' as any: {
+        const queryText = (text || '').replace(/^(correct|correction|fix)\s+/i, '').trim();
+        try {
+          const correctResult = await this.correctAttendanceViaWhatsApp({
+            from,
+            schoolId: driver.schoolId,
+            queryText,
+            driver,
+          });
+          replyText = correctResult.replyText;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Correct Attendance*\n\n` +
+            `${err.message || 'Unable to correct attendance at this moment.'}\n\n` +
             `Reply *menu* to view your options.`;
         }
         break;
@@ -1840,6 +1923,349 @@ export class DriverWhatsappService {
       },
       attendanceLocked: true,
       trackingSessionActive: false,
+      replyText,
+    };
+  }
+
+  /**
+   * Micro-phase 18.4: Retrieve live or recent trip attendance summary via WhatsApp
+   */
+  public static async getAttendanceHistoryViaWhatsApp(params: {
+    from: string;
+    schoolId?: string;
+    driver?: any;
+  }): Promise<{
+    success: boolean;
+    replyText: string;
+  }> {
+    const driver = params.driver || (await this.findDriverByPhone(params.from, params.schoolId));
+    if (!driver) {
+      throw new NotFoundError('Driver phone number not registered in school transport directory');
+    }
+    const schoolId = driver.schoolId;
+
+    // Find active trip or most recent trip
+    const tripRows = await query<{ id: string; status: string }>(
+      `SELECT t.id, t.status
+       FROM trips t
+       WHERE t.driver_id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+       ORDER BY (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL') DESC,
+                t.scheduled_date DESC, t.created_at DESC
+       LIMIT 1`,
+      [driver.id, schoolId]
+    );
+
+    if (tripRows.length === 0 || !tripRows[0]) {
+      return {
+        success: false,
+        replyText:
+          `ℹ️ *No Trip Found*\n\n` +
+          `No active or recent trip records found for your driver profile.\n\n` +
+          `Reply *1* to start today's scheduled trip.`,
+      };
+    }
+
+    const hist = await DriverAttendanceService.getTripAttendanceHistory(
+      schoolId,
+      tripRows[0].id,
+      { userId: driver.id, isDriver: true, schoolId }
+    );
+
+    const replyText =
+      `📋 *Trip Attendance Summary*\n\n` +
+      `Bus: *${hist.trip.busNumber}* (${hist.trip.registrationNumber})\n` +
+      `Route: *${hist.trip.routeName}* (${hist.trip.routeCode || 'Standard'})\n` +
+      `Status: *${hist.trip.status}*\n\n` +
+      `👥 Total Students: *${hist.summary.totalStudents}*\n` +
+      `✅ Boarded: *${hist.summary.boardedCount}*\n` +
+      `🚸 In Bus: *${hist.summary.inBusCount}*\n` +
+      `🚶 Dropped: *${hist.summary.droppedCount}*\n` +
+      `❌ Absent: *${hist.summary.absentCount}*\n` +
+      `⏳ Pending: *${hist.summary.pendingCount}*\n\n` +
+      `_Reply "journey <name>" for student history or "correct <name> <status> <reason>" to fix attendance._`;
+
+    return { success: true, replyText };
+  }
+
+  /**
+   * Micro-phase 18.4: Retrieve student journey timeline via WhatsApp
+   */
+  public static async getStudentJourneyViaWhatsApp(params: {
+    from: string;
+    queryText: string;
+    schoolId?: string;
+    driver?: any;
+  }): Promise<{
+    success: boolean;
+    replyText: string;
+  }> {
+    const driver = params.driver || (await this.findDriverByPhone(params.from, params.schoolId));
+    if (!driver) {
+      throw new NotFoundError('Driver phone number not registered in school transport directory');
+    }
+    const schoolId = driver.schoolId;
+
+    if (!params.queryText || !params.queryText.trim()) {
+      return {
+        success: false,
+        replyText:
+          `ℹ️ *Please provide a student name or admission number.*\n\n` +
+          `_Example: "journey Aarav" or "journey 1042"_`,
+      };
+    }
+
+    const cleanQuery = params.queryText.trim();
+
+    // Match student in driver's school
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+    }>(
+      `SELECT s.id, s.full_name, s.admission_number
+       FROM students s
+       WHERE s.school_id = $1 AND s.deleted_at IS NULL
+         AND (
+           LOWER(s.full_name) LIKE LOWER($2) OR
+           LOWER(s.admission_number) = LOWER($3)
+         )
+       LIMIT 5`,
+      [schoolId, `%${cleanQuery}%`, cleanQuery]
+    );
+
+    if (studentRows.length === 0) {
+      return {
+        success: false,
+        replyText:
+          `🔍 *Student Not Found*\n\n` +
+          `No student matching "${cleanQuery}" was found.\n\n` +
+          `Please check spelling or reply with the admission number.`,
+      };
+    }
+
+    if (studentRows.length > 1) {
+      const suggestions = studentRows
+        .map((s) => `• ${s.full_name} (${s.admission_number})`)
+        .join('\n');
+      return {
+        success: false,
+        replyText:
+          `⚠️ *Multiple Students Found*\n\n` +
+          `Please be more specific:\n${suggestions}\n\n` +
+          `_Example: "journey ${studentRows[0]!.admission_number}"_`,
+      };
+    }
+
+    const student = studentRows[0]!;
+    const journey = await DriverAttendanceService.getStudentJourneyHistory(
+      schoolId,
+      student.id,
+      undefined,
+      { userId: driver.id, isDriver: true, schoolId }
+    );
+
+    const timelineLines = journey.timeline.map((ev) => {
+      let icon = '📌';
+      if (ev.type === 'BOARDING') icon = ev.status === 'BOARDED' ? '✅' : '❌';
+      if (ev.type === 'DROP') icon = '🚶';
+      if (ev.type === 'CORRECTION') icon = '✏️';
+      const timeStr = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
+      return `${icon} *${ev.status}* (${timeStr}) - ${ev.stopName || 'Route Stop'}${ev.reason ? ` [Reason: ${ev.reason}]` : ''}`;
+    }).join('\n');
+
+    const replyText =
+      `🚸 *Student Journey: ${journey.student.fullName}*\n\n` +
+      `Admission: *${journey.student.admissionNumber}*\n` +
+      `Class: *${journey.student.classGrade || 'N/A'}-${journey.student.section || 'N/A'}*\n` +
+      `Trip Bus: *${journey.trip.busNumber}*\n` +
+      `Current Status: *${journey.currentStatus}*\n\n` +
+      `*Journey Timeline:*\n${timelineLines || 'No events recorded yet.'}\n\n` +
+      `Reply *menu* to view your options.`;
+
+    return { success: true, replyText };
+  }
+
+  /**
+   * Micro-phase 18.4: Correct attendance via WhatsApp with audit reason
+   */
+  public static async correctAttendanceViaWhatsApp(params: {
+    from: string;
+    queryText: string;
+    schoolId?: string;
+    driver?: any;
+  }): Promise<{
+    success: boolean;
+    replyText: string;
+  }> {
+    const driver = params.driver || (await this.findDriverByPhone(params.from, params.schoolId));
+    if (!driver) {
+      throw new NotFoundError('Driver phone number not registered in school transport directory');
+    }
+    const schoolId = driver.schoolId;
+
+    if (!params.queryText || !params.queryText.trim()) {
+      return {
+        success: false,
+        replyText:
+          `ℹ️ *Format: correct <student> <status> <reason>*\n\n` +
+          `_Example: "correct Aarav boarded marked absent by mistake"_`,
+      };
+    }
+
+    // 1. Find active trip for this driver
+    const activeRows = await query<{
+      id: string;
+      route_id: string;
+    }>(
+      `SELECT t.id, t.route_id
+       FROM trips t
+       WHERE t.driver_id = $1 AND t.school_id = $2
+         AND (t.status = 'IN_TRANSIT' OR t.status = 'DELAYED' OR t.status = 'ARRIVED_SCHOOL')
+         AND t.deleted_at IS NULL
+       ORDER BY t.created_at DESC
+       LIMIT 1`,
+      [driver.id, schoolId]
+    );
+
+    if (activeRows.length === 0 || !activeRows[0]) {
+      return {
+        success: false,
+        replyText:
+          `⚠️ *No Active Trip Found*\n\n` +
+          `You do not have an active trip in progress to correct attendance.\n\n` +
+          `Reply *1* to start your trip or contact the transport coordinator.`,
+      };
+    }
+
+    const activeTrip = activeRows[0];
+    const rawTokens = params.queryText.trim().split(/\s+/);
+
+    // Identify target status token
+    let targetIndex = -1;
+    let eventType: 'BOARDING' | 'DROP' = 'BOARDING';
+    let newStatus: any = 'BOARDED';
+
+    for (let i = 0; i < rawTokens.length; i++) {
+      const tok = rawTokens[i]!.toLowerCase();
+      if (tok === 'boarded' || tok === 'board' || tok === 'b') {
+        targetIndex = i;
+        eventType = 'BOARDING';
+        newStatus = 'BOARDED';
+        break;
+      } else if (tok === 'absent' || tok === 'ab') {
+        targetIndex = i;
+        eventType = 'BOARDING';
+        newStatus = 'ABSENT';
+        break;
+      } else if (tok === 'dropped' || tok === 'drop' || tok === 'deboarded' || tok === 'deboard' || tok === 'd') {
+        targetIndex = i;
+        eventType = 'DROP';
+        newStatus = 'DEBOARDED';
+        break;
+      } else if (tok === 'pending' || tok === 'reset') {
+        targetIndex = i;
+        eventType = 'BOARDING';
+        newStatus = 'PENDING';
+        break;
+      }
+    }
+
+    if (targetIndex === -1) {
+      return {
+        success: false,
+        replyText:
+          `⚠️ *Status Not Specified*\n\n` +
+          `Please include the new status: *boarded*, *absent*, *dropped*, or *pending*.\n\n` +
+          `_Example: "correct Aarav boarded marked absent by mistake"_`,
+      };
+    }
+
+    const studentQuery = rawTokens.slice(0, targetIndex).join(' ');
+    const reasonPart = rawTokens.slice(targetIndex + 1).join(' ').trim();
+    const reason = reasonPart.length >= 5 ? reasonPart : `Corrected to ${newStatus} via Driver WhatsApp`;
+
+    if (!studentQuery) {
+      return {
+        success: false,
+        replyText:
+          `ℹ️ *Please provide student name before status.*\n\n` +
+          `_Example: "correct Aarav boarded marked absent by mistake"_`,
+      };
+    }
+
+    // Match student on this trip's route
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+    }>(
+      `SELECT s.id, s.full_name, s.admission_number
+       FROM students s
+       JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
+       JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id) AND pl.route_id = $2
+       WHERE s.school_id = $1 AND s.deleted_at IS NULL
+         AND (
+           LOWER(s.full_name) LIKE LOWER($3) OR
+           LOWER(s.admission_number) = LOWER($4)
+         )
+       LIMIT 5`,
+      [schoolId, activeTrip.route_id, `%${studentQuery}%`, studentQuery]
+    );
+
+    if (studentRows.length === 0) {
+      return {
+        success: false,
+        replyText:
+          `🔍 *Student "${studentQuery}" Not Found on Active Route*\n\n` +
+          `Please check spelling or use admission number.`,
+      };
+    }
+
+    if (studentRows.length > 1) {
+      const suggestions = studentRows
+        .map((s) => `• ${s.full_name} (${s.admission_number})`)
+        .join('\n');
+      return {
+        success: false,
+        replyText:
+          `⚠️ *Multiple Students Found*\n\n` +
+          `Please be more specific:\n${suggestions}\n\n` +
+          `_Example: "correct ${studentRows[0]!.admission_number} ${newStatus.toLowerCase()} ${reason}"_`,
+      };
+    }
+
+    const student = studentRows[0]!;
+
+    const result = await DriverAttendanceService.correctAttendance(
+      schoolId,
+      {
+        tripId: activeTrip.id,
+        studentId: student.id,
+        eventType,
+        newStatus,
+        reason,
+      },
+      {
+        userId: driver.id,
+        isDriver: true,
+        schoolId,
+      }
+    );
+
+    const replyText =
+      `✅ *Attendance Corrected Successfully*\n\n` +
+      `Student: *${result.student.fullName}* (${result.student.admissionNumber})\n` +
+      `Status: *${result.correction.previousStatus || 'PENDING'}* ➔ *${result.correction.newStatus}*\n` +
+      `Reason: _"${result.correction.reason}"_\n\n` +
+      `📊 *Updated Headcount:*\n` +
+      `• Remaining In Bus: *${result.summary.inBusCount}*\n` +
+      `• Total Boarded: *${result.summary.boardedCount}*\n` +
+      `• Total Dropped: *${result.summary.droppedCount}*\n` +
+      `• Total Absent: *${result.summary.absentCount}*\n\n` +
+      `Reply *menu* to view your options.`;
+
+    return {
+      success: true,
       replyText,
     };
   }

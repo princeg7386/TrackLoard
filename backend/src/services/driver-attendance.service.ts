@@ -15,6 +15,15 @@ import {
   RecordDropStatus,
   DropEventRecord,
   DropSummaryCounts,
+  CorrectAttendanceRequest,
+  CorrectAttendanceResponse,
+  AttendanceCorrectionRecord,
+  StudentJourneyHistoryResponse,
+  JourneyTimelineEvent,
+  TripAttendanceHistoryResponse,
+  TripAttendanceStudentItem,
+  DateAttendanceHistoryQuery,
+  DateAttendanceHistoryResponse,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
@@ -1058,4 +1067,907 @@ export class DriverAttendanceService {
       },
     };
   }
+
+  /**
+   * Micro-phase 18.4: Correct attendance records with strict safety rules and immutable audit trail.
+   */
+  public static async correctAttendance(
+    schoolId: string,
+    payload: CorrectAttendanceRequest,
+    actor?: DriverAttendanceActorContext
+  ): Promise<CorrectAttendanceResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant driver attendance access attempt');
+    }
+
+    // 1. Fetch trip details & verify state/permissions
+    const tripRows = await query<{
+      id: string;
+      school_id: string;
+      status: string;
+      driver_id: string;
+      bus_id: string;
+      route_id: string;
+    }>(
+      `SELECT id, school_id, status, driver_id, bus_id, route_id
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [payload.tripId, schoolId]
+    );
+
+    if (tripRows.length === 0 || !tripRows[0]) {
+      throw new NotFoundError(`Trip ${payload.tripId} not found in this school context`);
+    }
+
+    const trip = tripRows[0];
+    const isLocked = trip.status === 'COMPLETED' || trip.status === 'CANCELLED';
+
+    // Correction Rule 1: Completed trips can only be corrected by school admins or coordinators
+    if (isLocked && actor?.isDriver) {
+      throw new ForbiddenError(
+        'Attendance locked: completed trips can only be corrected by school administrators or transport coordinators'
+      );
+    }
+
+    // Active trips: driver can only correct their own assigned trip
+    if (!isLocked && actor?.isDriver && actor.userId && trip.driver_id !== actor.userId) {
+      throw new ForbiddenError('Driver is not assigned to this trip');
+    }
+
+    // 2. Fetch student details
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+    }>(
+      `SELECT id, full_name, admission_number
+       FROM students
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [payload.studentId, schoolId]
+    );
+
+    if (studentRows.length === 0 || !studentRows[0]) {
+      throw new NotFoundError(`Student ${payload.studentId} not found in this school context`);
+    }
+    const student = studentRows[0];
+
+    // 3. Fetch current boarding & drop status for this student on this trip
+    const currentRows = await query<{
+      boarding_id: string | null;
+      boarding_status: string | null;
+      boarding_stop_id: string | null;
+      drop_id: string | null;
+      drop_status: string | null;
+      drop_stop_id: string | null;
+      pickup_stop_id: string | null;
+      assigned_drop_stop_id: string | null;
+    }>(
+      `SELECT 
+         be.id AS boarding_id, be.status AS boarding_status, be.stop_id AS boarding_stop_id,
+         de.id AS drop_id, de.status AS drop_status, de.stop_id AS drop_stop_id,
+         ssa.pickup_stop_id, ssa.drop_stop_id AS assigned_drop_stop_id
+       FROM students s
+       LEFT JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
+       LEFT JOIN boarding_events be ON be.student_id = s.id AND be.trip_id = $1
+       LEFT JOIN drop_events de ON de.student_id = s.id AND de.trip_id = $1
+       WHERE s.id = $2
+       LIMIT 1`,
+      [payload.tripId, payload.studentId]
+    );
+
+    const current = currentRows[0];
+    let previousStatus: string | null = null;
+    let newJourneyStatus = 'PENDING';
+
+    const correctedBy = actor?.userId || '00000000-0000-0000-0000-000000000000';
+    const correctedByRole = actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN');
+
+    // 4. Apply correction rules based on eventType
+    if (payload.eventType === 'BOARDING') {
+      previousStatus = current?.boarding_status || 'PENDING';
+
+      if (payload.newStatus === 'PENDING') {
+        // Reset boarding: delete boarding event and any dependent drop event
+        await query(
+          `DELETE FROM drop_events WHERE trip_id = $1 AND student_id = $2`,
+          [payload.tripId, payload.studentId]
+        );
+        await query(
+          `DELETE FROM boarding_events WHERE trip_id = $1 AND student_id = $2`,
+          [payload.tripId, payload.studentId]
+        );
+        newJourneyStatus = 'PENDING';
+      } else if (payload.newStatus === 'ABSENT' || payload.newStatus === 'SKIPPED') {
+        // If marked absent or skipped, student cannot remain marked as dropped
+        await query(
+          `DELETE FROM drop_events WHERE trip_id = $1 AND student_id = $2`,
+          [payload.tripId, payload.studentId]
+        );
+        const targetStopId = current?.boarding_stop_id || current?.pickup_stop_id;
+        if (!targetStopId) {
+          throw new BadRequestError('Student has no assigned pickup stop');
+        }
+        await query(
+          `INSERT INTO boarding_events (
+             trip_id, student_id, stop_id, status, marked_by, latitude, longitude, location, recorded_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7,
+             CASE WHEN $6::float IS NOT NULL AND $7::float IS NOT NULL
+                  THEN ST_SetSRID(ST_MakePoint($7::float, $6::float), 4326)::geography
+                  ELSE NULL END,
+             NOW()
+           )
+           ON CONFLICT (trip_id, student_id) DO UPDATE SET
+             status = EXCLUDED.status,
+             marked_by = EXCLUDED.marked_by,
+             latitude = COALESCE(EXCLUDED.latitude, boarding_events.latitude),
+             longitude = COALESCE(EXCLUDED.longitude, boarding_events.longitude),
+             location = COALESCE(EXCLUDED.location, boarding_events.location),
+             recorded_at = EXCLUDED.recorded_at`,
+          [
+            payload.tripId,
+            payload.studentId,
+            targetStopId,
+            payload.newStatus,
+            correctedByRole,
+            payload.latitude || null,
+            payload.longitude || null,
+          ]
+        );
+        newJourneyStatus = payload.newStatus;
+      } else if (payload.newStatus === 'BOARDED') {
+        const targetStopId = current?.boarding_stop_id || current?.pickup_stop_id;
+        if (!targetStopId) {
+          throw new BadRequestError('Student has no assigned pickup stop');
+        }
+        await query(
+          `INSERT INTO boarding_events (
+             trip_id, student_id, stop_id, status, marked_by, latitude, longitude, location, recorded_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7,
+             CASE WHEN $6::float IS NOT NULL AND $7::float IS NOT NULL
+                  THEN ST_SetSRID(ST_MakePoint($7::float, $6::float), 4326)::geography
+                  ELSE NULL END,
+             NOW()
+           )
+           ON CONFLICT (trip_id, student_id) DO UPDATE SET
+             status = EXCLUDED.status,
+             marked_by = EXCLUDED.marked_by,
+             latitude = COALESCE(EXCLUDED.latitude, boarding_events.latitude),
+             longitude = COALESCE(EXCLUDED.longitude, boarding_events.longitude),
+             location = COALESCE(EXCLUDED.location, boarding_events.location),
+             recorded_at = EXCLUDED.recorded_at`,
+          [
+            payload.tripId,
+            payload.studentId,
+            targetStopId,
+            'BOARDED',
+            correctedByRole,
+            payload.latitude || null,
+            payload.longitude || null,
+          ]
+        );
+        newJourneyStatus = current?.drop_status ? current.drop_status : 'IN_TRANSIT';
+      }
+    } else if (payload.eventType === 'DROP') {
+      previousStatus = current?.drop_status || 'PENDING';
+
+      if (payload.newStatus === 'PENDING') {
+        // Resetting drop restores student to on-bus / BOARDED state
+        await query(
+          `DELETE FROM drop_events WHERE trip_id = $1 AND student_id = $2`,
+          [payload.tripId, payload.studentId]
+        );
+        newJourneyStatus = current?.boarding_status === 'BOARDED' ? 'IN_TRANSIT' : 'PENDING';
+      } else {
+        // Correction Rule 2: Cannot record drop unless student is in BOARDED state
+        if (current?.boarding_status !== 'BOARDED') {
+          throw new BadRequestError(
+            'Cannot record drop status: student must be in BOARDED state before drop can be recorded'
+          );
+        }
+
+        const targetStopId = current?.drop_stop_id || current?.assigned_drop_stop_id || current?.pickup_stop_id;
+        if (!targetStopId) {
+          throw new BadRequestError('Student has no assigned drop or pickup stop');
+        }
+
+        await query(
+          `INSERT INTO drop_events (
+             trip_id, student_id, stop_id, status, marked_by, latitude, longitude, location, recorded_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7,
+             CASE WHEN $6::float IS NOT NULL AND $7::float IS NOT NULL
+                  THEN ST_SetSRID(ST_MakePoint($7::float, $6::float), 4326)::geography
+                  ELSE NULL END,
+             NOW()
+           )
+           ON CONFLICT (trip_id, student_id) DO UPDATE SET
+             status = EXCLUDED.status,
+             marked_by = EXCLUDED.marked_by,
+             latitude = COALESCE(EXCLUDED.latitude, drop_events.latitude),
+             longitude = COALESCE(EXCLUDED.longitude, drop_events.longitude),
+             location = COALESCE(EXCLUDED.location, drop_events.location),
+             recorded_at = EXCLUDED.recorded_at`,
+          [
+            payload.tripId,
+            payload.studentId,
+            targetStopId,
+            payload.newStatus,
+            correctedByRole,
+            payload.latitude || null,
+            payload.longitude || null,
+          ]
+        );
+        newJourneyStatus = payload.newStatus;
+      }
+    }
+
+    // 5. Insert immutable audit entry in attendance_corrections table
+    const auditRows = await query<{
+      id: string;
+      school_id: string;
+      trip_id: string;
+      student_id: string;
+      event_type: 'BOARDING' | 'DROP';
+      previous_status: string | null;
+      new_status: string;
+      reason: string;
+      corrected_by: string;
+      corrected_by_role: string;
+      latitude: number | null;
+      longitude: number | null;
+      created_at: string;
+    }>(
+      `INSERT INTO attendance_corrections (
+         school_id, trip_id, student_id, event_type, previous_status, new_status, reason,
+         corrected_by, corrected_by_role, latitude, longitude, location, created_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7,
+         $8, $9, $10, $11,
+         CASE WHEN $10::float IS NOT NULL AND $11::float IS NOT NULL
+              THEN ST_SetSRID(ST_MakePoint($11::float, $10::float), 4326)::geography
+              ELSE NULL END,
+         NOW()
+       )
+       RETURNING id, school_id, trip_id, student_id, event_type, previous_status, new_status,
+                 reason, corrected_by, corrected_by_role, latitude, longitude, created_at::text`,
+      [
+        schoolId,
+        payload.tripId,
+        payload.studentId,
+        payload.eventType,
+        previousStatus,
+        payload.newStatus,
+        payload.reason,
+        correctedBy,
+        correctedByRole,
+        payload.latitude || null,
+        payload.longitude || null,
+      ]
+    );
+
+    const auditRecord = auditRows[0]!;
+
+    // 6. Recalculate summary headcounts
+    const countsRows = await query<{
+      total_students: number;
+      boarded_count: number;
+      dropped_count: number;
+      absent_count: number;
+    }>(
+      `SELECT
+         (SELECT COUNT(DISTINCT ssa.student_id)::int
+          FROM student_stop_assignments ssa
+          JOIN pickup_locations pl ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+          JOIN trips t ON t.route_id = pl.route_id
+          WHERE t.id = $1 AND ssa.deleted_at IS NULL AND pl.deleted_at IS NULL) AS total_students,
+         (SELECT COUNT(DISTINCT be.student_id)::int
+          FROM boarding_events be
+          WHERE be.trip_id = $1 AND be.status = 'BOARDED') AS boarded_count,
+         (SELECT COUNT(DISTINCT de.student_id)::int
+          FROM drop_events de
+          WHERE de.trip_id = $1 AND (de.status = 'DEBOARDED' OR de.status = 'HANDOVER_CONFIRMED')) AS dropped_count,
+         (SELECT COUNT(DISTINCT be.student_id)::int
+          FROM boarding_events be
+          WHERE be.trip_id = $1 AND be.status = 'ABSENT') AS absent_count`,
+      [payload.tripId]
+    );
+
+    const totalStudents = Number(countsRows[0]?.total_students || 0);
+    const boardedCount = Number(countsRows[0]?.boarded_count || 0);
+    const droppedCount = Number(countsRows[0]?.dropped_count || 0);
+    const absentCount = Number(countsRows[0]?.absent_count || 0);
+    const inBusCount = Math.max(0, boardedCount - droppedCount);
+    const pendingCount = Math.max(0, totalStudents - boardedCount - absentCount);
+
+    logger.info(`[DriverAttendance] Corrected attendance for student ${student.id} on trip ${payload.tripId}`, {
+      eventType: payload.eventType,
+      previousStatus,
+      newStatus: payload.newStatus,
+      reason: payload.reason,
+      correctedBy,
+    });
+
+    return {
+      success: true,
+      correction: {
+        id: auditRecord.id,
+        schoolId: auditRecord.school_id,
+        tripId: auditRecord.trip_id,
+        studentId: auditRecord.student_id,
+        eventType: auditRecord.event_type,
+        previousStatus: auditRecord.previous_status,
+        newStatus: auditRecord.new_status,
+        reason: auditRecord.reason,
+        correctedBy: auditRecord.corrected_by,
+        correctedByRole: auditRecord.corrected_by_role,
+        latitude: auditRecord.latitude,
+        longitude: auditRecord.longitude,
+        createdAt: auditRecord.created_at,
+      },
+      student: {
+        id: student.id,
+        fullName: student.full_name,
+        admissionNumber: student.admission_number,
+      },
+      newJourneyStatus,
+      summary: {
+        totalStudents,
+        boardedCount,
+        droppedCount,
+        absentCount,
+        pendingCount,
+        inBusCount,
+      },
+    };
+  }
+
+  /**
+   * Micro-phase 18.4: Retrieve student journey timeline across stops, boarding, drop, and corrections.
+   */
+  public static async getStudentJourneyHistory(
+    schoolId: string,
+    studentId: string,
+    tripId?: string,
+    actor?: DriverAttendanceActorContext
+  ): Promise<StudentJourneyHistoryResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant student journey access attempt');
+    }
+
+    // 1. Fetch student
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      grade: string | null;
+      section: string | null;
+      emergency_phone: string | null;
+    }>(
+      `SELECT id, full_name, admission_number, grade, section, emergency_phone
+       FROM students
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [studentId, schoolId]
+    );
+
+    if (studentRows.length === 0 || !studentRows[0]) {
+      throw new NotFoundError(`Student ${studentId} not found in this school context`);
+    }
+    const student = studentRows[0];
+
+    // 2. Resolve target trip
+    let targetTripId = tripId;
+    if (!targetTripId) {
+      // Find the most recent active or completed trip for this student's assigned route
+      const recentTripRows = await query<{ id: string }>(
+        `SELECT t.id
+         FROM trips t
+         JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+         JOIN pickup_locations pl ON pl.route_id = r.id AND pl.deleted_at IS NULL
+         JOIN student_stop_assignments ssa ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id) AND ssa.deleted_at IS NULL
+         WHERE ssa.student_id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+         ORDER BY (t.status = 'IN_TRANSIT' OR t.status = 'SCHEDULED' OR t.status = 'DELAYED') DESC,
+                  t.scheduled_date DESC, t.created_at DESC
+         LIMIT 1`,
+        [studentId, schoolId]
+      );
+      if (recentTripRows.length > 0 && recentTripRows[0]) {
+        targetTripId = recentTripRows[0].id;
+      }
+    }
+
+    if (!targetTripId) {
+      throw new NotFoundError(`No transport trips found for student ${studentId}`);
+    }
+
+    const tripRows = await query<{
+      id: string;
+      bus_number: string;
+      registration_number: string;
+      route_name: string;
+      route_code: string | null;
+      scheduled_date: string;
+      status: string;
+      driver_name: string | null;
+    }>(
+      `SELECT t.id, b.bus_number, b.registration_number, r.name AS route_name, r.code AS route_code,
+              TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS scheduled_date, t.status,
+              u.full_name AS driver_name
+       FROM trips t
+       JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+       LEFT JOIN users u ON d.user_id = u.id
+       WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+       LIMIT 1`,
+      [targetTripId, schoolId]
+    );
+
+    if (tripRows.length === 0 || !tripRows[0]) {
+      throw new NotFoundError(`Trip ${targetTripId} not found in this school context`);
+    }
+    const trip = tripRows[0];
+
+    // 3. Fetch boarding & drop records for this student on this trip
+    const eventRows = await query<{
+      be_id: string | null;
+      be_status: string | null;
+      be_recorded_at: string | null;
+      be_marked_by: string | null;
+      be_lat: number | null;
+      be_lng: number | null;
+      pickup_stop_name: string | null;
+      pickup_sequence: number | null;
+      de_id: string | null;
+      de_status: string | null;
+      de_recorded_at: string | null;
+      de_marked_by: string | null;
+      de_lat: number | null;
+      de_lng: number | null;
+      drop_stop_name: string | null;
+      drop_sequence: number | null;
+    }>(
+      `SELECT 
+         be.id AS be_id, be.status AS be_status, be.recorded_at::text AS be_recorded_at,
+         be.marked_by AS be_marked_by, be.latitude AS be_lat, be.longitude AS be_lng,
+         pl_pickup.stop_name AS pickup_stop_name, pl_pickup.sequence_order AS pickup_sequence,
+         de.id AS de_id, de.status AS de_status, de.recorded_at::text AS de_recorded_at,
+         de.marked_by AS de_marked_by, de.latitude AS de_lat, de.longitude AS de_lng,
+         pl_drop.stop_name AS drop_stop_name, pl_drop.sequence_order AS drop_sequence
+       FROM students s
+       LEFT JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
+       LEFT JOIN pickup_locations pl_pickup ON ssa.pickup_stop_id = pl_pickup.id
+       LEFT JOIN pickup_locations pl_drop ON ssa.drop_stop_id = pl_drop.id
+       LEFT JOIN boarding_events be ON be.student_id = s.id AND be.trip_id = $1
+       LEFT JOIN drop_events de ON de.student_id = s.id AND de.trip_id = $1
+       WHERE s.id = $2
+       LIMIT 1`,
+      [targetTripId, studentId]
+    );
+
+    const ev = eventRows[0];
+
+    // 4. Fetch corrections audit trail for this student on this trip
+    const correctionRows = await query<{
+      id: string;
+      school_id: string;
+      trip_id: string;
+      student_id: string;
+      event_type: 'BOARDING' | 'DROP';
+      previous_status: string | null;
+      new_status: string;
+      reason: string;
+      corrected_by: string;
+      corrected_by_role: string;
+      latitude: number | null;
+      longitude: number | null;
+      created_at: string;
+    }>(
+      `SELECT id, school_id, trip_id, student_id, event_type, previous_status, new_status,
+              reason, corrected_by, corrected_by_role, latitude, longitude, created_at::text
+       FROM attendance_corrections
+       WHERE school_id = $1 AND trip_id = $2 AND student_id = $3
+       ORDER BY created_at ASC`,
+      [schoolId, targetTripId, studentId]
+    );
+
+    const corrections: AttendanceCorrectionRecord[] = correctionRows.map((r) => ({
+      id: r.id,
+      schoolId: r.school_id,
+      tripId: r.trip_id,
+      studentId: r.student_id,
+      eventType: r.event_type,
+      previousStatus: r.previous_status,
+      newStatus: r.new_status,
+      reason: r.reason,
+      correctedBy: r.corrected_by,
+      correctedByRole: r.corrected_by_role,
+      latitude: r.latitude,
+      longitude: r.longitude,
+      createdAt: r.created_at,
+    }));
+
+    // 5. Assemble chronological timeline
+    const timeline: JourneyTimelineEvent[] = [];
+
+    // Initial Scheduled Event
+    timeline.push({
+      id: `sched-${trip.id}`,
+      type: 'SCHEDULED',
+      status: 'SCHEDULED',
+      timestamp: trip.scheduled_date,
+      stopName: ev?.pickup_stop_name || 'Assigned Pickup Stop',
+      stopSequence: ev?.pickup_sequence || 1,
+      markedBy: 'SYSTEM',
+    });
+
+    if (ev?.be_id && ev.be_recorded_at) {
+      timeline.push({
+        id: ev.be_id,
+        type: 'BOARDING',
+        status: ev.be_status || 'BOARDED',
+        timestamp: ev.be_recorded_at,
+        stopName: ev.pickup_stop_name || 'Pickup Stop',
+        stopSequence: ev.pickup_sequence,
+        markedBy: ev.be_marked_by,
+        latitude: ev.be_lat,
+        longitude: ev.be_lng,
+      });
+    }
+
+    if (ev?.de_id && ev.de_recorded_at) {
+      timeline.push({
+        id: ev.de_id,
+        type: 'DROP',
+        status: ev.de_status || 'DEBOARDED',
+        timestamp: ev.de_recorded_at,
+        stopName: ev.drop_stop_name || 'Drop Stop',
+        stopSequence: ev.drop_sequence,
+        markedBy: ev.de_marked_by,
+        latitude: ev.de_lat,
+        longitude: ev.de_lng,
+      });
+    }
+
+    for (const c of corrections) {
+      timeline.push({
+        id: c.id,
+        type: 'CORRECTION',
+        status: c.newStatus,
+        timestamp: c.createdAt,
+        markedBy: c.correctedByRole,
+        reason: c.reason,
+        latitude: c.latitude,
+        longitude: c.longitude,
+      });
+    }
+
+    // Sort timeline chronologically
+    timeline.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    // Current journey status
+    let currentStatus = 'PENDING';
+    if (ev?.de_status) {
+      currentStatus = ev.de_status;
+    } else if (ev?.be_status === 'BOARDED') {
+      currentStatus = 'IN_TRANSIT';
+    } else if (ev?.be_status) {
+      currentStatus = ev.be_status;
+    }
+
+    return {
+      student: {
+        id: student.id,
+        fullName: student.full_name,
+        admissionNumber: student.admission_number,
+        classGrade: student.grade,
+        section: student.section,
+        emergencyPhone: student.emergency_phone,
+      },
+      trip: {
+        id: trip.id,
+        busNumber: trip.bus_number,
+        registrationNumber: trip.registration_number,
+        routeName: trip.route_name,
+        routeCode: trip.route_code,
+        scheduledDate: trip.scheduled_date,
+        status: trip.status,
+        driverName: trip.driver_name,
+      },
+      currentStatus,
+      timeline,
+      corrections,
+    };
+  }
+
+  /**
+   * Micro-phase 18.4: Retrieve complete attendance history for a single trip.
+   */
+  public static async getTripAttendanceHistory(
+    schoolId: string,
+    tripId: string,
+    actor?: DriverAttendanceActorContext
+  ): Promise<TripAttendanceHistoryResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant trip attendance history access attempt');
+    }
+
+    // 1. Fetch trip
+    const tripRows = await query<{
+      id: string;
+      school_id: string;
+      bus_id: string;
+      bus_number: string;
+      registration_number: string;
+      route_id: string;
+      route_name: string;
+      route_code: string | null;
+      driver_id: string;
+      driver_name: string | null;
+      scheduled_date: string;
+      status: string;
+      started_at: string | null;
+      completed_at: string | null;
+    }>(
+      `SELECT t.id, t.school_id, t.bus_id, b.bus_number, b.registration_number,
+              t.route_id, r.name AS route_name, r.code AS route_code,
+              t.driver_id, u.full_name AS driver_name,
+              TO_CHAR(t.scheduled_date, 'YYYY-MM-DD') AS scheduled_date,
+              t.status, t.started_at::text, t.completed_at::text
+       FROM trips t
+       JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
+       JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
+       LEFT JOIN users u ON d.user_id = u.id
+       WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (tripRows.length === 0 || !tripRows[0]) {
+      throw new NotFoundError(`Trip ${tripId} not found in this school context`);
+    }
+    const trip = tripRows[0];
+
+    if (actor?.isDriver && actor.userId && trip.driver_id !== actor.userId) {
+      throw new ForbiddenError('Driver is not assigned to this trip');
+    }
+
+    // 2. Fetch all students assigned to this trip's route with attendance & corrections count
+    const studentRows = await query<{
+      student_id: string;
+      admission_number: string;
+      full_name: string;
+      grade: string | null;
+      section: string | null;
+      emergency_phone: string | null;
+      pickup_stop_id: string;
+      pickup_stop_name: string;
+      pickup_sequence: number;
+      drop_stop_id: string | null;
+      drop_stop_name: string | null;
+      drop_sequence: number | null;
+      boarding_status: string | null;
+      boarded_at: string | null;
+      boarding_marked_by: string | null;
+      boarding_lat: number | null;
+      boarding_lng: number | null;
+      drop_status: string | null;
+      dropped_at: string | null;
+      drop_marked_by: string | null;
+      drop_lat: number | null;
+      drop_lng: number | null;
+      corrections_count: number;
+    }>(
+      `SELECT 
+         s.id AS student_id,
+         s.admission_number,
+         s.full_name,
+         s.grade,
+         s.section,
+         s.emergency_phone,
+         pl_pickup.id AS pickup_stop_id,
+         pl_pickup.stop_name AS pickup_stop_name,
+         pl_pickup.sequence_order AS pickup_sequence,
+         pl_drop.id AS drop_stop_id,
+         pl_drop.stop_name AS drop_stop_name,
+         pl_drop.sequence_order AS drop_sequence,
+         be.status AS boarding_status,
+         be.recorded_at::text AS boarded_at,
+         be.marked_by AS boarding_marked_by,
+         be.latitude AS boarding_lat,
+         be.longitude AS boarding_lng,
+         de.status AS drop_status,
+         de.recorded_at::text AS dropped_at,
+         de.marked_by AS drop_marked_by,
+         de.latitude AS drop_lat,
+         de.longitude AS drop_lng,
+         (SELECT COUNT(*)::int FROM attendance_corrections ac
+          WHERE ac.trip_id = $1 AND ac.student_id = s.id) AS corrections_count
+       FROM students s
+       JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
+       JOIN pickup_locations pl_pickup ON ssa.pickup_stop_id = pl_pickup.id AND pl_pickup.deleted_at IS NULL
+       LEFT JOIN pickup_locations pl_drop ON ssa.drop_stop_id = pl_drop.id AND pl_drop.deleted_at IS NULL
+       LEFT JOIN boarding_events be ON be.student_id = s.id AND be.trip_id = $1
+       LEFT JOIN drop_events de ON de.student_id = s.id AND de.trip_id = $1
+       WHERE s.school_id = $2
+         AND (pl_pickup.route_id = $3 OR pl_drop.route_id = $3)
+         AND s.deleted_at IS NULL
+       ORDER BY pl_pickup.sequence_order ASC, s.full_name ASC`,
+      [tripId, schoolId, trip.route_id]
+    );
+
+    let boardedCount = 0;
+    let droppedCount = 0;
+    let absentCount = 0;
+    let pendingCount = 0;
+
+    const students: TripAttendanceStudentItem[] = studentRows.map((r) => {
+      let journeyStatus = 'PENDING';
+
+      if (r.drop_status) {
+        journeyStatus = r.drop_status;
+        droppedCount++;
+      } else if (r.boarding_status === 'BOARDED') {
+        journeyStatus = 'IN_TRANSIT';
+        boardedCount++;
+      } else if (r.boarding_status === 'ABSENT') {
+        journeyStatus = 'ABSENT';
+        absentCount++;
+      } else if (r.boarding_status === 'SKIPPED') {
+        journeyStatus = 'SKIPPED';
+      } else {
+        pendingCount++;
+      }
+
+      return {
+        studentId: r.student_id,
+        fullName: r.full_name,
+        admissionNumber: r.admission_number,
+        classGrade: r.grade,
+        section: r.section,
+        emergencyPhone: r.emergency_phone,
+        pickupStop: {
+          id: r.pickup_stop_id,
+          name: r.pickup_stop_name,
+          sequenceOrder: Number(r.pickup_sequence),
+        },
+        dropStop: r.drop_stop_id
+          ? {
+              id: r.drop_stop_id,
+              name: r.drop_stop_name || '',
+              sequenceOrder: Number(r.drop_sequence || 0),
+            }
+          : null,
+        boarding: r.boarding_status && r.boarded_at
+          ? {
+              status: r.boarding_status,
+              recordedAt: r.boarded_at,
+              markedBy: r.boarding_marked_by || 'DRIVER',
+              latitude: r.boarding_lat,
+              longitude: r.boarding_lng,
+            }
+          : null,
+        drop: r.drop_status && r.dropped_at
+          ? {
+              status: r.drop_status,
+              recordedAt: r.dropped_at,
+              markedBy: r.drop_marked_by || 'DRIVER',
+              latitude: r.drop_lat,
+              longitude: r.drop_lng,
+            }
+          : null,
+        journeyStatus,
+        correctionsCount: Number(r.corrections_count || 0),
+      };
+    });
+
+    const totalStudents = students.length;
+    const inBusCount = Math.max(0, boardedCount - droppedCount);
+
+    return {
+      trip: {
+        id: trip.id,
+        schoolId: trip.school_id,
+        busId: trip.bus_id,
+        busNumber: trip.bus_number,
+        registrationNumber: trip.registration_number,
+        routeId: trip.route_id,
+        routeName: trip.route_name,
+        routeCode: trip.route_code,
+        driverId: trip.driver_id,
+        driverName: trip.driver_name,
+        scheduledDate: trip.scheduled_date,
+        status: trip.status,
+        startedAt: trip.started_at,
+        completedAt: trip.completed_at,
+      },
+      summary: {
+        totalStudents,
+        boardedCount,
+        droppedCount,
+        absentCount,
+        pendingCount,
+        inBusCount,
+      },
+      students,
+    };
+  }
+
+  /**
+   * Micro-phase 18.4: Retrieve aggregate attendance history for all trips on a specified date.
+   */
+  public static async getDateAttendanceHistory(
+    schoolId: string,
+    queryFilters: DateAttendanceHistoryQuery,
+    actor?: DriverAttendanceActorContext
+  ): Promise<DateAttendanceHistoryResponse> {
+    if (actor?.schoolId && actor.schoolId !== schoolId) {
+      throw new ForbiddenError('Cross-tenant date attendance history access attempt');
+    }
+
+    let filterSql = 'WHERE t.school_id = $1 AND t.scheduled_date = $2 AND t.deleted_at IS NULL';
+    const params: any[] = [schoolId, queryFilters.date];
+    let pIdx = 3;
+
+    if (queryFilters.busId) {
+      filterSql += ` AND t.bus_id = $${pIdx++}`;
+      params.push(queryFilters.busId);
+    }
+    if (queryFilters.routeId) {
+      filterSql += ` AND t.route_id = $${pIdx++}`;
+      params.push(queryFilters.routeId);
+    }
+    if (queryFilters.driverId) {
+      filterSql += ` AND t.driver_id = $${pIdx++}`;
+      params.push(queryFilters.driverId);
+    }
+    if (actor?.isDriver && actor.userId) {
+      filterSql += ` AND t.driver_id = $${pIdx++}`;
+      params.push(actor.userId);
+    }
+
+    const tripRows = await query<{ id: string }>(
+      `SELECT t.id FROM trips t ${filterSql} ORDER BY t.created_at ASC`,
+      params
+    );
+
+    const trips: TripAttendanceHistoryResponse[] = [];
+    let totalStudents = 0;
+    let boardedCount = 0;
+    let droppedCount = 0;
+    let absentCount = 0;
+    let pendingCount = 0;
+    let inBusCount = 0;
+
+    for (const row of tripRows) {
+      const tripHist = await this.getTripAttendanceHistory(schoolId, row.id, actor);
+      trips.push(tripHist);
+      totalStudents += tripHist.summary.totalStudents;
+      boardedCount += tripHist.summary.boardedCount;
+      droppedCount += tripHist.summary.droppedCount;
+      absentCount += tripHist.summary.absentCount;
+      pendingCount += tripHist.summary.pendingCount;
+      inBusCount += tripHist.summary.inBusCount;
+    }
+
+    return {
+      date: queryFilters.date,
+      tripsCount: trips.length,
+      overallSummary: {
+        totalStudents,
+        boardedCount,
+        droppedCount,
+        absentCount,
+        pendingCount,
+        inBusCount,
+      },
+      trips,
+    };
+  }
 }
+

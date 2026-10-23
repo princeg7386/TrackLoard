@@ -226,4 +226,193 @@ export class DriverAttendanceController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/driver/attendance/correct
+   * Corrects attendance record with strict rules and audit logging
+   */
+  public static async correctAttendance(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.body.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const result = await DriverAttendanceService.correctAttendance(
+        targetSchoolId,
+        req.body,
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Attendance correction recorded successfully', 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/driver/attendance/students/:studentId/journey
+   * Retrieves chronological student journey timeline and corrections
+   */
+  public static async getStudentJourney(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.query.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const studentId = req.params.studentId as string;
+      const tripId = req.query.tripId as string | undefined;
+
+      const result = await DriverAttendanceService.getStudentJourneyHistory(
+        targetSchoolId,
+        studentId,
+        tripId,
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Student journey history retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/driver/attendance/trips/:tripId/history
+   * Retrieves complete attendance history for a single trip
+   */
+  public static async getTripHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.query.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const tripId = req.params.tripId as string;
+
+      const result = await DriverAttendanceService.getTripAttendanceHistory(
+        targetSchoolId,
+        tripId,
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Trip attendance history retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/driver/attendance/history
+   * Retrieves aggregate attendance history across trips on a specified date
+   */
+  public static async getDateHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user;
+      if (!user) {
+        throw new ForbiddenError('Authentication required');
+      }
+
+      const isDriver = user.role === 'DRIVER';
+      const targetSchoolId = (req.query.schoolId as string | undefined) || user.schoolId;
+
+      if (!targetSchoolId) {
+        throw new BadRequestError('School context is required');
+      }
+
+      if (user.schoolId && user.schoolId !== targetSchoolId) {
+        throw new ForbiddenError('Cross-tenant attendance access is prohibited');
+      }
+
+      const dateStr = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+      const busId = req.query.busId as string | undefined;
+      const routeId = req.query.routeId as string | undefined;
+      const driverId = isDriver ? user.id : (req.query.driverId as string | undefined);
+
+      const result = await DriverAttendanceService.getDateAttendanceHistory(
+        targetSchoolId,
+        {
+          date: dateStr,
+          busId,
+          routeId,
+          driverId,
+        },
+        {
+          userId: user.id,
+          isDriver,
+          userRole: user.role,
+          schoolId: user.schoolId || undefined,
+        }
+      );
+
+      sendSuccess(res, result, 'Date attendance history retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

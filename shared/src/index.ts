@@ -3197,3 +3197,183 @@ export const RecordDropBatchResponseSchema = z.object({
   summary: DropSummaryCountsSchema,
 });
 export type RecordDropBatchResponse = z.infer<typeof RecordDropBatchResponseSchema>;
+
+/**
+ * -----------------------------------------------------------------------------
+ * Driver Attendance History & Corrections (Micro-Phase 18.4)
+ * Tasks: Trip/date history, Student journey history, Correction rules
+ * -----------------------------------------------------------------------------
+ */
+
+// 1. Correction Event Type & Status Enums
+export const AttendanceCorrectionEventTypeEnum = z.enum(['BOARDING', 'DROP']);
+export type AttendanceCorrectionEventType = z.infer<typeof AttendanceCorrectionEventTypeEnum>;
+
+export const AttendanceCorrectionNewStatusEnum = z.enum([
+  'BOARDED',
+  'ABSENT',
+  'SKIPPED',
+  'DEBOARDED',
+  'HANDOVER_CONFIRMED',
+  'RETURNED_TO_SCHOOL',
+  'PENDING',
+]);
+export type AttendanceCorrectionNewStatus = z.infer<typeof AttendanceCorrectionNewStatusEnum>;
+
+// 2. Correction Request & Audit Record Schemas
+export const CorrectAttendanceRequestSchema = z.object({
+  tripId: z.string().uuid('Valid trip UUID is required'),
+  studentId: z.string().uuid('Valid student UUID is required'),
+  eventType: AttendanceCorrectionEventTypeEnum,
+  newStatus: AttendanceCorrectionNewStatusEnum,
+  reason: z.string().min(5, 'Mandatory reason of at least 5 characters is required for audit').max(500),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+});
+export type CorrectAttendanceRequest = z.infer<typeof CorrectAttendanceRequestSchema>;
+
+export const AttendanceCorrectionRecordSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  eventType: AttendanceCorrectionEventTypeEnum,
+  previousStatus: z.string().nullable().optional(),
+  newStatus: z.string(),
+  reason: z.string(),
+  correctedBy: z.string().uuid(),
+  correctedByRole: z.string(),
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  createdAt: z.string(),
+});
+export type AttendanceCorrectionRecord = z.infer<typeof AttendanceCorrectionRecordSchema>;
+
+export const CorrectAttendanceResponseSchema = z.object({
+  success: z.boolean(),
+  correction: AttendanceCorrectionRecordSchema,
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string(),
+  }),
+  newJourneyStatus: z.string(),
+  summary: DropSummaryCountsSchema,
+});
+export type CorrectAttendanceResponse = z.infer<typeof CorrectAttendanceResponseSchema>;
+
+// 3. Student Journey History Schemas
+export const JourneyTimelineEventSchema = z.object({
+  id: z.string(),
+  type: z.enum(['SCHEDULED', 'BOARDING', 'DROP', 'CORRECTION']),
+  status: z.string(),
+  timestamp: z.string(),
+  stopName: z.string().optional().nullable(),
+  stopSequence: z.number().optional().nullable(),
+  markedBy: z.string().optional().nullable(),
+  reason: z.string().optional().nullable(),
+  latitude: z.number().optional().nullable(),
+  longitude: z.number().optional().nullable(),
+});
+export type JourneyTimelineEvent = z.infer<typeof JourneyTimelineEventSchema>;
+
+export const StudentJourneyHistoryResponseSchema = z.object({
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+    emergencyPhone: z.string().optional().nullable(),
+  }),
+  trip: z.object({
+    id: z.string().uuid(),
+    busNumber: z.string(),
+    registrationNumber: z.string(),
+    routeName: z.string(),
+    routeCode: z.string().optional().nullable(),
+    scheduledDate: z.string(),
+    status: z.string(),
+    driverName: z.string().optional().nullable(),
+  }),
+  currentStatus: z.string(),
+  timeline: z.array(JourneyTimelineEventSchema),
+  corrections: z.array(AttendanceCorrectionRecordSchema),
+});
+export type StudentJourneyHistoryResponse = z.infer<typeof StudentJourneyHistoryResponseSchema>;
+
+// 4. Trip / Date Attendance History Schemas
+export const TripAttendanceStudentItemSchema = z.object({
+  studentId: z.string().uuid(),
+  fullName: z.string(),
+  admissionNumber: z.string(),
+  classGrade: z.string().optional().nullable(),
+  section: z.string().optional().nullable(),
+  emergencyPhone: z.string().optional().nullable(),
+  pickupStop: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    sequenceOrder: z.number(),
+  }),
+  dropStop: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    sequenceOrder: z.number(),
+  }).optional().nullable(),
+  boarding: z.object({
+    status: z.string(),
+    recordedAt: z.string(),
+    markedBy: z.string(),
+    latitude: z.number().optional().nullable(),
+    longitude: z.number().optional().nullable(),
+  }).optional().nullable(),
+  drop: z.object({
+    status: z.string(),
+    recordedAt: z.string(),
+    markedBy: z.string(),
+    latitude: z.number().optional().nullable(),
+    longitude: z.number().optional().nullable(),
+  }).optional().nullable(),
+  journeyStatus: z.string(),
+  correctionsCount: z.number().int().min(0),
+});
+export type TripAttendanceStudentItem = z.infer<typeof TripAttendanceStudentItemSchema>;
+
+export const TripAttendanceHistoryResponseSchema = z.object({
+  trip: z.object({
+    id: z.string().uuid(),
+    schoolId: z.string().uuid(),
+    busId: z.string().uuid(),
+    busNumber: z.string(),
+    registrationNumber: z.string(),
+    routeId: z.string().uuid(),
+    routeName: z.string(),
+    routeCode: z.string().optional().nullable(),
+    driverId: z.string().uuid(),
+    driverName: z.string().optional().nullable(),
+    scheduledDate: z.string(),
+    status: z.string(),
+    startedAt: z.string().optional().nullable(),
+    completedAt: z.string().optional().nullable(),
+  }),
+  summary: DropSummaryCountsSchema,
+  students: z.array(TripAttendanceStudentItemSchema),
+});
+export type TripAttendanceHistoryResponse = z.infer<typeof TripAttendanceHistoryResponseSchema>;
+
+export const DateAttendanceHistoryQuerySchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  busId: z.string().uuid().optional(),
+  routeId: z.string().uuid().optional(),
+  driverId: z.string().uuid().optional(),
+});
+export type DateAttendanceHistoryQuery = z.infer<typeof DateAttendanceHistoryQuerySchema>;
+
+export const DateAttendanceHistoryResponseSchema = z.object({
+  date: z.string(),
+  tripsCount: z.number().int().min(0),
+  overallSummary: DropSummaryCountsSchema,
+  trips: z.array(TripAttendanceHistoryResponseSchema),
+});
+export type DateAttendanceHistoryResponse = z.infer<typeof DateAttendanceHistoryResponseSchema>;
+

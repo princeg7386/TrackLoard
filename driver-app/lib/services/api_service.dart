@@ -252,6 +252,45 @@ class ApiService {
     return post(ApiConstants.attendanceDropBatchEndpoint, body: payload);
   }
 
+  /// Micro-phase 18.4: Correct attendance record with mandatory audit reason
+  Future<ApiResponse<Map<String, dynamic>>> correctAttendance({
+    required String tripId,
+    required String studentId,
+    required String eventType,
+    required String newStatus,
+    required String reason,
+    double? latitude,
+    double? longitude,
+  }) async {
+    final payload = <String, dynamic>{
+      'tripId': tripId,
+      'studentId': studentId,
+      'eventType': eventType,
+      'newStatus': newStatus,
+      'reason': reason,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
+    };
+
+    return post(ApiConstants.attendanceCorrectEndpoint, body: payload);
+  }
+
+  /// Micro-phase 18.4: Retrieve student journey history timeline
+  Future<ApiResponse<Map<String, dynamic>>> getStudentJourney({
+    required String studentId,
+    String? tripId,
+  }) async {
+    final queryParams = tripId != null ? '?tripId=$tripId' : '';
+    return get('${ApiConstants.attendanceStudentsEndpoint}/$studentId/journey$queryParams');
+  }
+
+  /// Micro-phase 18.4: Retrieve trip attendance history
+  Future<ApiResponse<Map<String, dynamic>>> getTripAttendanceHistory({
+    required String tripId,
+  }) async {
+    return get('${ApiConstants.attendanceTripHistoryEndpoint}/$tripId/history');
+  }
+
   ApiResponse<Map<String, dynamic>> _processResponse(http.Response response) {
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));

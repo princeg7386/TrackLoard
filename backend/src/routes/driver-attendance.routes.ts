@@ -6,6 +6,7 @@ import {
   RecordBoardingBatchRequestSchema,
   RecordDropRequestSchema,
   RecordDropBatchRequestSchema,
+  CorrectAttendanceRequestSchema,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { DriverAttendanceController } from '../controllers/driver-attendance.controller.js';
@@ -59,6 +60,43 @@ driverAttendanceRouter.post(
   requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
   validateBody(RecordDropBatchRequestSchema),
   DriverAttendanceController.recordDropBatch
+);
+
+// POST /api/v1/driver/attendance/correct
+// Corrects attendance with mandatory audit reason, state validation, and immutable logging
+driverAttendanceRouter.post(
+  '/correct',
+  authenticateToken,
+  requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  validateBody(CorrectAttendanceRequestSchema),
+  DriverAttendanceController.correctAttendance
+);
+
+// GET /api/v1/driver/attendance/students/:studentId/journey
+// Chronological student journey history across stops and attendance events
+driverAttendanceRouter.get(
+  '/students/:studentId/journey',
+  authenticateToken,
+  requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  DriverAttendanceController.getStudentJourney
+);
+
+// GET /api/v1/driver/attendance/trips/:tripId/history
+// Complete attendance history for a single trip
+driverAttendanceRouter.get(
+  '/trips/:tripId/history',
+  authenticateToken,
+  requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  DriverAttendanceController.getTripHistory
+);
+
+// GET /api/v1/driver/attendance/history
+// Aggregate attendance history across trips for a specified date
+driverAttendanceRouter.get(
+  '/history',
+  authenticateToken,
+  requireRoles(UserRole.DRIVER, UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  DriverAttendanceController.getDateHistory
 );
 
 export default driverAttendanceRouter;

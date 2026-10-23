@@ -972,6 +972,309 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       }
                     }
 
+                    Future<void> handleViewJourney(StudentAttendanceItem student) async {
+                      showModalBottomSheet(
+                        context: context,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                        ),
+                        builder: (journeyCtx) {
+                          return FutureBuilder<ApiResponse<Map<String, dynamic>>>(
+                            future: ApiService().getStudentJourney(
+                              studentId: student.studentId,
+                              tripId: activeTripId,
+                            ),
+                            builder: (context, snap) {
+                              if (snap.connectionState == ConnectionState.waiting) {
+                                return const SizedBox(
+                                  height: 250,
+                                  child: Center(child: CircularProgressIndicator()),
+                                );
+                              }
+                              if (snap.hasError || snap.data?.success != true) {
+                                return Padding(
+                                  padding: const EdgeInsets.all(24.0),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.error_outline, size: 40, color: AppTheme.statusEmergency),
+                                      const SizedBox(height: 12),
+                                      Text(snap.data?.message ?? 'Failed to load journey history'),
+                                    ],
+                                  ),
+                                );
+                              }
+
+                              final journeyData = snap.data!.data ?? {};
+                              final timelineRaw = (journeyData['timeline'] as List<dynamic>?) ?? [];
+                              final currentStatus = journeyData['currentStatus']?.toString() ?? 'PENDING';
+
+                              return Padding(
+                                padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.timeline_rounded, color: AppTheme.primaryNavy),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            'Journey Timeline: ${student.fullName}',
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                          ),
+                                        ),
+                                        Chip(
+                                          label: Text(currentStatus, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                          backgroundColor: AppTheme.primaryNavy.withOpacity(0.08),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    if (timelineRaw.isEmpty)
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(vertical: 24),
+                                        child: Center(child: Text('No events recorded yet')),
+                                      )
+                                    else
+                                      Flexible(
+                                        child: ListView.separated(
+                                          shrinkWrap: true,
+                                          itemCount: timelineRaw.length,
+                                          separatorBuilder: (_, __) => const Divider(height: 12),
+                                          itemBuilder: (_, tIdx) {
+                                            final ev = timelineRaw[tIdx] as Map<String, dynamic>;
+                                            final type = ev['type']?.toString() ?? 'EVENT';
+                                            final status = ev['status']?.toString() ?? '';
+                                            final time = ev['timestamp']?.toString() ?? '';
+                                            final stopName = ev['stopName']?.toString() ?? '';
+                                            final reason = ev['reason']?.toString();
+
+                                            IconData icon = Icons.circle_outlined;
+                                            Color iconColor = AppTheme.textMuted;
+                                            if (type == 'BOARDING') {
+                                              icon = Icons.check_circle_rounded;
+                                              iconColor = AppTheme.statusSuccess;
+                                            } else if (type == 'DROP') {
+                                              icon = Icons.directions_walk_rounded;
+                                              iconColor = AppTheme.primaryNavy;
+                                            } else if (type == 'CORRECTION') {
+                                              icon = Icons.edit_note_rounded;
+                                              iconColor = AppTheme.statusWarning;
+                                            }
+
+                                            return Row(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Icon(icon, size: 20, color: iconColor),
+                                                const SizedBox(width: 10),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(
+                                                        '$type: $status',
+                                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                                      ),
+                                                      if (stopName.isNotEmpty)
+                                                        Text('Stop: $stopName', style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                                                      if (reason != null && reason.isNotEmpty)
+                                                        Text('Reason: "$reason"', style: const TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: AppTheme.statusWarning)),
+                                                    ],
+                                                  ),
+                                                ),
+                                                Text(
+                                                  time.length > 10 ? time.substring(11, 16) : time,
+                                                  style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                                                ),
+                                              ],
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      );
+                    }
+
+                    Future<void> handleOpenCorrectionDialog(StudentAttendanceItem student) async {
+                      if (activeTripId == null) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('Cannot correct attendance: No active trip in progress.'),
+                            backgroundColor: AppTheme.statusEmergency,
+                          ),
+                        );
+                        return;
+                      }
+
+                      String selectedStatus = student.attendanceStatus == 'BOARDED' ? 'ABSENT' : 'BOARDED';
+                      String eventType = selectedStatus == 'DEBOARDED' ? 'DROP' : 'BOARDING';
+                      final reasonController = TextEditingController();
+                      final formKey = GlobalKey<FormState>();
+                      bool isSubmitting = false;
+
+                      await showDialog(
+                        context: context,
+                        builder: (dialogCtx) {
+                          return StatefulBuilder(
+                            builder: (context, setDialogState) {
+                              return AlertDialog(
+                                title: Row(
+                                  children: [
+                                    const Icon(Icons.edit_note_rounded, color: AppTheme.primaryNavy),
+                                    const SizedBox(width: 8),
+                                    const Text('Correct Attendance', style: TextStyle(fontSize: 16)),
+                                  ],
+                                ),
+                                content: Form(
+                                  key: formKey,
+                                  child: SingleChildScrollView(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Student: ${student.fullName} (${student.admissionNumber})',
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Current Status: ${student.attendanceStatus}',
+                                          style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                                        ),
+                                        const SizedBox(height: 14),
+                                        const Text('Correct To:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                        DropdownButton<String>(
+                                          value: selectedStatus,
+                                          isExpanded: true,
+                                          items: const [
+                                            DropdownMenuItem(value: 'BOARDED', child: Text('Boarded')),
+                                            DropdownMenuItem(value: 'ABSENT', child: Text('Absent / Not Boarded')),
+                                            DropdownMenuItem(value: 'DEBOARDED', child: Text('Dropped (Deboarded)')),
+                                            DropdownMenuItem(value: 'PENDING', child: Text('Reset to Pending')),
+                                          ],
+                                          onChanged: (val) {
+                                            if (val != null) {
+                                              setDialogState(() {
+                                                selectedStatus = val;
+                                                eventType = val == 'DEBOARDED' ? 'DROP' : 'BOARDING';
+                                              });
+                                            }
+                                          },
+                                        ),
+                                        const SizedBox(height: 12),
+                                        TextFormField(
+                                          controller: reasonController,
+                                          maxLines: 2,
+                                          decoration: const InputDecoration(
+                                            labelText: 'Reason for correction *',
+                                            hintText: 'e.g. Boarded at stop 2 / Clicked by error',
+                                            border: OutlineInputBorder(),
+                                            contentPadding: EdgeInsets.all(10),
+                                          ),
+                                          validator: (val) {
+                                            if (val == null || val.trim().length < 5) {
+                                              return 'Reason must be at least 5 characters.';
+                                            }
+                                            return null;
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: isSubmitting ? null : () => Navigator.pop(dialogCtx),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: isSubmitting
+                                        ? null
+                                        : () async {
+                                            if (!formKey.currentState!.validate()) return;
+                                            setDialogState(() => isSubmitting = true);
+
+                                            double? lat;
+                                            double? lng;
+                                            try {
+                                              final pos = await Geolocator.getLastKnownPosition();
+                                              if (pos != null) {
+                                                lat = pos.latitude;
+                                                lng = pos.longitude;
+                                              }
+                                            } catch (_) {}
+
+                                            final res = await ApiService().correctAttendance(
+                                              tripId: activeTripId,
+                                              studentId: student.studentId,
+                                              eventType: eventType,
+                                              newStatus: selectedStatus,
+                                              reason: reasonController.text.trim(),
+                                              latitude: lat,
+                                              longitude: lng,
+                                            );
+
+                                            if (dialogCtx.mounted) {
+                                              Navigator.pop(dialogCtx);
+                                            }
+
+                                            if (res.success && res.data != null) {
+                                              final summaryData = res.data!['summary'] as Map<String, dynamic>?;
+                                              final updatedStudent = student.copyWith(
+                                                attendanceStatus: selectedStatus,
+                                              );
+                                              final updatedList = manifest.students
+                                                  .map((s) => s.studentId == student.studentId ? updatedStudent : s)
+                                                  .toList();
+
+                                              setModalState(() {
+                                                manifest = manifest.copyWith(
+                                                  boardedCount: summaryData?['boardedCount'] ?? manifest.boardedCount,
+                                                  droppedCount: summaryData?['droppedCount'] ?? manifest.droppedCount,
+                                                  absentCount: summaryData?['absentCount'] ?? manifest.absentCount,
+                                                  pendingCount: summaryData?['pendingCount'] ?? manifest.pendingCount,
+                                                  students: updatedList,
+                                                );
+                                              });
+
+                                              if (sheetContext.mounted) {
+                                                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text('Attendance corrected for ${student.fullName}'),
+                                                    backgroundColor: AppTheme.primaryNavy,
+                                                  ),
+                                                );
+                                              }
+                                            } else {
+                                              if (sheetContext.mounted) {
+                                                ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                                  SnackBar(
+                                                    content: Text('Correction failed: ${res.message}'),
+                                                    backgroundColor: AppTheme.statusEmergency,
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          },
+                                    child: isSubmitting
+                                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                        : const Text('Save Correction'),
+                                  ),
+                                ],
+                              );
+                            },
+                          );
+                        },
+                      );
+                    }
+
                     return Column(
                       children: [
                         // Sheet Header
@@ -1232,6 +1535,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                             onSelected: (val) {
                                                               if (val == 'DEBOARDED') {
                                                                 handleRecordDrop(student);
+                                                              } else if (val == 'VIEW_JOURNEY') {
+                                                                handleViewJourney(student);
+                                                              } else if (val == 'CORRECT') {
+                                                                handleOpenCorrectionDialog(student);
                                                               } else {
                                                                 handleRecordBoarding(student, val);
                                                               }
@@ -1243,6 +1550,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                                                 const PopupMenuItem(value: 'DEBOARDED', child: Text('Mark Dropped (Deboarded)')),
                                                               if (student.attendanceStatus != 'ABSENT')
                                                                 const PopupMenuItem(value: 'ABSENT', child: Text('Mark Absent')),
+                                                              const PopupMenuDivider(),
+                                                              const PopupMenuItem(value: 'VIEW_JOURNEY', child: Text('View Journey Timeline')),
+                                                              const PopupMenuItem(value: 'CORRECT', child: Text('Correct Attendance…')),
                                                             ],
                                                           ),
                                                         ],
