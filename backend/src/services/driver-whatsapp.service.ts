@@ -960,13 +960,46 @@ export class DriverWhatsappService {
                 `No student matching that name or admission number was found on your assigned bus route.\n\n` +
                 `Please check the spelling or try the admission number.\n` +
                 `_Your bus: *${searchResult.busNumber || 'Assigned Bus'}*_`;
-            } else {
+            } else if (searchResult.students.length === 1) {
+              // Single match — emit a rich detail card
+              const s = searchResult.students[0]!;
               const statusEmoji: Record<string, string> = {
-                BOARDED: '✅',
-                ABSENT: '❌',
-                DEBOARDED: '🏫',
-                SKIPPED: '⏭️',
-                PENDING: '⏳',
+                BOARDED: '✅', ABSENT: '❌', DEBOARDED: '🏫', SKIPPED: '⏭️', PENDING: '⏳',
+              };
+              const emoji = statusEmoji[s.attendanceStatus] ?? '⏳';
+              const gradeLabel = s.grade ? `${s.grade}${s.section ? '-' + s.section : ''}` : null;
+              const routeLabel = searchResult.routeCode
+                ? `${searchResult.routeCode} – ${searchResult.routeName || 'Assigned Route'}`
+                : searchResult.routeName || 'Assigned Route';
+              const pickupAddress = s.pickupStop.address
+                ? `\n   📬 ${s.pickupStop.address}`
+                : '';
+              const parentLine = s.parent?.fullName
+                ? `\n👤 *Parent:* ${s.parent.fullName}${s.parent.relationship ? ' (' + s.parent.relationship + ')' : ''}\n📞 *Phone:* ${s.parent.phone}`
+                : '\n_No parent contact on record_';
+              const emergencyLine = s.emergencyPhone
+                ? `\n🚨 *Emergency:* ${s.emergencyPhone}`
+                : '';
+              const dropLine = s.dropStop
+                ? `\n\n🏫 *Drop Stop:* ${s.dropStop.name} (Seq ${s.dropStop.sequenceOrder})`
+                : '';
+
+              replyText =
+                `🔍 *Student Detail*\n\n` +
+                `👦 *${s.fullName}*${gradeLabel ? ' — ' + gradeLabel : ''}\n` +
+                `🎫 Adm: ${s.admissionNumber}\n` +
+                `${emoji} Status: *${s.attendanceStatus}*\n` +
+                parentLine +
+                emergencyLine +
+                `\n\n📍 *Pickup Stop:* ${s.pickupStop.name} (Seq ${s.pickupStop.sequenceOrder})` +
+                pickupAddress +
+                dropLine +
+                `\n\n🚌 *Bus:* ${searchResult.busNumber}${searchResult.registrationNumber ? ' (' + searchResult.registrationNumber + ')' : ''}\n` +
+                `🗺️ *Route:* ${routeLabel}`;
+            } else {
+              // 2–N results — compact list (cap at 5)
+              const statusEmoji: Record<string, string> = {
+                BOARDED: '✅', ABSENT: '❌', DEBOARDED: '🏫', SKIPPED: '⏭️', PENDING: '⏳',
               };
 
               const lines = searchResult.students.slice(0, 5).map((s, i) => {

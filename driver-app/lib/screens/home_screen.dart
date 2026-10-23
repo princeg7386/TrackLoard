@@ -1515,6 +1515,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                           ),
                                           child: ListTile(
                                             dense: true,
+                                            onTap: () => _showStudentDetailSheet(
+                                              sheetContext,
+                                              student,
+                                              manifest,
+                                            ),
                                             leading: CircleAvatar(
                                               radius: 16,
                                               backgroundColor: AppTheme.primaryNavy.withOpacity(0.08),
@@ -1663,6 +1668,359 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           },
         );
       },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 19.2: Student result detail sheet
+  // Shows full student info: name, parent, phone, pickup address/location,
+  // bus and route. Data comes from the already-loaded DriverStudentListModel.
+  // ---------------------------------------------------------------------------
+  void _showStudentDetailSheet(
+    BuildContext context,
+    StudentAttendanceItem student,
+    DriverStudentListModel manifest,
+  ) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.65,
+          minChildSize: 0.4,
+          maxChildSize: 0.92,
+          builder: (_, scrollCtrl) {
+            final status = student.attendanceStatus;
+            final Color statusColor = status == 'BOARDED'
+                ? AppTheme.statusSuccess
+                : status == 'DEBOARDED'
+                    ? AppTheme.primaryNavy
+                    : status == 'ABSENT'
+                        ? AppTheme.statusEmergency
+                        : AppTheme.textMuted;
+            final Color statusBg = status == 'BOARDED'
+                ? AppTheme.statusSuccessLight
+                : status == 'DEBOARDED'
+                    ? AppTheme.primaryNavy.withOpacity(0.1)
+                    : status == 'ABSENT'
+                        ? AppTheme.statusEmergencyLight
+                        : Colors.grey.shade100;
+            final String statusLabel =
+                status == 'DEBOARDED' ? 'DROPPED' : status;
+
+            final routeLabel = manifest.routeCode != null
+                ? '${manifest.routeCode} – ${manifest.routeName ?? 'Assigned Route'}'
+                : manifest.routeName ?? 'Assigned Route';
+
+            return Container(
+              decoration: const BoxDecoration(
+                color: AppTheme.cardBg,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Column(
+                children: [
+                  // Drag handle
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10, bottom: 6),
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+
+                  // Header: avatar + name + status
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 22,
+                          backgroundColor: AppTheme.primaryNavy.withOpacity(0.1),
+                          child: Text(
+                            student.fullName.isNotEmpty
+                                ? student.fullName[0].toUpperCase()
+                                : 'S',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryNavy,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                student.fullName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 16,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Row(
+                                children: [
+                                  Text(
+                                    'Adm: ${student.admissionNumber}',
+                                    style: const TextStyle(
+                                        fontSize: 12, color: AppTheme.textSecondary),
+                                  ),
+                                  if (student.grade != null) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.primaryNavy.withOpacity(0.07),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        'Class ${student.grade}${student.section != null ? '-${student.section}' : ''}',
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppTheme.primaryNavy,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: statusBg,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            statusLabel,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: statusColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+
+                  // Scrollable body
+                  Expanded(
+                    child: ListView(
+                      controller: scrollCtrl,
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                      children: [
+                        // --- Contact section ---
+                        _detailSectionHeader(Icons.person_outline_rounded, 'Parent / Guardian'),
+                        if (student.parent != null) ...[
+                          _detailRow(
+                            Icons.badge_outlined,
+                            'Name',
+                            '${student.parent!.fullName}${student.parent!.relationship != null ? ' (${student.parent!.relationship})' : ''}',
+                          ),
+                          _detailRow(
+                            Icons.phone_outlined,
+                            'Phone',
+                            student.parent!.phone,
+                            valueStyle: const TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.primaryNavy,
+                              fontWeight: FontWeight.w600,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ] else
+                          _detailRowPlaceholder('No parent contact on record'),
+                        if (student.emergencyPhone != null)
+                          _detailRow(
+                            Icons.emergency_outlined,
+                            'Emergency',
+                            student.emergencyPhone!,
+                            valueStyle: const TextStyle(
+                              fontSize: 13,
+                              color: AppTheme.statusEmergency,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+
+                        const SizedBox(height: 16),
+
+                        // --- Pickup stop section ---
+                        _detailSectionHeader(Icons.place_rounded, 'Pickup Stop'),
+                        _detailRow(
+                          Icons.format_list_numbered_rounded,
+                          'Stop',
+                          '${student.pickupStop.name} (Stop #${student.pickupStop.sequenceOrder})',
+                        ),
+                        if (student.pickupStop.address != null)
+                          _detailRow(
+                            Icons.home_outlined,
+                            'Address',
+                            student.pickupStop.address!,
+                          ),
+                        _detailRow(
+                          Icons.my_location_rounded,
+                          'Location',
+                          '${student.pickupStop.latitude.toStringAsFixed(5)}, ${student.pickupStop.longitude.toStringAsFixed(5)}',
+                          valueStyle: const TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.textSecondary,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        if (student.pickupStop.expectedTimeOffsetMinutes != null)
+                          _detailRow(
+                            Icons.access_time_outlined,
+                            'ETA Offset',
+                            '+${student.pickupStop.expectedTimeOffsetMinutes} min from trip start',
+                          ),
+
+                        // --- Drop stop (optional) ---
+                        if (student.dropStop != null) ...[
+                          const SizedBox(height: 16),
+                          _detailSectionHeader(Icons.school_outlined, 'Drop Stop'),
+                          _detailRow(
+                            Icons.format_list_numbered_rounded,
+                            'Stop',
+                            '${student.dropStop!.name} (Stop #${student.dropStop!.sequenceOrder})',
+                          ),
+                          if (student.dropStop!.address != null)
+                            _detailRow(
+                              Icons.home_outlined,
+                              'Address',
+                              student.dropStop!.address!,
+                            ),
+                        ],
+
+                        const SizedBox(height: 16),
+
+                        // --- Bus & Route ---
+                        _detailSectionHeader(Icons.directions_bus_outlined, 'Bus & Route'),
+                        _detailRow(
+                          Icons.confirmation_number_outlined,
+                          'Bus Number',
+                          manifest.busNumber,
+                        ),
+                        _detailRow(
+                          Icons.credit_card_outlined,
+                          'Reg. Plate',
+                          manifest.registrationNumber,
+                        ),
+                        _detailRow(
+                          Icons.route_outlined,
+                          'Route',
+                          routeLabel,
+                        ),
+
+                        // --- Attendance timestamps ---
+                        if (student.boardedAt != null || student.droppedAt != null) ...[
+                          const SizedBox(height: 16),
+                          _detailSectionHeader(Icons.history_rounded, 'Today\'s Attendance'),
+                          if (student.boardedAt != null)
+                            _detailRow(Icons.login_rounded, 'Boarded', _formatTimestamp(student.boardedAt!)),
+                          if (student.droppedAt != null)
+                            _detailRow(Icons.logout_rounded, 'Dropped', _formatTimestamp(student.droppedAt!)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Formats an ISO-8601 timestamp to readable HH:mm IST for the detail sheet
+  String _formatTimestamp(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '$h:$m';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  // Section header row for the detail sheet
+  Widget _detailSectionHeader(IconData icon, String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Icon(icon, size: 15, color: AppTheme.primaryNavy),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.primaryNavy,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Key-value detail row for the detail sheet
+  Widget _detailRow(
+    IconData icon,
+    String label,
+    String value, {
+    TextStyle? valueStyle,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.textMuted),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 80,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: valueStyle ??
+                  const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Placeholder row when data is absent
+  Widget _detailRowPlaceholder(String message) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        message,
+        style: const TextStyle(fontSize: 12, color: AppTheme.textMuted, fontStyle: FontStyle.italic),
+      ),
     );
   }
 
