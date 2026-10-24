@@ -12,7 +12,9 @@ import {
 } from '../middlewares/error.middleware.js';
 import { GpsHealthService } from './gps-health.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
+import { EtaRefreshService } from './eta-refresh.service.js';
 import { logger } from './logger.service.js';
+
 
 export interface TelemetryIngestResult {
   ingestedCount: number;
@@ -260,6 +262,19 @@ export class TelemetryService {
       timestamp: new Date().toISOString(),
     });
 
+    // 4. Phase 20.3 — Fire-and-forget ETA refresh (non-blocking, errors are swallowed)
+    EtaRefreshService.scheduleRefresh({
+      tripId: payload.tripId,
+      schoolId: trip.school_id,
+      busId: payload.busId,
+      speedKmh: payload.speedKmh ?? 0,
+      healthStatus,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      recordedAt: new Date(payload.recordedAt).toISOString(),
+    });
+
+
     return {
       id: parseInt(inserted.id, 10),
       tripId: inserted.tripId,
@@ -476,6 +491,33 @@ export class TelemetryService {
       }
     });
 
+    // Phase 20.3 — Fire-and-forget ETA refresh per unique trip in the batch.
+    // We use the *latest* ping per trip (chronologically last in `sorted`) to
+    // provide the most up-to-date speed and position to the refresh service.
+    const latestPerTrip = new Map<string, typeof sorted[0]>();
+    for (const loc of sorted) {
+      latestPerTrip.set(loc.tripId, loc);
+    }
+    for (const [tripId, loc] of latestPerTrip.entries()) {
+      const schoolId = tripSchoolMap.get(tripId) ?? '';
+      const batchHealthStatus = GpsHealthService.calculateHealthStatus({
+        accuracyMeters: loc.accuracyMeters,
+        recordedAt: loc.recordedAt,
+        isOnline: loc.networkType !== 'OFFLINE',
+        hasActiveTrip: true,
+      });
+      EtaRefreshService.scheduleRefresh({
+        tripId,
+        schoolId,
+        busId: loc.busId,
+        speedKmh: loc.speedKmh ?? 0,
+        healthStatus: batchHealthStatus,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        recordedAt: new Date(loc.recordedAt).toISOString(),
+      });
+    }
+
     const latest = sorted[sorted.length - 1]!;
 
     logger.info('Batch GPS telemetry ingested successfully', {
@@ -485,6 +527,7 @@ export class TelemetryService {
       tripId: latest.tripId,
       busId: latest.busId,
     });
+
 
     return {
       ingestedCount,

@@ -1255,7 +1255,13 @@ export const FleetGpsHealthOverviewSchema = z.object({
 export type FleetGpsHealthOverview = z.infer<typeof FleetGpsHealthOverviewSchema>;
 
 // Real-Time Telemetry Feed Event Definition (SSE / Pub-Sub)
-export type TelemetryFeedEventType = 'INITIAL_STATE' | 'LOCATION_UPDATE' | 'HEALTH_UPDATE' | 'HEARTBEAT';
+export type TelemetryFeedEventType =
+  | 'INITIAL_STATE'
+  | 'LOCATION_UPDATE'
+  | 'HEALTH_UPDATE'
+  | 'HEARTBEAT'
+  /** Phase 20.3: Emitted after every GPS ping with a freshly computed RouteEtaSummary */
+  | 'ETA_UPDATE';
 
 export interface TelemetryFeedEvent {
   type: TelemetryFeedEventType;
@@ -1277,6 +1283,10 @@ export interface TelemetryFeedEvent {
   nextStopEtaSeconds?: number | null;
   nextStopName?: string | null;
   estimatedNextArrivalAt?: string | null;
+  // Phase 20.3: Full smoothed ETA summary — populated on ETA_UPDATE events
+  etaSummary?: RouteEtaSummary | null;
+  /** True when the bus is detected as stationary (speed ≤ 2 km/h) */
+  isStoppedBus?: boolean | null;
 }
 
 export const TelemetryFeedQuerySchema = z.object({
