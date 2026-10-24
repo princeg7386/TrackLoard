@@ -3495,3 +3495,39 @@ export const DateAttendanceHistoryResponseSchema = z.object({
 });
 export type DateAttendanceHistoryResponse = z.infer<typeof DateAttendanceHistoryResponseSchema>;
 
+// =============================================================================
+// Phase 21 — Geofence Notifications
+// =============================================================================
+
+/**
+ * Row shape for the geofence_notification_log table.
+ * Used for dedup checking and insertion.
+ */
+export const GeofenceNotificationLogRowSchema = z.object({
+  id: z.string().uuid(),
+  tripId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  parentId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  triggerDistanceMeters: z.number().nullable().optional(),
+  etaMinutes: z.number().int().nullable().optional(),
+  messageSid: z.string().nullable().optional(),
+  triggeredAt: z.string(),
+});
+export type GeofenceNotificationLogRow = z.infer<typeof GeofenceNotificationLogRowSchema>;
+
+/**
+ * Result returned by GeofenceNotificationService.checkAndNotify()
+ */
+export const GeofenceNotificationResultSchema = z.object({
+  tripId: z.string().uuid(),
+  notificationsSent: z.number().int().min(0),
+  stopsChecked: z.number().int().min(0),
+  /** Approach-radius matches that were already notified (deduped) */
+  alreadyNotified: z.number().int().min(0),
+  /** Parents that have opted out of notifications */
+  optedOut: z.number().int().min(0),
+});
+export type GeofenceNotificationResult = z.infer<typeof GeofenceNotificationResultSchema>;
+

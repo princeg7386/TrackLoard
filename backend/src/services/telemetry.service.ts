@@ -13,6 +13,7 @@ import {
 import { GpsHealthService } from './gps-health.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
 import { EtaRefreshService } from './eta-refresh.service.js';
+import { GeofenceNotificationService } from './geofence-notification.service.js';
 import { logger } from './logger.service.js';
 
 
@@ -272,6 +273,17 @@ export class TelemetryService {
       latitude: payload.latitude,
       longitude: payload.longitude,
       recordedAt: new Date(payload.recordedAt).toISOString(),
+    });
+
+    // 5. Phase 21.1 — Fire-and-forget geofence approach notifications (non-blocking)
+    GeofenceNotificationService.checkAndNotify(
+      payload.tripId,
+      { latitude: payload.latitude, longitude: payload.longitude }
+    ).catch((err: unknown) => {
+      logger.warn('GeofenceNotificationService.checkAndNotify error (suppressed)', {
+        tripId: payload.tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
 

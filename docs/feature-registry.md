@@ -26,21 +26,21 @@
 | **Phase 16** | Core | Trip Engine | **Trip Engine (16.1–16.5)**: Trip state machine (`SCHEDULED`, `IN_TRANSIT`, `DELAYED`, `ARRIVED_SCHOOL`, `COMPLETED`, `CANCELLED`, `EMERGENCY`), Migration 016 (`ARRIVED_SCHOOL`), daily trip creation, conflict validation, trip start/end timestamps, tracking session activation/deactivation, attendance locking, and idempotency guards. | Phase 15 | **Done** |
 | **Phase 17** | Supporting | Driver WhatsApp | **Driver WhatsApp Core (17.1–17.4)**: Driver WhatsApp operational menu (Start, End, Student Search, Report Problem, Emergency, Help), Start Trip flow, End Trip flow, error handling, command deduplication & fallback recovery. | Phase 16 | **Done** |
 | **Phase 18.1** | Safety | Driver Attendance | **Driver Attendance: Registered Student List**: Assigned bus student roster query, pickup stop sequence ordering, pickup location details, parent contact, attendance badges, Flutter manifest sheet, WhatsApp text manifest formatting. | Phase 17 | **Done** |
-| **Phase 18.2–18.4** | Safety | Driver Attendance | **Boarding & Drop Logging, Journey History**: Marking individual boarding/drop events, absent status, and attendance correction logs. | Phase 18.1 | *Planned* |
-| **Phase 19** | Supporting | Student Search | **Driver Student Search**: Quick search by name or stop via WhatsApp & driver app. | Phase 18.1 | *Planned* |
-| **Phase 20** | Core | ETA Engine | **Dynamic ETA Prediction Engine**: Route stop ETA calculation, speed smoothing, real-time recalculation. | Phase 13, 16 | *Planned* |
+| **Phase 18.2–18.4** | Safety | Driver Attendance | **Boarding & Drop Logging, Journey History**: Marking individual boarding/drop events, absent status, and attendance correction logs. | Phase 18.1 | **Done** |
+| **Phase 19** | Supporting | Student Search | **Driver Student Search**: Quick search by name or stop via WhatsApp & driver app. Schema-validated query, ILIKE name search, stop-name filter, role-scoped result. | Phase 18.1 | **Done** |
+| **Phase 20** | Core | ETA Engine | **Dynamic ETA Prediction Engine (20.1–20.3)**: Input context assembly (`EtaService.assembleContext`), per-stop ETA calculation with cumulative chaining + haversine fallback (`EtaService.calculateStopEtas`), fire-and-forget refresh on every GPS ping with exponential smoothing + jump-clamp + stopped-bus hold (`EtaRefreshService.scheduleRefresh`), `ETA_UPDATE` SSE broadcast, cache eviction on trip completion/cancellation. No new DB migrations. | Phase 13, 16 | **Done** |
 | **Phase 21** | Safety | Geofencing | **Geofencing & Boundary Alerts**: Pickup geofence arrival/departure triggers, school perimeter geofence. | Phase 2, 11 | *Planned* |
 | **Phase 22+** | Supporting | Parent WhatsApp | **Parent WhatsApp Bot & Notifications**: WhatsApp templates, proactive ETA updates, arrival alerts. | Phase 20, 21 | *Planned* |
 
 ---
 
-## Verified Build State (as of 2026-10-17)
+## Verified Build State (as of 2026-10-25)
 
 | Check | Result | Evidence |
 |---|---|---|
 | `npx tsc --noEmit -p backend/tsconfig.json` | ✅ Exit 0 | Clean TypeScript compile |
 | `npx tsc --noEmit -p school-dashboard/tsconfig.json` | ✅ Exit 0 | Clean TypeScript compile |
-| `npm test -w backend` | ✅ **524 tests, 61 files** | All passed |
+| `npm test -w backend` | ✅ **782 tests, 70 files** | All passed |
 | `npm run test:audit` | ✅ **25 tests** | All passed (logic + route-auth) |
 | `npx tsx --test audit-tests/consistency.test.ts` | ✅ **26 tests** | All passed (5 test suites) |
 | `node audit-tests/run-report.mjs` | ✅ **70+ E2E checks, 17 pipeline steps** | Real Docker PostGIS 16 + Redis |

@@ -21,6 +21,7 @@ import {
 } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
+import { EtaRefreshService } from './eta-refresh.service.js';
 
 export interface TripActorContext {
   schoolId?: string;
@@ -1085,6 +1086,11 @@ export class TripService {
       newState: { attendanceLocked: true, lockedAt: effectiveEndTime },
     });
 
+    // 9. Phase 20.3 — Evict the in-memory ETA summary cache for this trip.
+    //    Prevents unbounded Map growth as completed trips accumulate in the process.
+    EtaRefreshService.evictCache(tripId);
+    logger.debug(`[TripService] ETA cache evicted for completed trip ${tripId}`);
+
     return this.getTripById(schoolId, tripId, actor);
   }
 
@@ -1299,6 +1305,9 @@ export class TripService {
         reason: reason.trim(),
       },
     });
+
+    // Phase 20.3 — Evict in-memory ETA cache for cancelled trip.
+    EtaRefreshService.evictCache(tripId);
 
     return this.getTripById(schoolId, tripId, actor);
   }
