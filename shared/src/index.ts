@@ -1826,6 +1826,7 @@ export interface ParentLiveTrackingSession {
       recordedAt: string;
     } | null;
   } | null;
+  parentEta?: ParentPickupEta | null;
 }
 
 /**
@@ -2151,6 +2152,60 @@ export const RouteEtaSummarySchema = z.object({
   calculatedAt: z.string().datetime(),
 });
 export type RouteEtaSummary = z.infer<typeof RouteEtaSummarySchema>;
+
+// =============================================================================
+// Phase 20.4 — Parent ETA Schemas
+// =============================================================================
+
+export const ParentEtaStatusSchema = z.enum([
+  'AVAILABLE',
+  'APPROACHING',
+  'PASSED',
+  'ARRIVED',
+  'UNAVAILABLE',
+]);
+export type ParentEtaStatus = z.infer<typeof ParentEtaStatusSchema>;
+
+export const ParentEtaUnavailableReasonSchema = z.enum([
+  'NO_ACTIVE_TRIP',
+  'TRIP_NOT_STARTED',
+  'TRIP_COMPLETED',
+  'TRIP_CANCELLED',
+  'GPS_UNAVAILABLE',
+  'NO_STOP_ASSIGNED',
+  'STOP_NOT_ON_ROUTE',
+  'STOP_ALREADY_PASSED',
+  'CALCULATION_PENDING',
+]);
+export type ParentEtaUnavailableReason = z.infer<typeof ParentEtaUnavailableReasonSchema>;
+
+export const ParentPickupEtaSchema = z.object({
+  tripId: z.string().uuid().nullable().optional(),
+  stopId: z.string().uuid().nullable().optional(),
+  stopName: z.string().nullable().optional(),
+  sequenceOrder: z.number().int().nullable().optional(),
+
+  // ETA metrics (when status is AVAILABLE or APPROACHING)
+  durationSeconds: z.number().int().min(0).nullable().optional(),
+  distanceMeters: z.number().min(0).nullable().optional(),
+  etaMinutes: z.number().int().min(0).nullable().optional(),
+  estimatedArrivalAt: z.string().datetime().nullable().optional(),
+
+  // Status & availability
+  status: ParentEtaStatusSchema,
+  isAvailable: z.boolean(),
+  unavailableReason: ParentEtaUnavailableReasonSchema.nullable().optional(),
+  unavailableMessage: z.string().nullable().optional(),
+
+  // Freshness & metadata
+  isApproaching: z.boolean(),
+  isPassed: z.boolean(),
+  isStoppedBus: z.boolean().optional(),
+  effectiveSpeedKmh: z.number().optional(),
+  lastUpdatedAt: z.string().datetime().nullable().optional(),
+  calculatedAt: z.string().datetime().nullable().optional(),
+});
+export type ParentPickupEta = z.infer<typeof ParentPickupEtaSchema>;
 
 export const SnapToRoadQuerySchema = z.object({
   points: z.array(GeoCoordinatesSchema).min(1),

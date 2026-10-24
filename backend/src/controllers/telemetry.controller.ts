@@ -265,4 +265,29 @@ export class TelemetryController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/eta/stops/:stopId
+   * Phase 20.4 — Return parent-specific pickup stop ETA for an admin/coordinator.
+   */
+  static async getStopEta(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId, stopId } = req.params as { tripId: string; stopId: string };
+      const schoolId: string = (req as any).user?.schoolId;
+
+      const parentEta = await EtaService.calculateParentEta({
+        tripId,
+        schoolId,
+        stopId,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Stop ETA retrieved successfully',
+        data: parentEta,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }

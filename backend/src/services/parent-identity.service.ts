@@ -20,6 +20,7 @@ import {
   normalizeIndianPhoneNumber,
   TripStatus,
   RouteType,
+  ParentPickupEta,
 } from '@school-bus/shared';
 import {
   NotFoundError,
@@ -28,6 +29,7 @@ import {
 } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
 import { AuditService } from './audit.service.js';
+import { EtaService } from './eta.service.js';
 
 export interface CreateTokenParams {
   parentId: string;
@@ -436,6 +438,52 @@ export class ParentIdentityService {
       };
     }
 
+    // Phase 20.4 — Calculate parent-specific ETA for this session
+    let parentEta: ParentPickupEta | null = null;
+    if (activeTrip && row.stop_id) {
+      try {
+        parentEta = await EtaService.calculateParentEta({
+          tripId: activeTrip.id,
+          schoolId: token.school_id,
+          stopId: row.stop_id,
+        });
+      } catch (err: any) {
+        logger.warn('[ParentIdentityService] Failed to calculate parent ETA for session', {
+          tripId: activeTrip.id,
+          stopId: row.stop_id,
+          error: err.message,
+        });
+        parentEta = EtaService.getUnavailableParentEta(
+          'CALCULATION_PENDING',
+          'Calculating estimated arrival time...',
+          {
+            tripId: activeTrip.id,
+            stopId: row.stop_id,
+            stopName: row.stop_name,
+            sequenceOrder: row.sequence_order,
+          }
+        );
+      }
+    } else if (row.stop_id) {
+      parentEta = EtaService.getUnavailableParentEta(
+        'NO_ACTIVE_TRIP',
+        'No trip currently in progress for your student. Live ETA will activate automatically when a trip begins.',
+        {
+          stopId: row.stop_id,
+          stopName: row.stop_name,
+          sequenceOrder: row.sequence_order,
+        }
+      );
+    } else {
+      parentEta = EtaService.getUnavailableParentEta(
+        'NO_STOP_ASSIGNED',
+        'No pickup stop has been assigned for this student.',
+        {
+          tripId: activeTrip?.id ?? null,
+        }
+      );
+    }
+
     return {
       isValid: true,
       expiresAt: expiresAt.toISOString(),
@@ -473,6 +521,7 @@ export class ParentIdentityService {
           }
         : null,
       activeTrip,
+      parentEta,
     };
   }
 

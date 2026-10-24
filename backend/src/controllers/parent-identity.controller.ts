@@ -7,6 +7,7 @@ import {
 } from '@school-bus/shared';
 import { ParentIdentityService } from '../services/parent-identity.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
+import { EtaService } from '../services/eta.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 
 
@@ -169,7 +170,7 @@ export class ParentIdentityController {
       // Set SSE headers
       RealtimeFeedService.initSseStream(res);
 
-      // Send initial state with the last known GPS location from the session
+      // Send initial state with the last known GPS location and parentEta from the session
       RealtimeFeedService.sendSseMessage(res, 'initial_state', {
         tripId,
         busNumber,
@@ -178,11 +179,34 @@ export class ParentIdentityController {
         lastGpsLocation: session.activeTrip.lastGpsLocation ?? null,
         tripStatus: session.activeTrip.status,
         delayMinutes: session.activeTrip.delayMinutes,
+        parentEta: session.parentEta ?? null,
       });
 
-      // Subscribe to trip channel — only this trip's events will be forwarded
+      // Subscribe to trip channel — forward location updates and ETA updates
       const unsubscribe = RealtimeFeedService.subscribeTrip(tripId, (event) => {
-        RealtimeFeedService.sendSseMessage(res, 'location_update', event);
+        if (event.type === 'ETA_UPDATE' && event.etaSummary) {
+          const parentEta = session.pickupStop
+            ? EtaService.extractParentEtaFromSummary(
+                event.etaSummary,
+                session.pickupStop.id,
+                session.pickupStop.stopName,
+                session.pickupStop.sequenceOrder,
+                session.pickupStop.geofenceRadiusMeters
+              )
+            : null;
+
+          RealtimeFeedService.sendSseMessage(res, 'eta_update', {
+            type: 'ETA_UPDATE',
+            tripId,
+            parentEta,
+            etaSummary: event.etaSummary,
+            isStoppedBus: event.isStoppedBus ?? false,
+            timestamp: event.timestamp,
+            recordedAt: event.recordedAt,
+          });
+        } else {
+          RealtimeFeedService.sendSseMessage(res, 'location_update', event);
+        }
       });
 
       const heartbeatInterval = setInterval(() => {
@@ -194,6 +218,48 @@ export class ParentIdentityController {
         unsubscribe();
         res.end();
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Phase 20.4 — GET /api/v1/parent/eta (or /eta/:token)
+   * Return parent-specific pickup stop ETA for the authenticated tracking session.
+   */
+  public static async getParentEta(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession || (req as any).parentSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      if (!session.activeTrip) {
+        const unavailable = EtaService.getUnavailableParentEta(
+          'NO_ACTIVE_TRIP',
+          'No trip currently in progress for your student. Live ETA will activate automatically when a trip begins.',
+          {
+            stopId: session.pickupStop?.id,
+            stopName: session.pickupStop?.stopName,
+            sequenceOrder: session.pickupStop?.sequenceOrder,
+          }
+        );
+        sendSuccess(res, unavailable, 'Parent ETA retrieved successfully');
+        return;
+      }
+
+      const parentEta = await EtaService.calculateParentEta({
+        tripId: session.activeTrip.id,
+        schoolId: session.school.id,
+        stopId: session.pickupStop?.id,
+      });
+
+      sendSuccess(res, parentEta, 'Parent ETA retrieved successfully');
     } catch (error) {
       next(error);
     }

@@ -90,6 +90,19 @@ parentRouter.get(
   ParentIdentityController.streamParentBusFeed
 );
 
+// 5b. Phase 20.4 — Parent Pickup Stop ETA Endpoint
+parentRouter.get(
+  '/eta/:token',
+  authenticateParentTrackingToken,
+  ParentIdentityController.getParentEta
+);
+
+parentRouter.get(
+  '/eta',
+  authenticateParentTrackingToken,
+  ParentIdentityController.getParentEta
+);
+
 // 6. Public Onboarding Verification & Activation (handles valid/expired/revoked/invalid tokens)
 parentRouter.get(
   '/onboard/verify',

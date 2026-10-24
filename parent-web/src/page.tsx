@@ -87,6 +87,41 @@ interface TrackingSession {
   school: { id: string; name: string; code: string; timezone: string };
   pickupStop?: PickupStop | null;
   activeTrip?: ActiveTrip | null;
+  parentEta?: ParentPickupEta | null;
+}
+
+export type ParentEtaStatus = 'AVAILABLE' | 'APPROACHING' | 'PASSED' | 'ARRIVED' | 'UNAVAILABLE';
+
+export type ParentEtaUnavailableReason =
+  | 'NO_ACTIVE_TRIP'
+  | 'TRIP_NOT_STARTED'
+  | 'TRIP_COMPLETED'
+  | 'TRIP_CANCELLED'
+  | 'GPS_UNAVAILABLE'
+  | 'NO_STOP_ASSIGNED'
+  | 'STOP_NOT_ON_ROUTE'
+  | 'STOP_ALREADY_PASSED'
+  | 'CALCULATION_PENDING';
+
+export interface ParentPickupEta {
+  tripId?: string | null;
+  stopId?: string | null;
+  stopName?: string | null;
+  sequenceOrder?: number | null;
+  durationSeconds?: number | null;
+  distanceMeters?: number | null;
+  etaMinutes?: number | null;
+  estimatedArrivalAt?: string | null;
+  status: ParentEtaStatus;
+  isAvailable: boolean;
+  unavailableReason?: ParentEtaUnavailableReason | null;
+  unavailableMessage?: string | null;
+  isApproaching: boolean;
+  isPassed: boolean;
+  isStoppedBus?: boolean;
+  effectiveSpeedKmh?: number;
+  lastUpdatedAt?: string | null;
+  calculatedAt?: string | null;
 }
 
 // SSE event from /api/v1/parent/feed/:token
@@ -99,21 +134,11 @@ interface SseFeedEvent {
   bearingDegrees?: number | null;
   tripStatus?: TripStatus;
   delayMinutes?: number;
-  eta?: EtaSummary | null;
+  parentEta?: ParentPickupEta | null;
+  etaSummary?: any | null;
+  isStoppedBus?: boolean;
   recordedAt?: string;
-}
-
-interface EtaStop {
-  stopId: string;
-  stopName: string;
-  sequenceOrder: number;
-  etaMinutes: number | null;
-  etaTimestamp: string | null;
-}
-
-interface EtaSummary {
-  stops: EtaStop[];
-  computedAt: string;
+  timestamp?: string;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -236,7 +261,9 @@ export default function ParentTrackPage() {
   const [liveLocation, setLiveLocation] = useState<GpsLocation | null>(null);
   const [liveStatus, setLiveStatus] = useState<TripStatus | null>(null);
   const [liveDelay, setLiveDelay] = useState<number>(0);
-  const [liveEta, setLiveEta] = useState<EtaSummary | null>(null);
+  const [liveParentEta, setLiveParentEta] = useState<ParentPickupEta | null>(null);
+  const [lastEtaUpdate, setLastEtaUpdate] = useState<string | null>(null);
+  const [isRefreshingEta, setIsRefreshingEta] = useState<boolean>(false);
   const [sseConnected, setSseConnected] = useState<boolean>(false);
   const [lastHeard, setLastHeard] = useState<string | null>(null);
 
@@ -279,6 +306,13 @@ export default function ParentTrackPage() {
         setPageState({ phase: 'ready', session });
 
         // Seed live state from session snapshot
+        if (session.parentEta) {
+          setLiveParentEta(session.parentEta);
+          if (session.parentEta.lastUpdatedAt) {
+            setLastEtaUpdate(session.parentEta.lastUpdatedAt);
+          }
+        }
+
         if (session.activeTrip) {
           setLiveStatus(session.activeTrip.status);
           setLiveDelay(session.activeTrip.delayMinutes);
@@ -331,10 +365,19 @@ export default function ParentTrackPage() {
           }
           if (evt.tripStatus) setLiveStatus(evt.tripStatus);
           if (evt.delayMinutes != null) setLiveDelay(evt.delayMinutes);
+          if (evt.parentEta) {
+            setLiveParentEta(evt.parentEta);
+            if (evt.parentEta.lastUpdatedAt) {
+              setLastEtaUpdate(evt.parentEta.lastUpdatedAt);
+            }
+          }
         }
 
-        if (evt.type === 'ETA_UPDATE' && evt.eta) {
-          setLiveEta(evt.eta);
+        if (evt.type === 'ETA_UPDATE') {
+          if (evt.parentEta) {
+            setLiveParentEta(evt.parentEta);
+            setLastEtaUpdate(evt.parentEta.lastUpdatedAt ?? evt.recordedAt ?? new Date().toISOString());
+          }
         }
       } catch {
         // malformed message — ignore
@@ -362,6 +405,28 @@ export default function ParentTrackPage() {
       reconnectTimer.current = setTimeout(() => connectSse(), delay);
     };
   }, [token]);
+
+  // Manual ETA pull
+  const refreshEta = async () => {
+    if (!token) return;
+    setIsRefreshingEta(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/parent/eta/${encodeURIComponent(token)}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { data: ParentPickupEta };
+        if (json.data) {
+          setLiveParentEta(json.data);
+          if (json.data.lastUpdatedAt) setLastEtaUpdate(json.data.lastUpdatedAt);
+        }
+      }
+    } catch {
+      // Ignore transient network errors
+    } finally {
+      setIsRefreshingEta(false);
+    }
+  };
 
   useEffect(() => {
     if (pageState.phase !== 'ready') return;
@@ -391,10 +456,8 @@ export default function ParentTrackPage() {
   const tz = session?.school.timezone ?? 'Asia/Kolkata';
   const statusMeta = STATUS_META[effectiveStatus];
 
-  // Find ETA for this parent's pickup stop
-  const pickupEta: EtaStop | null = liveEta && session?.pickupStop
-    ? liveEta.stops.find((s) => s.stopName === session.pickupStop?.stopName) ?? null
-    : null;
+  // Effective Parent Pickup ETA
+  const effectiveEta: ParentPickupEta | null = liveParentEta ?? session?.parentEta ?? null;
 
   // ── 4. Render states ──────────────────────────────────────
 
@@ -531,10 +594,32 @@ export default function ParentTrackPage() {
 
             {/* ETA card */}
             {pickupStop && (
-              <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-2">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  Your pickup stop
-                </p>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-sky-600" />
+                    Pickup Stop ETA
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {lastEtaUpdate && (
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Updated {fmtRelative(lastEtaUpdate)}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={refreshEta}
+                      disabled={isRefreshingEta}
+                      className="text-slate-400 hover:text-sky-600 p-0.5 rounded transition-colors disabled:opacity-50"
+                      title="Refresh ETA"
+                      aria-label="Refresh ETA"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isRefreshingEta ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Stop info & primary ETA */}
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-slate-800 text-sm">
@@ -544,24 +629,76 @@ export default function ParentTrackPage() {
                       Scheduled: {fmtTime(pickupStop.scheduledTime, tz)}
                     </p>
                   </div>
+
                   <div className="text-right flex-shrink-0">
-                    {pickupEta && pickupEta.etaMinutes != null ? (
-                      <>
-                        <p className="text-2xl font-black text-sky-600 tabular-nums leading-none">
-                          {pickupEta.etaMinutes}
-                          <span className="text-sm font-semibold text-sky-500 ml-0.5">min</span>
+                    {effectiveEta?.isAvailable && effectiveEta.etaMinutes != null ? (
+                      <div>
+                        <div className="flex items-baseline justify-end gap-1">
+                          <p className="text-3xl font-black text-sky-600 tabular-nums leading-none">
+                            {effectiveEta.durationSeconds != null && effectiveEta.durationSeconds < 60
+                              ? '< 1'
+                              : effectiveEta.etaMinutes}
+                          </p>
+                          <span className="text-sm font-bold text-sky-500">min</span>
+                        </div>
+                        <p className="text-[11px] font-medium text-slate-500 mt-1">
+                          Arriving ~{fmtTime(effectiveEta.estimatedArrivalAt, tz)}
                         </p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          {pickupEta.etaTimestamp
-                            ? fmtTime(pickupEta.etaTimestamp, tz)
-                            : 'ETA'}
-                        </p>
-                      </>
+                        {effectiveEta.distanceMeters != null && (
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {effectiveEta.distanceMeters >= 1000
+                              ? `${(effectiveEta.distanceMeters / 1000).toFixed(1)} km away`
+                              : `${Math.round(effectiveEta.distanceMeters)} m away`}
+                          </p>
+                        )}
+                      </div>
                     ) : (
-                      <p className="text-xs text-slate-400 font-medium pt-1">Calculating…</p>
+                      <div className="text-right">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            effectiveEta?.status === 'PASSED'
+                              ? 'bg-slate-100 text-slate-600'
+                              : effectiveEta?.unavailableReason === 'GPS_UNAVAILABLE'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
+                          {effectiveEta?.status === 'PASSED'
+                            ? 'Passed'
+                            : effectiveEta?.unavailableReason === 'TRIP_NOT_STARTED'
+                            ? 'Scheduled'
+                            : effectiveEta?.unavailableReason === 'GPS_UNAVAILABLE'
+                            ? 'GPS Offline'
+                            : 'Pending'}
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
+
+                {/* Contextual notice banners */}
+                {effectiveEta?.isApproaching && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 flex items-center gap-2 text-xs text-emerald-800 animate-pulse">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+                    <span className="font-medium">
+                      The bus is approaching {pickupStop.stopName}! Please be ready at the stop.
+                    </span>
+                  </div>
+                )}
+
+                {effectiveEta?.isStoppedBus && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-center gap-2 text-xs text-amber-800">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                    <span>The bus is currently stationary (traffic hold applied to ETA).</span>
+                  </div>
+                )}
+
+                {!effectiveEta?.isAvailable && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-600 leading-relaxed">
+                    {effectiveEta?.unavailableMessage ??
+                      'Live arrival estimate is currently unavailable. Scheduled pickup is active.'}
+                  </div>
+                )}
               </div>
             )}
 

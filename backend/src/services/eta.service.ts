@@ -27,6 +27,10 @@ import {
   RouteEtaSummary,
   RouteEtaSummarySchema,
   StopEtaResultSchema,
+  ParentPickupEta,
+  ParentPickupEtaSchema,
+  ParentEtaStatus,
+  ParentEtaUnavailableReason,
   calculateHaversineDistanceMeters,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
@@ -73,6 +77,7 @@ interface BusLocationRow {
 
 interface StopRow {
   id: string;
+  route_id?: string;
   stop_name: string;
   sequence_order: number;
   latitude: number;
@@ -393,5 +398,240 @@ export class EtaService {
   ): Promise<RouteEtaSummary> {
     const context = await EtaService.assembleContext(tripId, schoolId);
     return EtaService.calculateStopEtas(context);
+  }
+
+  /**
+   * Phase 20.4 — Calculate parent-specific ETA for a student's pickup stop.
+   * Handles unavailable states (trip not started, stop passed, GPS offline, etc.)
+   */
+  static async calculateParentEta(params: {
+    tripId: string;
+    schoolId: string;
+    stopId?: string | null;
+    cachedSummary?: RouteEtaSummary | null;
+  }): Promise<ParentPickupEta> {
+    const { tripId, schoolId, stopId } = params;
+
+    // 1. If student has no stop assigned
+    if (!stopId) {
+      return EtaService.getUnavailableParentEta(
+        'NO_STOP_ASSIGNED',
+        'No pickup stop has been assigned for this student.',
+        { tripId }
+      );
+    }
+
+    // 2. Fetch trip info
+    const tripRows = await query<TripRow>(
+      `SELECT id, school_id, bus_id, route_id, status, current_stop_sequence, actual_start_time
+       FROM trips
+       WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL
+       LIMIT 1`,
+      [tripId, schoolId]
+    );
+
+    if (tripRows.length === 0) {
+      throw new NotFoundError(`Trip ${tripId} not found for school ${schoolId}`);
+    }
+
+    const trip = tripRows[0]!;
+
+    // 3. Handle non-running trip statuses
+    if (trip.status === 'SCHEDULED') {
+      return EtaService.getUnavailableParentEta(
+        'TRIP_NOT_STARTED',
+        'The bus has not started this trip yet. Live ETA will activate once the journey begins.',
+        { tripId: trip.id, stopId }
+      );
+    }
+
+    if (trip.status === 'COMPLETED') {
+      return EtaService.getUnavailableParentEta(
+        'TRIP_COMPLETED',
+        'This trip has been completed.',
+        { tripId: trip.id, stopId }
+      );
+    }
+
+    if (trip.status === 'CANCELLED') {
+      return EtaService.getUnavailableParentEta(
+        'TRIP_CANCELLED',
+        'This trip was cancelled.',
+        { tripId: trip.id, stopId }
+      );
+    }
+
+    // 4. Fetch stop info
+    const stopRows = await query<StopRow>(
+      `SELECT id, route_id, stop_name, sequence_order, geofence_radius_meters
+       FROM pickup_locations
+       WHERE id = $1 AND deleted_at IS NULL
+       LIMIT 1`,
+      [stopId]
+    );
+
+    if (stopRows.length === 0 || stopRows[0]!.route_id !== trip.route_id) {
+      return EtaService.getUnavailableParentEta(
+        'STOP_NOT_ON_ROUTE',
+        'Assigned pickup stop is not part of this trip route.',
+        { tripId: trip.id, stopId }
+      );
+    }
+
+    const stop = stopRows[0]!;
+
+    // 5. Check if the stop was already completed or passed
+    const currentSeq = trip.current_stop_sequence ?? 0;
+    if (stop.sequence_order <= currentSeq) {
+      const now = new Date().toISOString();
+      return ParentPickupEtaSchema.parse({
+        tripId: trip.id,
+        stopId: stop.id,
+        stopName: stop.stop_name,
+        sequenceOrder: stop.sequence_order,
+        durationSeconds: null,
+        distanceMeters: null,
+        etaMinutes: null,
+        estimatedArrivalAt: null,
+        status: 'PASSED',
+        isAvailable: false,
+        unavailableReason: 'STOP_ALREADY_PASSED',
+        unavailableMessage: `The bus has already passed ${stop.stop_name}.`,
+        isApproaching: false,
+        isPassed: true,
+        lastUpdatedAt: now,
+        calculatedAt: now,
+      });
+    }
+
+    // 6. Stop is upcoming — retrieve route summary (cached or newly calculated)
+    let summary: RouteEtaSummary | null = params.cachedSummary ?? null;
+
+    if (!summary) {
+      try {
+        const { EtaRefreshService } = await import('./eta-refresh.service.js');
+        summary = EtaRefreshService.getCachedSummary(trip.id);
+      } catch {
+        // Ignore import/cache error and recalculate below
+      }
+    }
+
+    if (!summary) {
+      summary = await EtaService.calculateTripEta(trip.id, trip.school_id);
+    }
+
+    return EtaService.extractParentEtaFromSummary(
+      summary,
+      stop.id,
+      stop.stop_name,
+      stop.sequence_order,
+      stop.geofence_radius_meters
+    );
+  }
+
+  /**
+   * Phase 20.4 — Synchronously extract a ParentPickupEta from a RouteEtaSummary.
+   * Used by SSE subscribers and direct handlers when a summary is already in hand.
+   */
+  static extractParentEtaFromSummary(
+    summary: RouteEtaSummary,
+    stopId: string,
+    stopName?: string | null,
+    sequenceOrder?: number | null,
+    geofenceRadiusMeters?: number | null
+  ): ParentPickupEta {
+    const targetStop = summary.stopEtas.find((s) => s.stopId === stopId);
+
+    if (!targetStop) {
+      return ParentPickupEtaSchema.parse({
+        tripId: summary.tripId,
+        stopId,
+        stopName: stopName ?? null,
+        sequenceOrder: sequenceOrder ?? null,
+        durationSeconds: null,
+        distanceMeters: null,
+        etaMinutes: null,
+        estimatedArrivalAt: null,
+        status: 'UNAVAILABLE',
+        isAvailable: false,
+        unavailableReason: 'CALCULATION_PENDING',
+        unavailableMessage: 'Calculating live estimated arrival time...',
+        isApproaching: false,
+        isPassed: false,
+        effectiveSpeedKmh: summary.effectiveSpeedKmh,
+        calculatedAt: summary.calculatedAt,
+        lastUpdatedAt: summary.calculatedAt,
+      });
+    }
+
+    const durationSeconds = Math.max(0, targetStop.durationSeconds);
+    const distanceMeters = Math.max(0, targetStop.distanceMeters);
+    const etaMinutes =
+      durationSeconds < 60 ? (durationSeconds === 0 ? 0 : 1) : Math.round(durationSeconds / 60);
+
+    const approachRadius = geofenceRadiusMeters ?? 500;
+    // Approaching if duration is <= 5 minutes (300 seconds) OR within approach radius
+    const isApproaching = durationSeconds <= 300 || distanceMeters <= approachRadius;
+    const status: ParentEtaStatus = isApproaching ? 'APPROACHING' : 'AVAILABLE';
+    const isStoppedBus =
+      summary.speedSource === 'fallback' ? false : summary.effectiveSpeedKmh <= 2;
+
+    return ParentPickupEtaSchema.parse({
+      tripId: summary.tripId,
+      stopId: targetStop.stopId,
+      stopName: targetStop.stopName,
+      sequenceOrder: targetStop.sequenceOrder,
+      durationSeconds,
+      distanceMeters,
+      etaMinutes,
+      estimatedArrivalAt: targetStop.estimatedArrivalAt,
+      status,
+      isAvailable: true,
+      unavailableReason: null,
+      unavailableMessage: null,
+      isApproaching,
+      isPassed: false,
+      isStoppedBus,
+      effectiveSpeedKmh: summary.effectiveSpeedKmh,
+      lastUpdatedAt: summary.calculatedAt,
+      calculatedAt: summary.calculatedAt,
+    });
+  }
+
+  /**
+   * Phase 20.4 — Helper for constructing typed unavailable ParentPickupEta records.
+   */
+  static getUnavailableParentEta(
+    reason: ParentEtaUnavailableReason,
+    message: string,
+    params?: {
+      tripId?: string | null;
+      stopId?: string | null;
+      stopName?: string | null;
+      sequenceOrder?: number | null;
+    }
+  ): ParentPickupEta {
+    const isPassed = reason === 'STOP_ALREADY_PASSED';
+    const status: ParentEtaStatus = isPassed ? 'PASSED' : 'UNAVAILABLE';
+    const now = new Date().toISOString();
+
+    return ParentPickupEtaSchema.parse({
+      tripId: params?.tripId ?? null,
+      stopId: params?.stopId ?? null,
+      stopName: params?.stopName ?? null,
+      sequenceOrder: params?.sequenceOrder ?? null,
+      durationSeconds: null,
+      distanceMeters: null,
+      etaMinutes: null,
+      estimatedArrivalAt: null,
+      status,
+      isAvailable: false,
+      unavailableReason: reason,
+      unavailableMessage: message,
+      isApproaching: false,
+      isPassed,
+      lastUpdatedAt: now,
+      calculatedAt: now,
+    });
   }
 }

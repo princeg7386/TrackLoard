@@ -115,4 +115,13 @@ telemetryRouter.get(
   TelemetryController.getTripEta
 );
 
+// 11. Phase 20.4 — Stop-specific ETA for school admin/coordinator inspection.
+telemetryRouter.get(
+  '/trips/:tripId/eta/stops/:stopId',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getStopEta
+);
+
 export default telemetryRouter;
