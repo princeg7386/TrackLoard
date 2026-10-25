@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   ParentWhatsAppInboundRequestSchema,
   ParentWhatsAppActionExecuteRequestSchema,
+  ParentPickupUpdateRequestSchema,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { ParentWhatsappController } from '../controllers/parent-whatsapp.controller.js';
@@ -38,5 +39,14 @@ parentWhatsappRouter.get('/eta', ParentWhatsappController.getMyEta);
 // 7. My Child direct query (Micro-Phase 22.4)
 parentWhatsappRouter.get('/child', ParentWhatsappController.getMyChild);
 
+// 8. My Pickup queries & updates (Micro-Phase 22.5)
+parentWhatsappRouter.get('/pickup', ParentWhatsappController.getMyPickup);
+parentWhatsappRouter.post(
+  '/pickup/update',
+  validateBody(ParentPickupUpdateRequestSchema),
+  ParentWhatsappController.updatePickup
+);
+
 export default parentWhatsappRouter;
+
 

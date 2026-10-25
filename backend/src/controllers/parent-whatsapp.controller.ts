@@ -235,5 +235,73 @@ export class ParentWhatsappController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/parent/whatsapp/pickup
+   * Retrieves comprehensive My Pickup details (Micro-phase 22.5: View Pickup)
+   */
+  public static async getMyPickup(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const phone = req.query.phone as string | undefined;
+      const schoolId = req.query.schoolId as string | undefined;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number query parameter is required');
+      }
+
+      const result = await ParentWhatsappService.getMyPickupDetails(phone, schoolId);
+      if (!result) {
+        throw new NotFoundError(`Parent not found for phone number: ${phone}`);
+      }
+
+      sendSuccess(res, result, 'Parent My Pickup details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/parent/whatsapp/pickup/update
+   * Requests/executes an updated pickup stop location (Micro-phase 22.5: Request pickup update flow)
+   */
+  public static async updatePickup(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { phone, latitude, longitude, stopName, landmark, schoolId } = req.body;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number is required');
+      }
+      if (latitude === undefined || longitude === undefined) {
+        throw new BadRequestError('Latitude and longitude coordinates are required');
+      }
+
+      const result = await ParentWhatsappService.requestPickupUpdate({
+        phone,
+        latitude,
+        longitude,
+        stopName,
+        landmark,
+        schoolId,
+      });
+
+      sendSuccess(
+        res,
+        result,
+        result.success
+          ? 'Pickup stop updated successfully'
+          : 'Unable to update pickup location'
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

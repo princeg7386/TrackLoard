@@ -3848,6 +3848,14 @@ export const ParentWhatsAppInboundRequestSchema = z.object({
   text: z.string().optional(),
   action: z.nativeEnum(ParentWhatsAppAction).optional(),
   schoolId: z.string().uuid().optional(),
+  location: z
+    .object({
+      latitude: z.number().min(-90).max(90),
+      longitude: z.number().min(-180).max(180),
+      name: z.string().optional().nullable(),
+      address: z.string().optional().nullable(),
+    })
+    .optional(),
 });
 export type ParentWhatsAppInboundRequest = z.infer<typeof ParentWhatsAppInboundRequestSchema>;
 
@@ -4081,6 +4089,76 @@ export const ParentMyChildResponseSchema = z.object({
   formattedMessage: z.string(),
 });
 export type ParentMyChildResponse = z.infer<typeof ParentMyChildResponseSchema>;
+
+/**
+ * Phase 22.5: Parent WhatsApp My Pickup Schemas
+ */
+export const ParentMyPickupResponseSchema = z.object({
+  student: z.object({
+    id: z.string(),
+    fullName: z.string(),
+    admissionNumber: z.string().optional().nullable(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+  }),
+  school: z.object({
+    id: z.string(),
+    name: z.string(),
+    emergencyContactPhone: z.string().optional().nullable(),
+  }),
+  pickupStop: z
+    .object({
+      id: z.string(),
+      stopName: z.string(),
+      scheduledTime: z.string().optional().nullable(),
+      sequenceOrder: z.number().int().optional().nullable(),
+      geofenceRadiusMeters: z.number().optional().nullable(),
+      latitude: z.number().optional().nullable(),
+      longitude: z.number().optional().nullable(),
+      coordinatesFormatted: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  route: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      code: z.string().optional().nullable(),
+      totalStops: z.number().int().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  updateFlow: z.object({
+    instructions: z.string(),
+    canUpdate: z.boolean().default(true),
+    whatsappCommand: z.string().default('Share GPS Location Pin'),
+  }),
+  formattedMessage: z.string(),
+});
+export type ParentMyPickupResponse = z.infer<typeof ParentMyPickupResponseSchema>;
+
+export const ParentPickupUpdateRequestSchema = z.object({
+  phone: z.string().min(6),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  stopName: z.string().max(100).optional().nullable(),
+  landmark: z.string().max(100).optional().nullable(),
+  schoolId: z.string().uuid().optional(),
+});
+export type ParentPickupUpdateRequest = z.infer<typeof ParentPickupUpdateRequestSchema>;
+
+export const ParentPickupUpdateResultSchema = z.object({
+  success: z.boolean(),
+  studentId: z.string(),
+  studentName: z.string(),
+  pickupStopId: z.string(),
+  pickupStopName: z.string(),
+  latitude: z.number(),
+  longitude: z.number(),
+  reusedExistingStop: z.boolean(),
+  formattedMessage: z.string(),
+});
+export type ParentPickupUpdateResult = z.infer<typeof ParentPickupUpdateResultSchema>;
 
 
 

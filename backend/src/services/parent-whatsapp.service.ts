@@ -7,6 +7,9 @@ import {
   ParentTrackBusResponse,
   ParentMyEtaResponse,
   ParentMyChildResponse,
+  ParentMyPickupResponse,
+  ParentPickupUpdateRequest,
+  ParentPickupUpdateResult,
   TripStatus,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -15,6 +18,8 @@ import { MessagingService } from './messaging/messaging.service.js';
 import { logger } from './logger.service.js';
 import { ParentIdentityService } from './parent-identity.service.js';
 import { EtaService } from './eta.service.js';
+import { DynamicPickupService } from './dynamic-pickup/dynamic-pickup.service.js';
+import { NotFoundError } from '../middlewares/error.middleware.js';
 import { env } from '../config/env.js';
 
 export interface ParentContextRecord {
@@ -1543,25 +1548,70 @@ export class ParentWhatsappService {
 
 
   /**
-   * Action 4: My Pickup
+   * Action 4: My Pickup (Phase 22.5: View Pickup)
    */
   public static async handleMyPickup(
-    parent: ParentContextRecord
+    parent: ParentContextRecord,
+    activeTrip?: ParentActiveTripContext | null
   ): Promise<{ replyText: string; data: any }> {
     const stop = parent.pickupStop;
 
     if (!stop) {
       const replyText =
-        `📍 *Pickup Stop Information*\n` +
+        `📍 *Assigned Pickup Stop*\n` +
         `Student: *${parent.studentName}*\n` +
-        `Assigned Stop: *No stop currently assigned*\n\n` +
-        `Please contact *${parent.schoolName}* transport administration to assign your pickup stop.\n` +
+        `Status: *No stop currently assigned* ⚠️\n\n` +
+        `Please contact *${parent.schoolName}* transport administration to assign your pickup stop, or share your live GPS location pin directly in this WhatsApp chat to submit a pickup location update.\n\n` +
         `_Reply *6* for school helpline details._`;
+
+      const fullData = {
+        student: {
+          id: parent.studentId,
+          fullName: parent.studentName,
+          admissionNumber: parent.admissionNumber || null,
+          classGrade: parent.classGrade || null,
+          section: parent.section || null,
+        },
+        school: {
+          id: parent.schoolId,
+          name: parent.schoolName,
+          emergencyContactPhone: parent.schoolEmergencyPhone || null,
+        },
+        pickupStop: null,
+        route: null,
+        updateFlow: {
+          instructions:
+            'Share your live WhatsApp GPS pin or submit coordinates to request a pickup point update.',
+          canUpdate: true,
+          whatsappCommand: 'Share GPS Location Pin',
+        },
+        formattedMessage: replyText,
+        // Backward-compatible properties:
+        stopAssigned: false,
+      };
 
       return {
         replyText,
-        data: { stopAssigned: false },
+        data: fullData,
       };
+    }
+
+    let coordinatesFormatted: string | null = null;
+    let coordsText = '';
+    if (
+      stop.latitude !== undefined &&
+      stop.longitude !== undefined &&
+      stop.latitude !== null &&
+      stop.longitude !== null
+    ) {
+      coordinatesFormatted = `${Number(stop.latitude).toFixed(4)}° N, ${Number(stop.longitude).toFixed(4)}° E`;
+      coordsText = `Coordinates: *${coordinatesFormatted}*\n`;
+    }
+
+    let routeText = '';
+    if (activeTrip?.routeName) {
+      const codeText = activeTrip.routeCode ? ` [${activeTrip.routeCode}]` : '';
+      routeText = `Route: *${activeTrip.routeName}${codeText}*\n`;
     }
 
     const scheduledTimeText = stop.scheduledTime
@@ -1570,28 +1620,189 @@ export class ParentWhatsappService {
     const radiusText = stop.geofenceRadiusMeters
       ? `Approach Radius: *${stop.geofenceRadiusMeters} meters*\n`
       : '';
+    const seqText = stop.sequenceOrder ? ` (Stop #${stop.sequenceOrder})` : '';
 
     const replyText =
       `📍 *Assigned Pickup Stop*\n` +
       `Student: *${parent.studentName}*\n` +
-      `Stop Name: *${stop.stopName}*\n` +
+      `Stop Name: *${stop.stopName}*${seqText}\n` +
       `${scheduledTimeText}` +
-      `${radiusText}\n` +
+      `${radiusText}` +
+      `${coordsText}` +
+      `${routeText}\n` +
       `Need to update or share your live GPS location for pickup?\n` +
       `_You can share your live GPS pin directly in this WhatsApp chat to submit a pickup location update._\n\n` +
       `_Reply *1* to view the stop on the live tracking map._`;
 
+    const fullData = {
+      student: {
+        id: parent.studentId,
+        fullName: parent.studentName,
+        admissionNumber: parent.admissionNumber || null,
+        classGrade: parent.classGrade || null,
+        section: parent.section || null,
+      },
+      school: {
+        id: parent.schoolId,
+        name: parent.schoolName,
+        emergencyContactPhone: parent.schoolEmergencyPhone || null,
+      },
+      pickupStop: {
+        id: stop.id,
+        stopName: stop.stopName,
+        scheduledTime: stop.scheduledTime || null,
+        sequenceOrder: stop.sequenceOrder || null,
+        geofenceRadiusMeters: stop.geofenceRadiusMeters || null,
+        latitude: stop.latitude !== undefined && stop.latitude !== null ? Number(stop.latitude) : null,
+        longitude: stop.longitude !== undefined && stop.longitude !== null ? Number(stop.longitude) : null,
+        coordinatesFormatted,
+      },
+      route: activeTrip?.routeId
+        ? {
+            id: activeTrip.routeId,
+            name: activeTrip.routeName || 'Assigned Route',
+            code: activeTrip.routeCode || null,
+            totalStops: activeTrip.totalStops || null,
+          }
+        : null,
+      updateFlow: {
+        instructions:
+          'Share your live WhatsApp GPS pin or submit new coordinates to request an updated pickup point.',
+        canUpdate: true,
+        whatsappCommand: 'Share GPS Location Pin',
+      },
+      formattedMessage: replyText,
+      // Backward-compatible properties:
+      stopAssigned: true,
+      stopId: stop.id,
+      stopName: stop.stopName,
+      scheduledTime: stop.scheduledTime,
+      radiusMeters: stop.geofenceRadiusMeters,
+    };
+
     return {
       replyText,
-      data: {
-        stopAssigned: true,
-        stopId: stop.id,
-        stopName: stop.stopName,
-        scheduledTime: stop.scheduledTime,
-        radiusMeters: stop.geofenceRadiusMeters,
-      },
+      data: fullData,
     };
   }
+
+  /**
+   * Action 4b: Request Pickup Update Flow (Phase 22.5)
+   * Validates new location coordinates and assigns or creates safe pickup point
+   */
+  public static async handlePickupLocationUpdate(
+    parent: ParentContextRecord,
+    params: {
+      latitude: number;
+      longitude: number;
+      stopName?: string;
+      landmark?: string;
+    }
+  ): Promise<ParentPickupUpdateResult> {
+    const { latitude, longitude, stopName, landmark } = params;
+
+    // 1. Validate coordinates against school catchment service area
+    const validation = await DynamicPickupService.validateCoordinates({
+      latitude,
+      longitude,
+      schoolId: parent.schoolId,
+      maxCatchmentKm: 35,
+    });
+
+    if (!validation.isValid) {
+      const distanceText =
+        validation.distanceToSchoolKm !== undefined ? ` (${validation.distanceToSchoolKm} km away)` : '';
+      const replyText =
+        `⚠️ *Unable to Update Pickup Location*\n` +
+        `Hello ${parent.parentName}. We received your location (${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E), ` +
+        `but it appears to be outside our bus service zone${distanceText}.\n\n` +
+        `Please contact *${parent.schoolName}* transport coordinator for assistance.\n` +
+        `_Reply *6* for help and helpline numbers._`;
+
+      return {
+        success: false,
+        studentId: parent.studentId,
+        studentName: parent.studentName,
+        pickupStopId: parent.pickupStop?.id || '',
+        pickupStopName: parent.pickupStop?.stopName || 'Current Stop',
+        latitude,
+        longitude,
+        reusedExistingStop: false,
+        formattedMessage: replyText,
+      };
+    }
+
+    // 2. Perform direct dynamic pickup update (Rule 3: no mandatory school approval)
+    const updateResult = await DynamicPickupService.updateStudentPickup(
+      {
+        studentId: parent.studentId,
+        schoolId: parent.schoolId,
+        latitude,
+        longitude,
+        stopName: stopName || validation.suggestedStopName || `${parent.studentName} Pickup Point`,
+        landmark: landmark || undefined,
+        notifyParent: false,
+      },
+      parent.schoolId
+    );
+
+    const replyText =
+      `✅ *Pickup Location Updated Successfully*\n` +
+      `Student: *${parent.studentName}*\n` +
+      `New Pickup Stop: *${updateResult.pickupStopName}*\n` +
+      `Coordinates: *${latitude.toFixed(4)}° N, ${longitude.toFixed(4)}° E*\n` +
+      `Distance to School: *${validation.distanceToSchoolKm || 0} km*\n\n` +
+      `Your pickup point has been updated. Live tracking will reflect this stop on your child's next route.\n\n` +
+      `_Reply *4* to view updated stop details or *1* to track your bus._`;
+
+    return {
+      success: true,
+      studentId: parent.studentId,
+      studentName: parent.studentName,
+      pickupStopId: updateResult.pickupStopId,
+      pickupStopName: updateResult.pickupStopName,
+      latitude,
+      longitude,
+      reusedExistingStop: updateResult.reusedExistingStop,
+      formattedMessage: replyText,
+    };
+  }
+
+  /**
+   * Retrieves comprehensive My Pickup details by phone number (Micro-phase 22.5)
+   */
+  public static async getMyPickupDetails(
+    phone: string,
+    schoolId?: string
+  ): Promise<ParentMyPickupResponse | null> {
+    const parent = await this.findParentByPhone(phone, schoolId);
+    if (!parent) {
+      return null;
+    }
+    const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
+    const result = await this.handleMyPickup(parent, activeTrip);
+    return result.data as ParentMyPickupResponse;
+  }
+
+  /**
+   * Executes pickup update request via direct API or coordinator action (Micro-phase 22.5)
+   */
+  public static async requestPickupUpdate(
+    params: ParentPickupUpdateRequest
+  ): Promise<ParentPickupUpdateResult> {
+    const parent = await this.findParentByPhone(params.phone, params.schoolId);
+    if (!parent) {
+      throw new NotFoundError(`Parent not found for phone number: ${params.phone}`);
+    }
+
+    return await this.handlePickupLocationUpdate(parent, {
+      latitude: params.latitude,
+      longitude: params.longitude,
+      stopName: params.stopName || undefined,
+      landmark: params.landmark || undefined,
+    });
+  }
+
 
   /**
    * Action 5: Notifications
@@ -1836,10 +2047,48 @@ export class ParentWhatsappService {
       };
     }
 
-    // 2. Resolve Active Trip Context
+    // 2. Direct GPS location submission via WhatsApp live location pin or API
+    if (
+      req.location &&
+      req.location.latitude !== undefined &&
+      req.location.longitude !== undefined
+    ) {
+      const updateResult = await this.handlePickupLocationUpdate(parent, {
+        latitude: req.location.latitude,
+        longitude: req.location.longitude,
+        stopName: req.location.name || undefined,
+        landmark: req.location.address || undefined,
+      });
+
+      let whatsappDelivered = false;
+      try {
+        const sendResult = await MessagingService.sendMessage({
+          recipientPhone: normalizedPhone,
+          directText: updateResult.formattedMessage,
+          recipientRole: 'PARENT',
+          schoolId: parent.schoolId,
+        });
+        whatsappDelivered = sendResult.status === 'sent' || sendResult.status === 'queued';
+      } catch (err: any) {
+        logger.warn(`Failed to dispatch WhatsApp reply to parent ${normalizedPhone}: ${err.message}`);
+      }
+
+      return {
+        handled: true,
+        parentId: parent.parentId,
+        studentId: parent.studentId,
+        schoolId: parent.schoolId,
+        actionTriggered: ParentWhatsAppAction.MY_PICKUP,
+        replyText: updateResult.formattedMessage,
+        data: updateResult as any,
+        whatsappDelivered,
+      };
+    }
+
+    // 3. Resolve Active Trip Context
     const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
 
-    // 3. Resolve Target Action
+    // 4. Resolve Target Action
     const targetAction: ParentWhatsAppAction | 'MENU' | 'UNKNOWN_COMMAND' =
       action || this.parseParentAction(text);
 
@@ -1866,7 +2115,7 @@ export class ParentWhatsappService {
         break;
       }
       case ParentWhatsAppAction.MY_PICKUP: {
-        const res = await this.handleMyPickup(parent);
+        const res = await this.handleMyPickup(parent, activeTrip);
         replyText = res.replyText;
         actionData = res.data;
         break;
@@ -1913,7 +2162,7 @@ export class ParentWhatsappService {
       }
     }
 
-    // 4. Send Outbound WhatsApp Reply
+    // 5. Send Outbound WhatsApp Reply
     let whatsappDelivered = false;
     try {
       const sendResult = await MessagingService.sendMessage({
@@ -1960,6 +2209,18 @@ export class ParentWhatsappService {
             const from = msg.from;
             let text = '';
 
+            if (msg.type === 'location' && msg.location && from) {
+              return await this.handleInboundMessage({
+                from,
+                location: {
+                  latitude: Number(msg.location.latitude),
+                  longitude: Number(msg.location.longitude),
+                  name: msg.location.name,
+                  address: msg.location.address,
+                },
+              });
+            }
+
             if (msg.type === 'text' && msg.text?.body) {
               text = msg.text.body;
             } else if (msg.type === 'interactive') {
@@ -1983,16 +2244,18 @@ export class ParentWhatsappService {
       }
     }
 
-    // 2. Direct format { from, text } for test simulator or generic provider
+    // 2. Direct format { from, text, location } for test simulator or generic provider
     if (body?.from) {
       return await this.handleInboundMessage({
         from: body.from,
         text: body.text,
         action: body.action,
         schoolId: body.schoolId,
+        location: body.location,
       });
     }
 
     return { handled: false };
   }
 }
+
