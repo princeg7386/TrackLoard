@@ -21,9 +21,10 @@ const migFiles = fs.readdirSync(path.join(ROOT, 'backend/src/db/migrations')).fi
 const migrations = migFiles.map((f) => raw(`backend/src/db/migrations/${f}`).replace(/--[^\n]*/g, '')).join('\n');
 const walk = (d: string): string[] => !exists(d) ? [] : fs.readdirSync(path.join(ROOT, d), { withFileTypes: true })
   .flatMap((e) => (e.isDirectory() ? walk(`${d}/${e.name}`) : [`${d}/${e.name}`]));
-const routeBlocks = (file: string) => read(file).split(/\n(?=\w+\.(?:get|post|put|patch|delete)\()/)
+const parseRouteBlocks = (src: string) => src.split(/\n(?=\w+\.(?:get|post|put|patch|delete)\()/)
   .map((b) => ({ b, m: b.match(/^\w+\.(get|post|put|patch|delete)\(\s*'([^']+)'/) })).filter((x) => x.m)
   .map(({ b, m }) => ({ method: m![1]!.toUpperCase(), path: m![2]!, block: b }));
+const routeBlocks = (file: string) => parseRouteBlocks(read(file));
 const method = (src: string, name: string) => {
   const i = src.search(new RegExp(`static async ${name}\\s*\\(`));
   if (i < 0) return '';
@@ -94,10 +95,63 @@ describe('Authorization depth (Phase 4.3 / 4.4) — guards must be real code', (
   test('revoke token checks the token belongs to the caller\'s school', () => {
     assert.match(method(pc, 'revokeToken'), /tenantSchoolId|user!?\??\.schoolId/, 'revokeToken(tokenOrId) has no school filter');
   });
+  const isParentAdminRoute = (routePath: string) => /(?:^|\/)(?:identity|token)(?:\/|$)/.test(routePath);
+
   test('parent admin routes restrict role', () => {
-    const weak = routeBlocks('backend/src/routes/parent-identity.routes.ts').filter((r) => /identity|token\//.test(r.path))
+    const weak = routeBlocks('backend/src/routes/parent-identity.routes.ts')
+      .filter((r) => isParentAdminRoute(r.path))
       .filter((r) => !/requireRoles|requirePermission/.test(r.block)).map((r) => r.path);
     assert.deepEqual(weak, []);
+  });
+
+  test('route segment boundary matching correctly discriminates parameters vs static admin segments', () => {
+    // 1. Parameter followed by another segment (e.g. :token/verify-entry) must NOT match as an admin segment
+    assert.equal(isParentAdminRoute('/track/:token/verify-entry'), false);
+    assert.equal(isParentAdminRoute('/api/v1/parent/track/:token/verify-entry'), false);
+
+    // 2. Normal parameter at the end of a route must NOT match
+    assert.equal(isParentAdminRoute('/track/:token'), false);
+    assert.equal(isParentAdminRoute('/:token'), false);
+
+    // 3. Static route segments must correctly match
+    assert.equal(isParentAdminRoute('/token/generate'), true);
+    assert.equal(isParentAdminRoute('/token/revoke'), true);
+    assert.equal(isParentAdminRoute('/identity/lookup'), true);
+
+    // 4. Genuinely protected route must still trigger the audit if incorrectly unprotected
+    const mockUnprotectedBlock = {
+      path: '/token/unprotected-admin-action',
+      block: "parentRouter.post('/token/unprotected-admin-action', handler);"
+    };
+    const isFlagged = isParentAdminRoute(mockUnprotectedBlock.path) &&
+      !/requireRoles|requirePermission/.test(mockUnprotectedBlock.block);
+    assert.ok(isFlagged, 'unprotected admin token route was not flagged by audit logic');
+
+    // 5. Parameter segment prefix (:token) is never confused with static segment
+    assert.equal(isParentAdminRoute('/:token/details'), false);
+    assert.equal(isParentAdminRoute('/token'), true);
+  });
+  test('unprotected administrative token route triggers audit failure during route block analysis', () => {
+    const mockRouterCode = [
+      "parentRouter.post('/token/generate', authenticateToken, requireRoles(['SCHOOL_ADMIN']), handler);",
+      "parentRouter.post('/token/unprotected-admin-action', authenticateToken, handler);",
+      "parentRouter.get('/track/:token/verify-entry', handler);",
+    ].join('\n');
+
+    const blocks = parseRouteBlocks(mockRouterCode);
+    const weak = blocks
+      .filter((r) => isParentAdminRoute(r.path))
+      .filter((r) => !/requireRoles|requirePermission/.test(r.block))
+      .map((r) => r.path);
+
+    // Genuinely unprotected admin route must be caught by the audit logic
+    assert.deepEqual(weak, ['/token/unprotected-admin-action']);
+
+    // Demonstrates that the standard audit assertion assert.deepEqual(weak, []) strictly fails
+    assert.throws(
+      () => assert.deepEqual(weak, []),
+      (err: any) => err instanceof assert.AssertionError
+    );
   });
   test('forgot-password returns the reset token only in NODE_ENV=test', () => {
     assert.doesNotMatch(read('backend/src/controllers/auth.controller.ts'), /NODE_ENV !== 'production' \? \{ devResetToken/);

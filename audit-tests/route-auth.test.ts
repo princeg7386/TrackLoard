@@ -16,7 +16,9 @@ const mounts: Record<string, string> = {
 const PUBLIC = new Set([
   'POST /api/v1/auth/login', 'POST /api/v1/auth/logout', 'POST /api/v1/auth/forgot-password', 'POST /api/v1/auth/reset-password',
   'POST /api/v1/driver/auth/login', 'POST /api/v1/driver/auth/logout',
-  'GET /api/v1/parent/track/:token', 'GET /api/v1/parent/track', 'GET /api/v1/parent/onboard/verify', 'POST /api/v1/parent/onboard/confirm',
+  'GET /api/v1/parent/track/:token', 'GET /api/v1/parent/track',
+  'GET /api/v1/parent/track/:token/verify-entry', 'GET /api/v1/parent/track/verify-entry',
+  'GET /api/v1/parent/onboard/verify', 'POST /api/v1/parent/onboard/confirm',
 ]);
 type R = { method: string; path: string; block: string };
 const routes: R[] = [];
@@ -50,4 +52,9 @@ test('driver login requires a secret (PIN/OTP), not only the phone number', () =
   const login = src.slice(src.indexOf('static async login('), src.indexOf('static async getDriverProfile'));
   const rejectsMissingSecret = /if\s*\(\s*!pin\s*&&\s*!licenseNumber|!driver\.pin_hash[\s\S]{0,80}throw|pin_hash\s*&&\s*!pin[\s\S]{0,80}throw/.test(login);
   assert.ok(rejectsMissingSecret, 'phone-only login succeeds: no throw when PIN and licence are both absent');
+});
+
+test('parent live web entry verification endpoints are allowlisted as intentionally public', () => {
+  assert.ok(PUBLIC.has('GET /api/v1/parent/track/:token/verify-entry'), 'GET /api/v1/parent/track/:token/verify-entry missing from PUBLIC allowlist');
+  assert.ok(PUBLIC.has('GET /api/v1/parent/track/verify-entry'), 'GET /api/v1/parent/track/verify-entry missing from PUBLIC allowlist');
 });

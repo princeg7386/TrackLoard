@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
 import '../services/auth_service.dart';
@@ -14,17 +15,24 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   final AuthService _authService = AuthService();
+  Timer? _sessionTimer;
 
   @override
   void initState() {
     super.initState();
-    _checkSession();
+    _sessionTimer = Timer(const Duration(milliseconds: 600), () {
+      _checkSession();
+    });
+  }
+
+  @override
+  void dispose() {
+    _sessionTimer?.cancel();
+    _sessionTimer = null;
+    super.dispose();
   }
 
   Future<void> _checkSession() async {
-    // Add brief smooth delay for splash experience
-    await Future.delayed(const Duration(milliseconds: 600));
-
     if (!mounted) return;
 
     final loggedIn = await _authService.isLoggedIn();

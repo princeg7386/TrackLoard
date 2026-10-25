@@ -29,8 +29,10 @@ class AppLifecycleManager with WidgetsBindingObserver {
   }
 
   void dispose() {
+    if (!_isInitialized) return;
     WidgetsBinding.instance.removeObserver(this);
     _deviceStatus.stopMonitoring();
+    _isInitialized = false;
   }
 
   @override
