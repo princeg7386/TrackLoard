@@ -5,8 +5,10 @@ import {
   AddRouteStopRequest,
   ReorderRouteStopsRequest,
   UpdateRouteStopRequest,
+  UpdateStopGeofenceRequest,
 } from '@school-bus/shared';
 import { RouteService } from '../services/route.service.js';
+import { GeofenceService } from '../services/geofence.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 
 export class RouteController {
@@ -207,6 +209,42 @@ export class RouteController {
       const actorUserRole = req.user?.role || undefined;
       const result = await RouteService.removeRouteStop(schoolId, routeId, stopId, actorSchoolId, actorUserId, actorUserRole);
       sendSuccess(res, result, 'Pickup stop removed successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/schools/:schoolId/routes/:routeId/stops/:stopId/geofence
+   * Retrieves stop geofence configuration (radius or polygon shape)
+   */
+  public static async getStopGeofence(
+    req: Request<{ schoolId: string; routeId: string; stopId: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, routeId, stopId } = req.params;
+      const result = await GeofenceService.getStopGeofence(schoolId, routeId, stopId);
+      sendSuccess(res, result, 'Stop geofence retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PUT /api/v1/schools/:schoolId/routes/:routeId/stops/:stopId/geofence
+   * Updates stop geofence configuration (radius or polygon shape)
+   */
+  public static async updateStopGeofence(
+    req: Request<{ schoolId: string; routeId: string; stopId: string }, {}, UpdateStopGeofenceRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, routeId, stopId } = req.params;
+      const result = await GeofenceService.updateStopGeofence(schoolId, routeId, stopId, req.body);
+      sendSuccess(res, result, 'Stop geofence updated successfully');
     } catch (error) {
       next(error);
     }

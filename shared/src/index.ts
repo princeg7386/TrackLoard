@@ -978,7 +978,16 @@ export const PickupLocationSchema = z.object({
 });
 export type PickupLocation = z.infer<typeof PickupLocationSchema>;
 
-// 8a. Route Stop Detail & Management (Micro-phase 15.2)
+// 8a. Route Stop Detail & Management (Micro-phase 15.2, 21.1)
+export const GeofenceTypeSchema = z.enum(['RADIUS', 'POLYGON']);
+export type GeofenceType = z.infer<typeof GeofenceTypeSchema>;
+
+export const PolygonCoordinateSchema = z.object({
+  latitude: z.number().min(-90, 'Latitude must be between -90 and 90').max(90, 'Latitude must be between -90 and 90'),
+  longitude: z.number().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180'),
+});
+export type PolygonCoordinate = z.infer<typeof PolygonCoordinateSchema>;
+
 export const RouteStopDetailSchema = z.object({
   id: z.string().uuid(),
   schoolId: z.string().uuid(),
@@ -989,6 +998,8 @@ export const RouteStopDetailSchema = z.object({
   longitude: z.number().min(-180).max(180),
   scheduledTime: z.string(),
   geofenceRadiusMeters: z.number().int(),
+  geofenceType: GeofenceTypeSchema.default('RADIUS'),
+  geofencePolygon: z.array(PolygonCoordinateSchema).nullable().optional(),
   assignedStudentsCount: z.number().int().default(0),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -1001,6 +1012,8 @@ export const AddRouteStopRequestSchema = z.object({
   longitude: z.number().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180'),
   scheduledTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/, 'Scheduled time must be HH:MM or HH:MM:SS format'),
   geofenceRadiusMeters: z.number().int().min(50).max(2000).optional().default(300),
+  geofenceType: GeofenceTypeSchema.optional().default('RADIUS'),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3, 'Polygon geofence must have at least 3 vertices').optional().nullable(),
   sequenceOrder: z.number().int().min(1, 'Sequence order must be at least 1').optional(),
 });
 export type AddRouteStopRequest = z.infer<typeof AddRouteStopRequestSchema>;
@@ -1016,6 +1029,8 @@ export const UpdateRouteStopRequestSchema = z.object({
   longitude: z.number().min(-180).max(180).optional(),
   scheduledTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/, 'Scheduled time must be HH:MM or HH:MM:SS format').optional(),
   geofenceRadiusMeters: z.number().int().min(50).max(2000).optional(),
+  geofenceType: GeofenceTypeSchema.optional(),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3, 'Polygon geofence must have at least 3 vertices').optional().nullable(),
   sequenceOrder: z.number().int().min(1).optional(),
 });
 export type UpdateRouteStopRequest = z.infer<typeof UpdateRouteStopRequestSchema>;
@@ -1261,23 +1276,25 @@ export type TelemetryFeedEventType =
   | 'HEALTH_UPDATE'
   | 'HEARTBEAT'
   /** Phase 20.3: Emitted after every GPS ping with a freshly computed RouteEtaSummary */
-  | 'ETA_UPDATE';
+  | 'ETA_UPDATE'
+  /** Phase 21.1: Emitted when a bus enters or exits a pickup stop geofence */
+  | 'GEOFENCE_EVENT';
 
 export interface TelemetryFeedEvent {
   type: TelemetryFeedEventType;
   schoolId: string;
   busId: string;
   tripId: string;
-  latitude: number;
-  longitude: number;
-  speedKmh: number;
+  latitude?: number;
+  longitude?: number;
+  speedKmh?: number;
   bearingDegrees?: number | null;
   accuracyMeters?: number | null;
   batteryPercentage?: number | null;
   isCharging?: boolean | null;
   networkType?: string | null;
-  healthStatus: GpsHealthStatus;
-  recordedAt: string;
+  healthStatus?: GpsHealthStatus;
+  recordedAt?: string;
   timestamp: string;
   // Phase 20.2: Optional ETA fields — populated on LOCATION_UPDATE when available
   nextStopEtaSeconds?: number | null;
@@ -1287,6 +1304,14 @@ export interface TelemetryFeedEvent {
   etaSummary?: RouteEtaSummary | null;
   /** True when the bus is detected as stationary (speed ≤ 2 km/h) */
   isStoppedBus?: boolean | null;
+  // Phase 21.1: Geofence event details
+  eventType?: 'ENTRY' | 'EXIT' | 'DWELL';
+  stopId?: string;
+  stopName?: string;
+  sequenceOrder?: number;
+  status?: 'INSIDE' | 'OUTSIDE';
+  distanceMeters?: number;
+  dwellTimeSeconds?: number;
 }
 
 export const TelemetryFeedQuerySchema = z.object({
@@ -3585,4 +3610,84 @@ export const GeofenceNotificationResultSchema = z.object({
   optedOut: z.number().int().min(0),
 });
 export type GeofenceNotificationResult = z.infer<typeof GeofenceNotificationResultSchema>;
+
+// =============================================================================
+// Phase 21.1 — Pickup Geofence Radius/Shape & Entry/Exit Transition Schemas
+// =============================================================================
+
+export const GeofenceEventTypeSchema = z.enum(['ENTRY', 'EXIT', 'DWELL']);
+export type GeofenceEventType = z.infer<typeof GeofenceEventTypeSchema>;
+
+export const GeofenceStateStatusSchema = z.enum(['INSIDE', 'OUTSIDE']);
+export type GeofenceStateStatus = z.infer<typeof GeofenceStateStatusSchema>;
+
+export const GeofenceShapeSchema = z.object({
+  geofenceType: GeofenceTypeSchema,
+  geofenceRadiusMeters: z.number().int().min(50).max(2000).optional(),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3).optional().nullable(),
+});
+export type GeofenceShape = z.infer<typeof GeofenceShapeSchema>;
+
+export const UpdateStopGeofenceRequestSchema = z.object({
+  geofenceType: GeofenceTypeSchema,
+  geofenceRadiusMeters: z.number().int().min(50).max(2000).optional(),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3, 'Polygon geofence must have at least 3 vertices').optional().nullable(),
+});
+export type UpdateStopGeofenceRequest = z.infer<typeof UpdateStopGeofenceRequestSchema>;
+
+export const GeofenceEventRecordSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  stopName: z.string().optional().nullable(),
+  sequenceOrder: z.number().int().optional().nullable(),
+  eventType: GeofenceEventTypeSchema,
+  latitude: z.number(),
+  longitude: z.number(),
+  distanceToCenterMeters: z.number().nullable().optional(),
+  dwellTimeSeconds: z.number().int().nullable().optional(),
+  recordedAt: z.string(),
+  createdAt: z.string().optional(),
+});
+export type GeofenceEventRecord = z.infer<typeof GeofenceEventRecordSchema>;
+
+export const TripStopGeofenceStateSchema = z.object({
+  id: z.string().uuid().optional(),
+  tripId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  stopName: z.string().optional().nullable(),
+  sequenceOrder: z.number().int().optional().nullable(),
+  status: GeofenceStateStatusSchema,
+  enteredAt: z.string().nullable().optional(),
+  exitedAt: z.string().nullable().optional(),
+  dwellTimeSeconds: z.number().int().default(0),
+  lastEvaluatedAt: z.string().optional(),
+});
+export type TripStopGeofenceState = z.infer<typeof TripStopGeofenceStateSchema>;
+
+export const GeofenceTransitionSchema = z.object({
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int(),
+  eventType: GeofenceEventTypeSchema,
+  previousStatus: GeofenceStateStatusSchema,
+  currentStatus: GeofenceStateStatusSchema,
+  distanceToCenterMeters: z.number(),
+  enteredAt: z.string().optional(),
+  exitedAt: z.string().optional(),
+  dwellTimeSeconds: z.number().int().optional(),
+  recordedAt: z.string(),
+});
+export type GeofenceTransition = z.infer<typeof GeofenceTransitionSchema>;
+
+export const EvaluateTripGeofenceResultSchema = z.object({
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  evaluatedStopsCount: z.number().int().min(0),
+  transitions: z.array(GeofenceTransitionSchema),
+  recordedAt: z.string(),
+});
+export type EvaluateTripGeofenceResult = z.infer<typeof EvaluateTripGeofenceResultSchema>;
 

@@ -8,6 +8,7 @@ import {
   AddRouteStopRequestSchema,
   ReorderRouteStopsRequestSchema,
   UpdateRouteStopRequestSchema,
+  UpdateStopGeofenceRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -201,6 +202,33 @@ busRouter.delete(
     UserRole.SUPER_ADMIN
   ),
   RouteController.removeStop
+);
+
+// 7g-1. Get Pickup Stop Geofence (Micro-phase 21.1)
+busRouter.get(
+  '/:schoolId/routes/:routeId/stops/:stopId/geofence',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  RouteController.getStopGeofence
+);
+
+// 7g-2. Update Pickup Stop Geofence Shape (Micro-phase 21.1)
+busRouter.put(
+  '/:schoolId/routes/:routeId/stops/:stopId/geofence',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(UpdateStopGeofenceRequestSchema),
+  RouteController.updateStopGeofence
 );
 
 // 7h. Update Route Specifications (Micro-phase 15.4)

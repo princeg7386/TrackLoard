@@ -3,6 +3,7 @@ import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { EtaService } from '../services/eta.service.js';
+import { GeofenceService } from '../services/geofence.service.js';
 import { TelemetryIngestPayload } from '@school-bus/shared';
 
 export class TelemetryController {
@@ -285,6 +286,48 @@ export class TelemetryController {
         success: true,
         message: 'Stop ETA retrieved successfully',
         data: parentEta,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/geofence-states
+   * Phase 21.1 — Retrieves active geofence states for all stops on a trip.
+   */
+  static async getTripGeofenceStates(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params as { tripId: string };
+      const schoolId: string = (req as any).user?.schoolId;
+
+      const states = await GeofenceService.getTripGeofenceStates(tripId, schoolId);
+
+      res.status(200).json({
+        success: true,
+        message: 'Trip geofence states retrieved successfully',
+        data: states,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/geofence-events
+   * Phase 21.1 — Retrieves historical entry and exit events for a trip.
+   */
+  static async getTripGeofenceEvents(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params as { tripId: string };
+      const schoolId: string = (req as any).user?.schoolId;
+
+      const events = await GeofenceService.getTripGeofenceEvents(tripId, schoolId);
+
+      res.status(200).json({
+        success: true,
+        message: 'Trip geofence events retrieved successfully',
+        data: events,
       });
     } catch (error) {
       next(error);

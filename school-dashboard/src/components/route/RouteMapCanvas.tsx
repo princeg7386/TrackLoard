@@ -300,12 +300,38 @@ export function RouteMapCanvas({
             </>
           )}
 
-          {/* 2. SHOW GEOFENCE RADIUS RINGS */}
+          {/* 2. SHOW GEOFENCE BOUNDARIES (Radius Ring or Custom Polygon Shape) */}
           {showGeofences &&
             stops.map((stop) => {
               const pt = project(stop.latitude, stop.longitude);
               const r = getPixelRadius(stop.geofenceRadiusMeters);
               const isSelected = stop.id === selectedStopId;
+
+              if (
+                stop.geofenceType === 'POLYGON' &&
+                Array.isArray(stop.geofencePolygon) &&
+                stop.geofencePolygon.length >= 3
+              ) {
+                const polyPoints = stop.geofencePolygon
+                  .map((p) => {
+                    const proj = project(p.latitude, p.longitude);
+                    return `${proj.x},${proj.y}`;
+                  })
+                  .join(' ');
+
+                return (
+                  <g key={`geofence-${stop.id}`}>
+                    <polygon
+                      points={polyPoints}
+                      fill={isSelected ? 'rgba(56, 189, 248, 0.2)' : 'rgba(99, 102, 241, 0.1)'}
+                      stroke={isSelected ? '#38bdf8' : '#818cf8'}
+                      strokeWidth="1.5"
+                      strokeDasharray="4 3"
+                      strokeOpacity={isSelected ? 0.9 : 0.5}
+                    />
+                  </g>
+                );
+              }
 
               return (
                 <g key={`geofence-${stop.id}`}>

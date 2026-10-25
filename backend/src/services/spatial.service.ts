@@ -1,4 +1,4 @@
-﻿import { query } from '../config/database.js';
+import { query } from '../config/database.js';
 import {
   GeoCoordinates,
   TelemetryIngestPayload,
@@ -129,5 +129,90 @@ export class SpatialService {
       distanceMeters,
     };
   }
+
+  /**
+   * Point-in-Polygon check using the ray-casting algorithm.
+   * Tests whether a GPS point (latitude, longitude) is inside an arbitrary polygon boundary.
+   */
+  static isPointInPolygon(point: GeoCoordinates, polygon: GeoCoordinates[]): boolean {
+    if (!polygon || polygon.length < 3) {
+      return false;
+    }
+
+    let inside = false;
+    const px = point.longitude;
+    const py = point.latitude;
+
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i]!.longitude;
+      const yi = polygon[i]!.latitude;
+      const xj = polygon[j]!.longitude;
+      const yj = polygon[j]!.latitude;
+
+      const intersect =
+        yi > py !== yj > py &&
+        px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+
+      if (intersect) {
+        inside = !inside;
+      }
+    }
+
+    return inside;
+  }
+
+  /**
+   * Generates PostGIS SQL for Polygon geography creation from coordinate vertices.
+   * Auto-closes the polygon ring if the first and last vertices differ.
+   */
+  static toGeographyPolygonSql(coords: GeoCoordinates[]): string {
+    if (!coords || coords.length < 3) {
+      throw new Error('Polygon must contain at least 3 vertices');
+    }
+    const closed = [...coords];
+    const first = closed[0]!;
+    const last = closed[closed.length - 1]!;
+    if (first.latitude !== last.latitude || first.longitude !== last.longitude) {
+      closed.push(first);
+    }
+    const wktPoints = closed.map((c) => `${c.longitude} ${c.latitude}`).join(', ');
+    return `ST_SetSRID(ST_GeogFromText('POLYGON((${wktPoints}))'), 4326)`;
+  }
+
+  /**
+   * Evaluates whether a coordinate point is inside a stop geofence,
+   * supporting both circular radius and custom polygon boundaries.
+   */
+  static isPointInGeofenceShape(
+    busCoords: GeoCoordinates,
+    stop: {
+      latitude: number;
+      longitude: number;
+      geofenceType?: string | null;
+      geofenceRadiusMeters?: number | null;
+      geofencePolygon?: GeoCoordinates[] | null;
+    }
+  ): { isInside: boolean; distanceMeters: number } {
+    const distanceMeters = calculateHaversineDistanceMeters(busCoords, {
+      latitude: stop.latitude,
+      longitude: stop.longitude,
+    });
+
+    if (
+      stop.geofenceType === 'POLYGON' &&
+      Array.isArray(stop.geofencePolygon) &&
+      stop.geofencePolygon.length >= 3
+    ) {
+      const isInside = SpatialService.isPointInPolygon(busCoords, stop.geofencePolygon);
+      return { isInside, distanceMeters };
+    }
+
+    const radius = stop.geofenceRadiusMeters ?? 300;
+    return {
+      isInside: distanceMeters <= radius,
+      distanceMeters,
+    };
+  }
 }
+
 

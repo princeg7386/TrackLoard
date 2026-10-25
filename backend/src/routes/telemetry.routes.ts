@@ -124,4 +124,22 @@ telemetryRouter.get(
   TelemetryController.getStopEta
 );
 
+// 12. Phase 21.1 — Active trip stop geofence states
+telemetryRouter.get(
+  '/trips/:tripId/geofence-states',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getTripGeofenceStates
+);
+
+// 13. Phase 21.1 — Historical trip geofence events ledger
+telemetryRouter.get(
+  '/trips/:tripId/geofence-events',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getTripGeofenceEvents
+);
+
 export default telemetryRouter;

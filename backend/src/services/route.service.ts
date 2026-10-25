@@ -18,6 +18,7 @@ import {
   BadRequestError,
 } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
+import { SpatialService } from './spatial.service.js';
 
 export class RouteService {
   /**
@@ -538,6 +539,8 @@ export class RouteService {
       longitude: number;
       scheduled_time: string;
       geofence_radius_meters: number;
+      geofence_type: 'RADIUS' | 'POLYGON';
+      geofence_polygon: any;
       assigned_students_count: number;
       created_at: string;
       updated_at: string;
@@ -545,6 +548,8 @@ export class RouteService {
       `SELECT pl.id, pl.school_id, pl.route_id, pl.stop_name, pl.sequence_order,
               pl.latitude, pl.longitude, pl.scheduled_time::text AS scheduled_time,
               pl.geofence_radius_meters,
+              COALESCE(pl.geofence_type, 'RADIUS') AS geofence_type,
+              pl.geofence_polygon,
               (SELECT COUNT(DISTINCT ssa.student_id)::int
                FROM student_stop_assignments ssa
                WHERE (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
@@ -567,6 +572,8 @@ export class RouteService {
       longitude: Number(r.longitude),
       scheduledTime: r.scheduled_time,
       geofenceRadiusMeters: Number(r.geofence_radius_meters),
+      geofenceType: (r.geofence_type as 'RADIUS' | 'POLYGON') || 'RADIUS',
+      geofencePolygon: r.geofence_polygon ?? null,
       assignedStudentsCount: Number(r.assigned_students_count),
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -603,6 +610,8 @@ export class RouteService {
       longitude,
       scheduledTime,
       geofenceRadiusMeters = 300,
+      geofenceType = 'RADIUS',
+      geofencePolygon = null,
       sequenceOrder,
     } = payload;
 
@@ -635,6 +644,11 @@ export class RouteService {
       targetSequence = Number(maxRows[0]?.next_order || 1);
     }
 
+    let geomSql = 'NULL';
+    if (geofenceType === 'POLYGON' && geofencePolygon && geofencePolygon.length >= 3) {
+      geomSql = SpatialService.toGeographyPolygonSql(geofencePolygon);
+    }
+
     const insertedRows = await query<{
       id: string;
       school_id: string;
@@ -645,19 +659,24 @@ export class RouteService {
       longitude: number;
       scheduled_time: string;
       geofence_radius_meters: number;
+      geofence_type: 'RADIUS' | 'POLYGON';
+      geofence_polygon: any;
       created_at: string;
       updated_at: string;
     }>(
       `INSERT INTO pickup_locations (
          school_id, route_id, stop_name, sequence_order,
-         latitude, longitude, location, scheduled_time, geofence_radius_meters
+         latitude, longitude, location, scheduled_time, geofence_radius_meters,
+         geofence_type, geofence_polygon, geofence_geometry
        ) VALUES (
          $1, $2, $3, $4,
-         $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7::time, $8
+         $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7::time, $8,
+         $9, $10::jsonb, ${geomSql}
        )
        RETURNING id, school_id, route_id, stop_name, sequence_order,
                  latitude, longitude, scheduled_time::text AS scheduled_time,
-                 geofence_radius_meters, created_at, updated_at`,
+                 geofence_radius_meters, COALESCE(geofence_type, 'RADIUS') AS geofence_type,
+                 geofence_polygon, created_at, updated_at`,
       [
         schoolId,
         routeId,
@@ -667,6 +686,8 @@ export class RouteService {
         longitude,
         scheduledTime,
         geofenceRadiusMeters,
+        geofenceType,
+        geofencePolygon ? JSON.stringify(geofencePolygon) : null,
       ]
     );
 
@@ -690,6 +711,8 @@ export class RouteService {
         longitude: Number(r.longitude),
         scheduledTime: r.scheduled_time,
         geofenceRadiusMeters: Number(r.geofence_radius_meters),
+        geofenceType: (r.geofence_type as 'RADIUS' | 'POLYGON') || 'RADIUS',
+        geofencePolygon: r.geofence_polygon ?? null,
       },
     });
 
@@ -703,6 +726,8 @@ export class RouteService {
       longitude: Number(r.longitude),
       scheduledTime: r.scheduled_time,
       geofenceRadiusMeters: Number(r.geofence_radius_meters),
+      geofenceType: (r.geofence_type as 'RADIUS' | 'POLYGON') || 'RADIUS',
+      geofencePolygon: r.geofence_polygon ?? null,
       assignedStudentsCount: 0,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -866,9 +891,18 @@ export class RouteService {
       payload.latitude !== undefined ||
       payload.longitude !== undefined ||
       payload.scheduledTime !== undefined ||
-      payload.geofenceRadiusMeters !== undefined;
+      payload.geofenceRadiusMeters !== undefined ||
+      payload.geofenceType !== undefined ||
+      payload.geofencePolygon !== undefined;
 
     if (hasDetailUpdates) {
+      let geomSqlClause = 'geofence_geometry';
+      if (payload.geofenceType === 'POLYGON' && payload.geofencePolygon && payload.geofencePolygon.length >= 3) {
+        geomSqlClause = SpatialService.toGeographyPolygonSql(payload.geofencePolygon);
+      } else if (payload.geofenceType === 'RADIUS') {
+        geomSqlClause = 'NULL';
+      }
+
       await query(
         `UPDATE pickup_locations
          SET stop_name = COALESCE($1, stop_name),
@@ -877,14 +911,19 @@ export class RouteService {
              location = CASE WHEN $2::float8 IS NOT NULL AND $3::float8 IS NOT NULL THEN ST_SetSRID(ST_MakePoint($3, $2), 4326)::geography ELSE location END,
              scheduled_time = CASE WHEN $4::text IS NOT NULL THEN $4::time ELSE scheduled_time END,
              geofence_radius_meters = COALESCE($5, geofence_radius_meters),
+             geofence_type = COALESCE($6, geofence_type),
+             geofence_polygon = CASE WHEN $7::text IS NOT NULL THEN $7::jsonb ELSE geofence_polygon END,
+             geofence_geometry = ${geomSqlClause},
              updated_at = NOW()
-         WHERE id = $6 AND route_id = $7 AND school_id = $8 AND deleted_at IS NULL`,
+         WHERE id = $8 AND route_id = $9 AND school_id = $10 AND deleted_at IS NULL`,
         [
           payload.stopName ? payload.stopName.trim() : null,
           payload.latitude !== undefined ? payload.latitude : null,
           payload.longitude !== undefined ? payload.longitude : null,
           payload.scheduledTime || null,
           payload.geofenceRadiusMeters !== undefined ? payload.geofenceRadiusMeters : null,
+          payload.geofenceType || null,
+          payload.geofencePolygon !== undefined ? (payload.geofencePolygon ? JSON.stringify(payload.geofencePolygon) : 'null') : null,
           stopId,
           routeId,
           schoolId,

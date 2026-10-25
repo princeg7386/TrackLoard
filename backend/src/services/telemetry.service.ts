@@ -14,6 +14,7 @@ import { GpsHealthService } from './gps-health.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
 import { EtaRefreshService } from './eta-refresh.service.js';
 import { GeofenceNotificationService } from './geofence-notification.service.js';
+import { GeofenceService } from './geofence.service.js';
 import { logger } from './logger.service.js';
 
 
@@ -286,6 +287,21 @@ export class TelemetryService {
       });
     });
 
+    // 6. Phase 21.1 — Geofence Entry & Exit Detection (fire-and-forget, non-blocking)
+    GeofenceService.evaluateTripStops({
+      tripId: payload.tripId,
+      schoolId: trip.school_id,
+      busId: payload.busId,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      recordedAt: new Date(payload.recordedAt),
+    }).catch((err: unknown) => {
+      logger.warn('GeofenceService.evaluateTripStops error (suppressed)', {
+        tripId: payload.tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
 
     return {
       id: parseInt(inserted.id, 10),
@@ -527,6 +543,24 @@ export class TelemetryService {
         latitude: loc.latitude,
         longitude: loc.longitude,
         recordedAt: new Date(loc.recordedAt).toISOString(),
+      });
+    }
+
+    // Phase 21.1 — Geofence Entry & Exit Detection for batch telemetry points
+    for (const loc of sorted) {
+      const schoolId = tripSchoolMap.get(loc.tripId) ?? '';
+      GeofenceService.evaluateTripStops({
+        tripId: loc.tripId,
+        schoolId,
+        busId: loc.busId,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        recordedAt: new Date(loc.recordedAt),
+      }).catch((err: unknown) => {
+        logger.warn('GeofenceService.evaluateTripStops batch error (suppressed)', {
+          tripId: loc.tripId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     }
 
