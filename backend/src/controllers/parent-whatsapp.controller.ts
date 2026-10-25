@@ -207,5 +207,33 @@ export class ParentWhatsappController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/parent/whatsapp/child
+   * Retrieves comprehensive My Child status (journey, boarding, drop) (Micro-phase 22.4)
+   */
+  public static async getMyChild(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const phone = req.query.phone as string | undefined;
+      const schoolId = req.query.schoolId as string | undefined;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number query parameter is required');
+      }
+
+      const result = await ParentWhatsappService.getMyChildDetails(phone, schoolId);
+      if (!result) {
+        throw new NotFoundError(`Parent not found for phone number: ${phone}`);
+      }
+
+      sendSuccess(res, result, 'Parent My Child details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

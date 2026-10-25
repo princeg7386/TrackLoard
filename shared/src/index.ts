@@ -4022,5 +4022,65 @@ export const ParentMyEtaResponseSchema = z.object({
 });
 export type ParentMyEtaResponse = z.infer<typeof ParentMyEtaResponseSchema>;
 
+/**
+ * Phase 22.4: Parent WhatsApp My Child Schema
+ */
+export const ParentMyChildResponseSchema = z.object({
+  student: z.object({
+    id: z.string(),
+    fullName: z.string(),
+    admissionNumber: z.string().optional().nullable(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+    rollNumber: z.string().optional().nullable(),
+  }),
+  school: z.object({
+    id: z.string(),
+    name: z.string(),
+    emergencyContactPhone: z.string().optional().nullable(),
+  }),
+  journey: z.object({
+    status: z.string(),
+    statusLabel: z.string(),
+    description: z.string(),
+  }),
+  boarding: z.object({
+    status: z.string(),
+    isBoarded: z.boolean(),
+    recordedAt: z.string().optional().nullable(),
+    recordedAtFormatted: z.string().optional().nullable(),
+    stopName: z.string().optional().nullable(),
+    markedBy: z.string().optional().nullable(),
+  }),
+  drop: z.object({
+    status: z.string(),
+    isDropped: z.boolean(),
+    recordedAt: z.string().optional().nullable(),
+    recordedAtFormatted: z.string().optional().nullable(),
+    stopName: z.string().optional().nullable(),
+    markedBy: z.string().optional().nullable(),
+  }),
+  bus: z
+    .object({
+      id: z.string(),
+      busNumber: z.string(),
+      registrationNumber: z.string(),
+      driverName: z.string().optional().nullable(),
+      driverPhone: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  pickupStop: z
+    .object({
+      id: z.string(),
+      stopName: z.string(),
+      scheduledTime: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  formattedMessage: z.string(),
+});
+export type ParentMyChildResponse = z.infer<typeof ParentMyChildResponseSchema>;
+
 
 

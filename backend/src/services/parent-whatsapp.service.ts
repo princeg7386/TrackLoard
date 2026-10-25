@@ -6,6 +6,7 @@ import {
   ParentWhatsAppInboundResponse,
   ParentTrackBusResponse,
   ParentMyEtaResponse,
+  ParentMyChildResponse,
   TripStatus,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -1305,26 +1306,28 @@ export class ParentWhatsappService {
 
 
   /**
-   * Action 3: My Child
+   * Action 3: My Child (Phase 22.4)
+   * Evaluates current journey status, boarding status, and drop status for the student
    */
   public static async handleMyChild(
     parent: ParentContextRecord,
     activeTrip: ParentActiveTripContext | null
   ): Promise<{ replyText: string; data: any }> {
-    // Check today's boarding and drop events for the student
     const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
     const attendanceRows = await query<{
       event_type: 'BOARDING' | 'DROP';
+      status?: string;
       recorded_at: string;
+      marked_by?: string | null;
       stop_name: string | null;
     }>(
-      `SELECT 'BOARDING' AS event_type, b.recorded_at::text, pl.stop_name
+      `SELECT 'BOARDING' AS event_type, b.status, b.recorded_at::text, b.marked_by, pl.stop_name
        FROM boarding_events b
        LEFT JOIN pickup_locations pl ON b.stop_id = pl.id
        WHERE b.student_id = $1 AND b.recorded_at::date = $2::date
        UNION ALL
-       SELECT 'DROP' AS event_type, d.recorded_at::text, pl.stop_name
+       SELECT 'DROP' AS event_type, d.status, d.recorded_at::text, d.marked_by, pl.stop_name
        FROM drop_events d
        LEFT JOIN pickup_locations pl ON d.stop_id = pl.id
        WHERE d.student_id = $1 AND d.recorded_at::date = $2::date
@@ -1332,21 +1335,101 @@ export class ParentWhatsappService {
       [parent.studentId, todayDate]
     );
 
-    let attendanceStatus = 'Not Yet Boarded';
-    if (attendanceRows.length > 0 && attendanceRows[0]) {
-      const latest = attendanceRows[0];
-      const timeFormatted = new Intl.DateTimeFormat('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true,
-        timeZone: 'Asia/Kolkata',
-      }).format(new Date(latest.recorded_at));
-
-      if (latest.event_type === 'DROP') {
-        attendanceStatus = `Safely Dropped at ${timeFormatted} (${latest.stop_name || 'Destination'}) ✅`;
-      } else if (latest.event_type === 'BOARDING') {
-        attendanceStatus = `Boarded Bus at ${timeFormatted} (${latest.stop_name || 'Pickup Stop'}) 🚌`;
+    const formatTime = (isoString?: string | null): string | null => {
+      if (!isoString) return null;
+      try {
+        return new Intl.DateTimeFormat('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'Asia/Kolkata',
+        }).format(new Date(isoString));
+      } catch {
+        return null;
       }
+    };
+
+    // 1. Identify Boarding & Drop events
+    const boardingEvent = attendanceRows.find((r) => r.event_type === 'BOARDING');
+    const dropEvent = attendanceRows.find((r) => r.event_type === 'DROP');
+
+    // 2. Evaluate Boarding Status
+    let boardingStatus: 'BOARDED' | 'NOT_BOARDED' | 'ABSENT' = 'NOT_BOARDED';
+    let isBoarded = false;
+    let boardingTimeFormatted: string | null = null;
+    let boardingStopName: string | null = null;
+
+    if (boardingEvent) {
+      const rawStatus = (boardingEvent.status || 'BOARDED').toUpperCase();
+      if (rawStatus === 'ABSENT') {
+        boardingStatus = 'ABSENT';
+      } else {
+        boardingStatus = 'BOARDED';
+        isBoarded = true;
+      }
+      boardingTimeFormatted = formatTime(boardingEvent.recorded_at);
+      boardingStopName = boardingEvent.stop_name || parent.pickupStop?.stopName || 'Pickup Stop';
+    }
+
+    // 3. Evaluate Drop Status
+    let dropStatus: 'DEBOARDED' | 'PENDING' | 'MISSED' | 'NOT_APPLICABLE' = 'PENDING';
+    let isDropped = false;
+    let dropTimeFormatted: string | null = null;
+    let dropStopName: string | null = null;
+
+    if (dropEvent) {
+      const rawDropStatus = (dropEvent.status || 'DEBOARDED').toUpperCase();
+      if (rawDropStatus === 'MISSED') {
+        dropStatus = 'MISSED';
+      } else {
+        dropStatus = 'DEBOARDED';
+        isDropped = true;
+      }
+      dropTimeFormatted = formatTime(dropEvent.recorded_at);
+      dropStopName = dropEvent.stop_name || 'Destination / School';
+    }
+
+    // 4. Evaluate Current Journey Status
+    let journeyStatus = 'NOT_IN_TRANSIT';
+    let journeyLabel = 'Not in Transit ⚪';
+    let journeyDescription = 'No active journey currently in transit.';
+
+    if (isDropped) {
+      journeyStatus = 'SAFELY_DROPPED';
+      journeyLabel = `Safely Dropped at ${dropTimeFormatted || 'Destination'} ✅`;
+      journeyDescription = 'Student has safely deboarded the bus.';
+    } else if (boardingStatus === 'ABSENT') {
+      journeyStatus = 'ABSENT';
+      journeyLabel = 'Marked Absent ❌';
+      journeyDescription = 'Student was marked absent for today’s trip.';
+    } else if (isBoarded) {
+      journeyStatus = 'ON_BUS';
+      journeyLabel =
+        activeTrip?.status === 'ARRIVED_SCHOOL'
+          ? 'On Bus — Arrived at School 🏫'
+          : 'On Bus — In Transit 🚌';
+      journeyDescription = 'Student is on board the bus and travelling safely.';
+    } else if (
+      activeTrip?.status === TripStatus.IN_TRANSIT ||
+      activeTrip?.status === TripStatus.DELAYED
+    ) {
+      journeyStatus = 'AWAITING_BOARDING';
+      journeyLabel = 'Awaiting Boarding 🕒';
+      journeyDescription = 'Bus is currently on route, awaiting student pickup.';
+    } else if (activeTrip?.status === TripStatus.SCHEDULED) {
+      journeyStatus = 'SCHEDULED';
+      journeyLabel = 'Trip Scheduled ⚪';
+      journeyDescription = 'Bus trip is scheduled and will begin shortly.';
+    }
+
+    // 5. Compose Transit Summary Text
+    let attendanceStatus = 'Not Yet Boarded';
+    if (isDropped) {
+      attendanceStatus = `Safely Dropped at ${dropTimeFormatted} (${dropStopName || 'Destination'}) ✅`;
+    } else if (isBoarded) {
+      attendanceStatus = `Boarded Bus at ${boardingTimeFormatted} (${boardingStopName || 'Pickup Stop'}) 🚌`;
+    } else if (boardingStatus === 'ABSENT') {
+      attendanceStatus = 'Marked Absent for today’s trip ❌';
     } else if (activeTrip?.status === TripStatus.IN_TRANSIT) {
       attendanceStatus = 'Bus is currently in transit (Awaiting boarding) 🕒';
     }
@@ -1355,28 +1438,109 @@ export class ParentWhatsappService {
       ? `Class ${parent.classGrade}${parent.section ? ` - Section ${parent.section}` : ''}`
       : 'Registered';
 
+    const busNumber = activeTrip?.busNumber ? `Bus *#${activeTrip.busNumber}*` : 'Assigned Bus';
+    const regText = activeTrip?.registrationNumber ? ` (${activeTrip.registrationNumber})` : '';
+    const driverPhoneText = activeTrip?.driverPhone ? ` (📞 ${activeTrip.driverPhone})` : '';
+    const driverText = activeTrip?.driverName ? `\nDriver: *${activeTrip.driverName}*${driverPhoneText}` : '';
+    const assignedStopText = parent.pickupStop?.stopName || 'Not Assigned';
+
     const replyText =
       `🎒 *Student Profile & Attendance*\n` +
       `Name: *${parent.studentName}*\n` +
       `Admission No: *${parent.admissionNumber || 'N/A'}*\n` +
       `Class: *${classSection}* | Roll No: *${parent.rollNumber || 'N/A'}*\n` +
       `School: *${parent.schoolName}*\n\n` +
-      `Today’s Transit Status:\n` +
+      `🚦 *Current Journey Status:*\n` +
+      `• *${journeyLabel}*\n` +
+      `_${journeyDescription}_\n\n` +
+      `📋 *Today’s Transit Status:*\n` +
       `• *${attendanceStatus}*\n\n` +
-      `Assigned Stop: *${parent.pickupStop?.stopName || 'Not Assigned'}*\n` +
+      `🚌 *Assigned Bus:* ${busNumber}${regText}${driverText}\n` +
+      `🚏 *Assigned Stop:* *${assignedStopText}*\n\n` +
       `_Reply *1* for live tracking or *2* for ETA._`;
+
+    const fullData = {
+      student: {
+        id: parent.studentId,
+        fullName: parent.studentName,
+        admissionNumber: parent.admissionNumber || null,
+        classGrade: parent.classGrade || null,
+        section: parent.section || null,
+        rollNumber: parent.rollNumber || null,
+      },
+      school: {
+        id: parent.schoolId,
+        name: parent.schoolName,
+        emergencyContactPhone: parent.schoolEmergencyPhone || null,
+      },
+      journey: {
+        status: journeyStatus,
+        statusLabel: journeyLabel,
+        description: journeyDescription,
+      },
+      boarding: {
+        status: boardingStatus,
+        isBoarded,
+        recordedAt: boardingEvent?.recorded_at || null,
+        recordedAtFormatted: boardingTimeFormatted,
+        stopName: boardingStopName,
+        markedBy: boardingEvent?.marked_by || null,
+      },
+      drop: {
+        status: dropStatus,
+        isDropped,
+        recordedAt: dropEvent?.recorded_at || null,
+        recordedAtFormatted: dropTimeFormatted,
+        stopName: dropStopName,
+        markedBy: dropEvent?.marked_by || null,
+      },
+      bus: activeTrip
+        ? {
+            id: activeTrip.busId,
+            busNumber: activeTrip.busNumber || 'Assigned',
+            registrationNumber: activeTrip.registrationNumber || 'N/A',
+            driverName: activeTrip.driverName || null,
+            driverPhone: activeTrip.driverPhone || null,
+          }
+        : null,
+      pickupStop: parent.pickupStop
+        ? {
+            id: parent.pickupStop.id,
+            stopName: parent.pickupStop.stopName,
+            scheduledTime: parent.pickupStop.scheduledTime || null,
+          }
+        : null,
+      formattedMessage: replyText,
+      // Backward-compatible properties:
+      studentId: parent.studentId,
+      studentName: parent.studentName,
+      admissionNumber: parent.admissionNumber,
+      attendanceStatus,
+      assignedStop: parent.pickupStop?.stopName,
+    };
 
     return {
       replyText,
-      data: {
-        studentId: parent.studentId,
-        studentName: parent.studentName,
-        admissionNumber: parent.admissionNumber,
-        attendanceStatus,
-        assignedStop: parent.pickupStop?.stopName,
-      },
+      data: fullData,
     };
   }
+
+  /**
+   * Retrieves comprehensive My Child details by phone number (Micro-phase 22.4)
+   */
+  public static async getMyChildDetails(
+    phone: string,
+    schoolId?: string
+  ): Promise<ParentMyChildResponse | null> {
+    const parent = await this.findParentByPhone(phone, schoolId);
+    if (!parent) {
+      return null;
+    }
+    const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
+    const result = await this.handleMyChild(parent, activeTrip);
+    return result.data as ParentMyChildResponse;
+  }
+
 
   /**
    * Action 4: My Pickup
