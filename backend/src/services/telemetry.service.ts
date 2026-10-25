@@ -287,7 +287,7 @@ export class TelemetryService {
       });
     });
 
-    // 6. Phase 21.1 — Geofence Entry & Exit Detection (fire-and-forget, non-blocking)
+    // 6. Phase 21.1 & 21.2 — Geofence Entry & Exit Detection & School Arrival (fire-and-forget, non-blocking)
     GeofenceService.evaluateTripStops({
       tripId: payload.tripId,
       schoolId: trip.school_id,
@@ -297,6 +297,20 @@ export class TelemetryService {
       recordedAt: new Date(payload.recordedAt),
     }).catch((err: unknown) => {
       logger.warn('GeofenceService.evaluateTripStops error (suppressed)', {
+        tripId: payload.tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    GeofenceService.evaluateSchoolArrival({
+      tripId: payload.tripId,
+      schoolId: trip.school_id,
+      busId: payload.busId,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      recordedAt: new Date(payload.recordedAt),
+    }).catch((err: unknown) => {
+      logger.warn('GeofenceService.evaluateSchoolArrival error (suppressed)', {
         tripId: payload.tripId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -546,7 +560,7 @@ export class TelemetryService {
       });
     }
 
-    // Phase 21.1 — Geofence Entry & Exit Detection for batch telemetry points
+    // Phase 21.1 & 21.2 — Geofence Entry & Exit Detection & School Arrival for batch telemetry points
     for (const loc of sorted) {
       const schoolId = tripSchoolMap.get(loc.tripId) ?? '';
       GeofenceService.evaluateTripStops({
@@ -558,6 +572,20 @@ export class TelemetryService {
         recordedAt: new Date(loc.recordedAt),
       }).catch((err: unknown) => {
         logger.warn('GeofenceService.evaluateTripStops batch error (suppressed)', {
+          tripId: loc.tripId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+
+      GeofenceService.evaluateSchoolArrival({
+        tripId: loc.tripId,
+        schoolId,
+        busId: loc.busId,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        recordedAt: new Date(loc.recordedAt),
+      }).catch((err: unknown) => {
+        logger.warn('GeofenceService.evaluateSchoolArrival batch error (suppressed)', {
           tripId: loc.tripId,
           error: err instanceof Error ? err.message : String(err),
         });

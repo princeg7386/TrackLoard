@@ -126,15 +126,15 @@ export default function LiveOperationsPage() {
                 if (b.busId === event.busId) {
                   return {
                     ...b,
-                    lastLatitude: event.latitude,
-                    lastLongitude: event.longitude,
-                    lastSpeedKmh: event.speedKmh,
-                    lastAccuracyMeters: event.accuracyMeters ?? b.lastAccuracyMeters,
-                    lastBatteryPercentage: event.batteryPercentage ?? b.lastBatteryPercentage,
-                    lastIsCharging: event.isCharging ?? b.lastIsCharging,
-                    lastNetworkType: event.networkType ?? b.lastNetworkType,
-                    lastRecordedAt: event.recordedAt,
-                    healthStatus: event.healthStatus,
+                    lastLatitude: event.latitude !== undefined ? event.latitude : b.lastLatitude,
+                    lastLongitude: event.longitude !== undefined ? event.longitude : b.lastLongitude,
+                    lastSpeedKmh: event.speedKmh !== undefined ? event.speedKmh : b.lastSpeedKmh,
+                    lastAccuracyMeters: event.accuracyMeters !== undefined ? event.accuracyMeters : b.lastAccuracyMeters,
+                    lastBatteryPercentage: event.batteryPercentage !== undefined ? event.batteryPercentage : b.lastBatteryPercentage,
+                    lastIsCharging: event.isCharging !== undefined ? event.isCharging : b.lastIsCharging,
+                    lastNetworkType: event.networkType !== undefined ? event.networkType : b.lastNetworkType,
+                    lastRecordedAt: event.recordedAt ?? b.lastRecordedAt,
+                    healthStatus: event.healthStatus ?? b.healthStatus,
                     activeTripId: event.tripId || b.activeTripId,
                   };
                 }
@@ -147,16 +147,16 @@ export default function LiveOperationsPage() {
               if (current && current.busId === event.busId) {
                 return {
                   ...current,
-                  lastLatitude: event.latitude,
-                  lastLongitude: event.longitude,
-                  lastSpeedKmh: event.speedKmh,
-                  lastBearingDegrees: event.bearingDegrees ?? current.lastBearingDegrees,
-                  lastAccuracyMeters: event.accuracyMeters ?? current.lastAccuracyMeters,
-                  lastBatteryPercentage: event.batteryPercentage ?? current.lastBatteryPercentage,
-                  lastIsCharging: event.isCharging ?? current.lastIsCharging,
-                  lastNetworkType: event.networkType ?? current.lastNetworkType,
-                  lastGpsRecordedAt: event.recordedAt,
-                  gpsHealthStatus: event.healthStatus,
+                  lastLatitude: event.latitude !== undefined ? event.latitude : current.lastLatitude,
+                  lastLongitude: event.longitude !== undefined ? event.longitude : current.lastLongitude,
+                  lastSpeedKmh: event.speedKmh !== undefined ? event.speedKmh : current.lastSpeedKmh,
+                  lastBearingDegrees: event.bearingDegrees !== undefined ? event.bearingDegrees : current.lastBearingDegrees,
+                  lastAccuracyMeters: event.accuracyMeters !== undefined ? event.accuracyMeters : current.lastAccuracyMeters,
+                  lastBatteryPercentage: event.batteryPercentage !== undefined ? event.batteryPercentage : current.lastBatteryPercentage,
+                  lastIsCharging: event.isCharging !== undefined ? event.isCharging : current.lastIsCharging,
+                  lastNetworkType: event.networkType !== undefined ? event.networkType : current.lastNetworkType,
+                  lastGpsRecordedAt: event.recordedAt ?? current.lastGpsRecordedAt,
+                  gpsHealthStatus: event.healthStatus ?? current.gpsHealthStatus,
                   gpsAgeSeconds: 0,
                 };
               }

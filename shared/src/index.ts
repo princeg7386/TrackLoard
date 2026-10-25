@@ -163,6 +163,40 @@ export function calculateBearingDegrees(
  * -----------------------------------------------------------------------------
  */
 
+// Geofence Common Primitives (Micro-phases 21.1, 21.2)
+export const GeofenceTypeSchema = z.enum(['RADIUS', 'POLYGON']);
+export type GeofenceType = z.infer<typeof GeofenceTypeSchema>;
+
+export const PolygonCoordinateSchema = z.object({
+  latitude: z.number().min(-90, 'Latitude must be between -90 and 90').max(90, 'Latitude must be between -90 and 90'),
+  longitude: z.number().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180'),
+});
+export type PolygonCoordinate = z.infer<typeof PolygonCoordinateSchema>;
+
+// School Geofence Schemas (Micro-phase 21.2)
+export const SchoolGeofenceSchema = z.object({
+  schoolId: z.string().uuid(),
+  schoolName: z.string(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
+  geofenceType: GeofenceTypeSchema.default('RADIUS'),
+  geofenceRadiusMeters: z.number().int().min(50).max(5000).default(500),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3).nullable().optional(),
+  autoArrivalEnabled: z.boolean().default(true),
+  updatedAt: z.string().optional(),
+});
+export type SchoolGeofence = z.infer<typeof SchoolGeofenceSchema>;
+
+export const UpdateSchoolGeofenceRequestSchema = z.object({
+  latitude: z.number().min(-90, 'Latitude must be between -90 and 90').max(90, 'Latitude must be between -90 and 90').optional(),
+  longitude: z.number().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180').optional(),
+  geofenceType: GeofenceTypeSchema.optional(),
+  geofenceRadiusMeters: z.number().int().min(50, 'Minimum radius is 50 meters').max(5000, 'Maximum radius is 5000 meters').optional(),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3, 'Polygon geofence requires at least 3 vertices').optional().nullable(),
+  autoArrivalEnabled: z.boolean().optional(),
+});
+export type UpdateSchoolGeofenceRequest = z.infer<typeof UpdateSchoolGeofenceRequestSchema>;
+
 // 1. School (Tenant Root)
 export const SchoolSchema = z.object({
   id: z.string().uuid().optional(),
@@ -178,6 +212,12 @@ export const SchoolSchema = z.object({
   affiliationNumber: z.string().optional().nullable(),
   website: z.string().url('Valid website URL required').optional().nullable(),
   timezone: z.string().default('Asia/Kolkata'),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  geofenceType: GeofenceTypeSchema.default('RADIUS').optional(),
+  geofenceRadiusMeters: z.number().int().min(50).max(5000).default(500).optional(),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3).optional().nullable(),
+  autoArrivalEnabled: z.boolean().default(true).optional(),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional(),
 });
@@ -195,6 +235,12 @@ export const UpdateSchoolProfileRequestSchema = z.object({
   affiliationNumber: z.string().max(100).optional().nullable().or(z.literal('')),
   website: z.string().url('Please provide a valid website URL').optional().nullable().or(z.literal('')),
   timezone: z.string().default('Asia/Kolkata').optional(),
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+  geofenceType: GeofenceTypeSchema.optional(),
+  geofenceRadiusMeters: z.number().int().min(50).max(5000).optional(),
+  geofencePolygon: z.array(PolygonCoordinateSchema).min(3).optional().nullable(),
+  autoArrivalEnabled: z.boolean().optional(),
 });
 export type UpdateSchoolProfileRequest = z.infer<typeof UpdateSchoolProfileRequestSchema>;
 
@@ -979,14 +1025,6 @@ export const PickupLocationSchema = z.object({
 export type PickupLocation = z.infer<typeof PickupLocationSchema>;
 
 // 8a. Route Stop Detail & Management (Micro-phase 15.2, 21.1)
-export const GeofenceTypeSchema = z.enum(['RADIUS', 'POLYGON']);
-export type GeofenceType = z.infer<typeof GeofenceTypeSchema>;
-
-export const PolygonCoordinateSchema = z.object({
-  latitude: z.number().min(-90, 'Latitude must be between -90 and 90').max(90, 'Latitude must be between -90 and 90'),
-  longitude: z.number().min(-180, 'Longitude must be between -180 and 180').max(180, 'Longitude must be between -180 and 180'),
-});
-export type PolygonCoordinate = z.infer<typeof PolygonCoordinateSchema>;
 
 export const RouteStopDetailSchema = z.object({
   id: z.string().uuid(),
@@ -1304,13 +1342,15 @@ export interface TelemetryFeedEvent {
   etaSummary?: RouteEtaSummary | null;
   /** True when the bus is detected as stationary (speed ≤ 2 km/h) */
   isStoppedBus?: boolean | null;
-  // Phase 21.1: Geofence event details
+  // Phase 21.1 & 21.2: Geofence event details
   eventType?: 'ENTRY' | 'EXIT' | 'DWELL';
+  targetType?: 'STOP' | 'SCHOOL';
   stopId?: string;
   stopName?: string;
   sequenceOrder?: number;
-  status?: 'INSIDE' | 'OUTSIDE';
+  status?: 'INSIDE' | 'OUTSIDE' | 'ARRIVED_SCHOOL';
   distanceMeters?: number;
+  distanceToCenterMeters?: number;
   dwellTimeSeconds?: number;
 }
 
@@ -3612,10 +3652,16 @@ export const GeofenceNotificationResultSchema = z.object({
 export type GeofenceNotificationResult = z.infer<typeof GeofenceNotificationResultSchema>;
 
 // =============================================================================
-// Phase 21.1 — Pickup Geofence Radius/Shape & Entry/Exit Transition Schemas
+// Phase 21.1 / 21.2 — Geofence Transition & Event Schemas
 // =============================================================================
 
-export const GeofenceEventTypeSchema = z.enum(['ENTRY', 'EXIT', 'DWELL']);
+export const GeofenceEventTypeSchema = z.enum([
+  'ENTRY',
+  'EXIT',
+  'DWELL',
+  'SCHOOL_ARRIVAL',
+  'SCHOOL_DEPARTURE',
+]);
 export type GeofenceEventType = z.infer<typeof GeofenceEventTypeSchema>;
 
 export const GeofenceStateStatusSchema = z.enum(['INSIDE', 'OUTSIDE']);
@@ -3623,7 +3669,7 @@ export type GeofenceStateStatus = z.infer<typeof GeofenceStateStatusSchema>;
 
 export const GeofenceShapeSchema = z.object({
   geofenceType: GeofenceTypeSchema,
-  geofenceRadiusMeters: z.number().int().min(50).max(2000).optional(),
+  geofenceRadiusMeters: z.number().int().min(50).max(5000).optional(),
   geofencePolygon: z.array(PolygonCoordinateSchema).min(3).optional().nullable(),
 });
 export type GeofenceShape = z.infer<typeof GeofenceShapeSchema>;
@@ -3640,9 +3686,10 @@ export const GeofenceEventRecordSchema = z.object({
   schoolId: z.string().uuid(),
   tripId: z.string().uuid(),
   busId: z.string().uuid(),
-  stopId: z.string().uuid(),
+  stopId: z.string().uuid().nullable().optional(),
   stopName: z.string().optional().nullable(),
   sequenceOrder: z.number().int().optional().nullable(),
+  targetType: z.enum(['STOP', 'SCHOOL']).default('STOP'),
   eventType: GeofenceEventTypeSchema,
   latitude: z.number(),
   longitude: z.number(),

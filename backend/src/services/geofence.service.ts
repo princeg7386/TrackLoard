@@ -7,9 +7,11 @@ import {
   TripStopGeofenceState,
   GeofenceEventRecord,
   UpdateStopGeofenceRequest,
+  TripStatus,
 } from '@school-bus/shared';
 import { SpatialService } from './spatial.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
+import { TripService } from './trip.service.js';
 import { logger } from './logger.service.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../middlewares/error.middleware.js';
 
@@ -352,6 +354,7 @@ export class GeofenceService {
         e.trip_id AS "tripId",
         e.bus_id AS "busId",
         e.stop_id AS "stopId",
+        COALESCE(e.target_type, 'STOP') AS "targetType",
         p.stop_name AS "stopName",
         p.sequence_order AS "sequenceOrder",
         e.event_type AS "eventType",
@@ -362,7 +365,7 @@ export class GeofenceService {
         e.recorded_at::text AS "recordedAt",
         e.created_at::text AS "createdAt"
       FROM geofence_events e
-      JOIN pickup_locations p ON e.stop_id = p.id
+      LEFT JOIN pickup_locations p ON e.stop_id = p.id
       WHERE e.trip_id = $1
       ORDER BY e.recorded_at ASC, e.created_at ASC;
     `;
@@ -477,5 +480,196 @@ export class GeofenceService {
       geofenceRadiusMeters: updated[0].geofenceRadiusMeters,
       geofencePolygon: updated[0].geofencePolygon,
     };
+  }
+
+  /**
+   * Phase 21.2 — Detect School Arrival
+   *
+   * Evaluates active trip bus coordinates against destination school campus geofence.
+   * If inside:
+   * 1. Records immutable SCHOOL_ARRIVAL geofence event (idempotent).
+   * 2. Automatically advances trip status to ARRIVED_SCHOOL via TripService.arriveAtSchool (if auto_arrival_enabled).
+   * 3. Broadcasts real-time GEOFENCE_EVENT to parent and admin dashboards.
+   */
+  static async evaluateSchoolArrival(params: {
+    tripId: string;
+    schoolId: string;
+    busId: string;
+    latitude: number;
+    longitude: number;
+    recordedAt: Date;
+  }): Promise<{
+    evaluated: boolean;
+    arrived: boolean;
+    schoolId: string;
+    tripId: string;
+    distanceMeters?: number;
+    reason?: string;
+  }> {
+    const { tripId, schoolId, busId, latitude, longitude, recordedAt } = params;
+
+    try {
+      // 1. Verify trip is currently active (IN_TRANSIT or DELAYED)
+      const tripRows = await query<{ id: string; status: TripStatus }>(
+        `SELECT id, status FROM trips WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL LIMIT 1;`,
+        [tripId, schoolId]
+      );
+      const trip = tripRows[0];
+      if (!trip) {
+        return { evaluated: false, arrived: false, schoolId, tripId, reason: 'Trip not found' };
+      }
+      if (trip.status !== TripStatus.IN_TRANSIT && trip.status !== TripStatus.DELAYED) {
+        return { evaluated: false, arrived: false, schoolId, tripId, reason: `Trip not in transit (status: ${trip.status})` };
+      }
+
+      // 2. Fetch destination school campus geofence boundary
+      const schoolRows = await query<{
+        id: string;
+        name: string;
+        latitude: number | string | null;
+        longitude: number | string | null;
+        geofenceType: 'RADIUS' | 'POLYGON';
+        geofenceRadiusMeters: number | string;
+        geofencePolygon: GeoCoordinates[] | null;
+        autoArrivalEnabled: boolean;
+      }>(
+        `SELECT
+           id,
+           name,
+           latitude,
+           longitude,
+           COALESCE(geofence_type, 'RADIUS') AS "geofenceType",
+           COALESCE(geofence_radius_meters, 500) AS "geofenceRadiusMeters",
+           geofence_polygon AS "geofencePolygon",
+           COALESCE(auto_arrival_enabled, TRUE) AS "autoArrivalEnabled"
+         FROM schools
+         WHERE id = $1 AND deleted_at IS NULL
+         LIMIT 1;`,
+        [schoolId]
+      );
+      const school = schoolRows[0];
+      if (!school) {
+        return { evaluated: false, arrived: false, schoolId, tripId, reason: 'School not found' };
+      }
+
+      const schoolLat = school.latitude !== null && school.latitude !== undefined ? Number(school.latitude) : null;
+      const schoolLng = school.longitude !== null && school.longitude !== undefined ? Number(school.longitude) : null;
+
+      // Cannot evaluate boundary if center coords are missing and polygon is missing
+      if (schoolLat === null || schoolLng === null) {
+        if (!school.geofencePolygon || school.geofencePolygon.length < 3) {
+          return { evaluated: false, arrived: false, schoolId, tripId, reason: 'School campus coordinates not configured' };
+        }
+      }
+
+      // 3. Evaluate point-in-geofence (radius or custom polygon)
+      const { isInside, distanceMeters } = SpatialService.isPointInGeofenceShape(
+        { latitude, longitude },
+        {
+          latitude: schoolLat ?? 0,
+          longitude: schoolLng ?? 0,
+          geofenceType: school.geofenceType,
+          geofenceRadiusMeters: Number(school.geofenceRadiusMeters),
+          geofencePolygon: school.geofencePolygon,
+        }
+      );
+
+      if (!isInside) {
+        return { evaluated: true, arrived: false, schoolId, tripId, distanceMeters };
+      }
+
+      // 4. Idempotency: Has arrival already been logged for this trip?
+      const existingArrival = await query<{ id: string }>(
+        `SELECT id FROM geofence_events
+         WHERE trip_id = $1 AND target_type = 'SCHOOL' AND event_type = 'SCHOOL_ARRIVAL'
+         LIMIT 1;`,
+        [tripId]
+      );
+
+      if (existingArrival.length > 0) {
+        return {
+          evaluated: true,
+          arrived: true,
+          schoolId,
+          tripId,
+          distanceMeters,
+          reason: 'Already arrived at school (idempotent)',
+        };
+      }
+
+      // 5. Insert SCHOOL_ARRIVAL event
+      await query(
+        `INSERT INTO geofence_events (
+           school_id, trip_id, bus_id, stop_id, target_type, event_type,
+           latitude, longitude, distance_to_center_meters, dwell_time_seconds, recorded_at
+         ) VALUES ($1, $2, $3, NULL, 'SCHOOL', 'SCHOOL_ARRIVAL', $4, $5, $6, 0, $7::timestamptz);`,
+        [
+          schoolId,
+          tripId,
+          busId,
+          latitude,
+          longitude,
+          Math.round(distanceMeters),
+          recordedAt.toISOString(),
+        ]
+      );
+
+      // 6. Broadcast real-time SSE event
+      RealtimeFeedService.publish({
+        type: 'GEOFENCE_EVENT',
+        schoolId,
+        tripId,
+        busId,
+        eventType: 'ENTRY',
+        targetType: 'SCHOOL',
+        status: school.autoArrivalEnabled ? 'ARRIVED_SCHOOL' : 'INSIDE',
+        distanceToCenterMeters: Math.round(distanceMeters),
+        timestamp: recordedAt.toISOString(),
+      });
+
+      // 7. Advance trip state machine if auto_arrival_enabled
+      if (school.autoArrivalEnabled) {
+        try {
+          await TripService.arriveAtSchool(schoolId, tripId, {
+            schoolId,
+            isDriver: false,
+            userRole: 'AUTO_GEOFENCE',
+          });
+        } catch (err: unknown) {
+          logger.warn(`[GeofenceService] Auto-arrival trip update suppressed: ${err instanceof Error ? err.message : String(err)}`, {
+            schoolId,
+            tripId,
+          });
+        }
+      }
+
+      logger.info(`[GeofenceService] Bus entered destination campus for trip ${tripId} (autoArrival: ${school.autoArrivalEnabled})`, {
+        schoolId,
+        tripId,
+        busId,
+        distanceMeters,
+      });
+
+      return {
+        evaluated: true,
+        arrived: true,
+        schoolId,
+        tripId,
+        distanceMeters,
+      };
+    } catch (err: unknown) {
+      logger.error('[GeofenceService] Error evaluating school arrival:', {
+        tripId,
+        schoolId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        evaluated: false,
+        arrived: false,
+        schoolId,
+        tripId,
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 }
