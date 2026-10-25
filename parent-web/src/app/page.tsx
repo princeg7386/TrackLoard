@@ -1,22 +1,26 @@
 /**
- * Parent Live Tracking Page — parent-web
+ * Parent Live Tracking Page — parent-web (Phase 23)
  *
- * Accessible via tokenised WhatsApp link:
- *   /track?token=<parent_token>   OR   /<token>
+ * Micro-phase 23.1: Secure Entry (Token Validation, Expiry, Revocation)
+ * Accessible via tokenized WhatsApp link:
+ *   /track?token=<parent_token>   OR   /?token=<parent_token>
  *
- * Responsibilities:
- *  1. Validate token by fetching session from /api/v1/parent/track/:token
- *  2. Open SSE stream at /api/v1/parent/feed/:token for real-time location + ETA
- *  3. Render appropriate state: Loading → Error | Expired | No-Trip | Live | Completed
- *  4. Auto-reconnect SSE with exponential back-off on disconnect
- *
- * No dependencies beyond next/react/lucide-react/tailwind (already installed).
- * Map tile: OpenStreetMap static image (no API key required).
+ * Responsibilities for Secure Entry:
+ *  1. Validate incoming token by calling /api/v1/parent/track/:token/verify-entry
+ *     (with graceful fallback to /api/v1/parent/track/:token)
+ *  2. Render appropriate state with full fidelity:
+ *     - Loading → Verifying link security
+ *     - No Token → Guidance to use link from WhatsApp
+ *     - Invalid → Token not found in system with support contact
+ *     - Expired → Security explanation, expiration timestamp, WhatsApp renewal action & helpline
+ *     - Revoked → Distinct security deactivation notice, revocation timestamp & helpline
+ *     - Error → Network failure with retry capability
+ *     - Ready → Full live tracking dashboard with SSE streaming
  */
 
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
@@ -24,28 +28,28 @@ import {
   CheckCircle2,
   Clock,
   MapPin,
+  MessageSquare,
   Navigation,
   Phone,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   User,
   Wifi,
   WifiOff,
   XCircle,
 } from 'lucide-react';
+import {
+  ParentLiveWebSecureEntryResponse,
+  ParentTokenStatus,
+  TripStatus,
+  RouteType,
+  ParentPickupEta,
+} from '@school-bus/shared';
 
 // ─────────────────────────────────────────────────────────────
-// Types (mirrors backend shared types — no extra import needed)
+// Types
 // ─────────────────────────────────────────────────────────────
-
-type TripStatus =
-  | 'SCHEDULED'
-  | 'IN_TRANSIT'
-  | 'DELAYED'
-  | 'ARRIVED_SCHOOL'
-  | 'COMPLETED'
-  | 'CANCELLED'
-  | 'EMERGENCY';
 
 interface PickupStop {
   id: string;
@@ -68,7 +72,7 @@ interface GpsLocation {
 interface ActiveTrip {
   id: string;
   routeName: string;
-  routeType: string;
+  routeType: RouteType;
   status: TripStatus;
   busNumber: string;
   registrationNumber: string;
@@ -83,48 +87,13 @@ interface TrackingSession {
   isValid: boolean;
   expiresAt: string;
   parent: { id: string; fullName: string; relationship: string; phone: string };
-  student: { id: string; fullName: string; gradeSection?: string | null };
+  student: { id: string; fullName: string; admissionNumber?: string | null; classGrade?: string | null; section?: string | null };
   school: { id: string; name: string; code: string; timezone: string };
   pickupStop?: PickupStop | null;
   activeTrip?: ActiveTrip | null;
   parentEta?: ParentPickupEta | null;
 }
 
-export type ParentEtaStatus = 'AVAILABLE' | 'APPROACHING' | 'PASSED' | 'ARRIVED' | 'UNAVAILABLE';
-
-export type ParentEtaUnavailableReason =
-  | 'NO_ACTIVE_TRIP'
-  | 'TRIP_NOT_STARTED'
-  | 'TRIP_COMPLETED'
-  | 'TRIP_CANCELLED'
-  | 'GPS_UNAVAILABLE'
-  | 'NO_STOP_ASSIGNED'
-  | 'STOP_NOT_ON_ROUTE'
-  | 'STOP_ALREADY_PASSED'
-  | 'CALCULATION_PENDING';
-
-export interface ParentPickupEta {
-  tripId?: string | null;
-  stopId?: string | null;
-  stopName?: string | null;
-  sequenceOrder?: number | null;
-  durationSeconds?: number | null;
-  distanceMeters?: number | null;
-  etaMinutes?: number | null;
-  estimatedArrivalAt?: string | null;
-  status: ParentEtaStatus;
-  isAvailable: boolean;
-  unavailableReason?: ParentEtaUnavailableReason | null;
-  unavailableMessage?: string | null;
-  isApproaching: boolean;
-  isPassed: boolean;
-  isStoppedBus?: boolean;
-  effectiveSpeedKmh?: number;
-  lastUpdatedAt?: string | null;
-  calculatedAt?: string | null;
-}
-
-// SSE event from /api/v1/parent/feed/:token
 interface SseFeedEvent {
   type: 'INITIAL_STATE' | 'LOCATION_UPDATE' | 'ETA_UPDATE' | 'HEARTBEAT';
   tripId?: string;
@@ -141,16 +110,14 @@ interface SseFeedEvent {
   timestamp?: string;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Page state machine
-// ─────────────────────────────────────────────────────────────
-
-type PageState =
+export type PageState =
   | { phase: 'loading' }
   | { phase: 'no_token' }
+  | { phase: 'invalid'; message?: string; supportPhone?: string }
+  | { phase: 'expired'; expiresAt?: string; supportPhone?: string; emergencyPhone?: string; whatsappAction?: string }
+  | { phase: 'revoked'; revokedAt?: string; message?: string; supportPhone?: string; emergencyPhone?: string }
   | { phase: 'error'; message: string; retryable: boolean }
-  | { phase: 'expired' }
-  | { phase: 'ready'; session: TrackingSession };
+  | { phase: 'ready'; session: TrackingSession; supportPhone?: string; emergencyPhone?: string };
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -165,43 +132,43 @@ const STATUS_META: Record<
   TripStatus,
   { label: string; color: string; bg: string; Icon: typeof Bus }
 > = {
-  SCHEDULED: {
+  [TripStatus.SCHEDULED]: {
     label: 'Scheduled',
     color: 'text-slate-600',
     bg: 'bg-slate-100',
     Icon: Clock,
   },
-  IN_TRANSIT: {
+  [TripStatus.IN_TRANSIT]: {
     label: 'In Transit',
     color: 'text-sky-700',
     bg: 'bg-sky-100',
     Icon: Bus,
   },
-  DELAYED: {
+  [TripStatus.DELAYED]: {
     label: 'Delayed',
     color: 'text-amber-700',
     bg: 'bg-amber-100',
     Icon: AlertTriangle,
   },
-  ARRIVED_SCHOOL: {
+  [TripStatus.ARRIVED_SCHOOL]: {
     label: 'Arrived at School',
     color: 'text-emerald-700',
     bg: 'bg-emerald-100',
     Icon: CheckCircle2,
   },
-  COMPLETED: {
+  [TripStatus.COMPLETED]: {
     label: 'Trip Completed',
     color: 'text-emerald-700',
     bg: 'bg-emerald-100',
     Icon: CheckCircle2,
   },
-  CANCELLED: {
+  [TripStatus.CANCELLED]: {
     label: 'Cancelled',
     color: 'text-slate-500',
     bg: 'bg-slate-100',
     Icon: XCircle,
   },
-  EMERGENCY: {
+  [TripStatus.EMERGENCY]: {
     label: 'Emergency — SOS',
     color: 'text-red-700',
     bg: 'bg-red-100',
@@ -209,11 +176,27 @@ const STATUS_META: Record<
   },
 };
 
-function fmtTime(iso: string | null | undefined, tz: string): string {
+function fmtTime(iso: string | null | undefined, tz: string = 'Asia/Kolkata'): string {
   if (!iso) return '—';
   try {
     return new Date(iso).toLocaleTimeString('en-IN', {
       timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function fmtDateTime(iso: string | null | undefined, tz: string = 'Asia/Kolkata'): string {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString('en-IN', {
+      timeZone: tz,
+      day: 'numeric',
+      month: 'short',
       hour: '2-digit',
       minute: '2-digit',
       hour12: true,
@@ -233,7 +216,6 @@ function fmtRelative(iso: string | null | undefined): string {
 }
 
 function staticMapUrl(lat: number, lng: number, zoom = 14): string {
-  // OpenStreetMap static map — no API key required
   const w = 600;
   const h = 280;
   return `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=${zoom}&size=${w}x${h}&markers=${lat},${lng},red`;
@@ -247,12 +229,11 @@ function bearing2Arrow(deg: number | null | undefined): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Component
+// Content Component
 // ─────────────────────────────────────────────────────────────
 
-export default function ParentTrackPage() {
+function ParentTrackContent() {
   const params = useSearchParams();
-  // Accept token from ?token= query param (WhatsApp link format)
   const token = params.get('token') ?? '';
 
   const [pageState, setPageState] = useState<PageState>({ phase: 'loading' });
@@ -272,7 +253,7 @@ export default function ParentTrackPage() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
 
-  // ── 1. Fetch initial session ──────────────────────────────
+  // ── 1. Secure Entry Token Validation ────────────────────────
 
   useEffect(() => {
     if (!token) {
@@ -282,43 +263,117 @@ export default function ParentTrackPage() {
 
     const controller = new AbortController();
 
-    fetch(`${API_BASE}/api/v1/parent/track/${encodeURIComponent(token)}`, {
+    // Call verify-entry endpoint
+    fetch(`${API_BASE}/api/v1/parent/track/${encodeURIComponent(token)}/verify-entry`, {
       signal: controller.signal,
       headers: { Accept: 'application/json' },
     })
       .then(async (res) => {
-        if (res.status === 401 || res.status === 403) {
-          setPageState({ phase: 'expired' });
-          return;
-        }
         if (!res.ok) {
-          const body = await res.json().catch(() => ({})) as { message?: string };
-          throw new Error(body?.message ?? `Server error (${res.status})`);
-        }
-        const json = await res.json() as { data: TrackingSession };
-        const session = json.data;
+          // Fall back to direct session check if verify-entry route is unreachable
+          const directRes = await fetch(
+            `${API_BASE}/api/v1/parent/track/${encodeURIComponent(token)}`,
+            {
+              signal: controller.signal,
+              headers: { Accept: 'application/json' },
+            }
+          );
 
-        if (!session.isValid) {
-          setPageState({ phase: 'expired' });
+          if (directRes.status === 401 || directRes.status === 403) {
+            const errJson = (await directRes.json().catch(() => ({}))) as any;
+            const reason = errJson?.error?.details?.reason;
+            const msg = errJson?.error?.message || '';
+
+            if (reason === 'TOKEN_REVOKED' || msg.toLowerCase().includes('revoked')) {
+              setPageState({
+                phase: 'revoked',
+                message: msg,
+              });
+              return;
+            }
+
+            if (reason === 'TOKEN_EXPIRED' || msg.toLowerCase().includes('expired')) {
+              setPageState({
+                phase: 'expired',
+                expiresAt: errJson?.error?.details?.expiresAt,
+              });
+              return;
+            }
+
+            setPageState({
+              phase: 'invalid',
+              message: msg || 'Invalid or unrecognizable tracking link.',
+            });
+            return;
+          }
+
+          if (!directRes.ok) {
+            throw new Error(`Server returned error (${directRes.status})`);
+          }
+
+          const directJson = (await directRes.json()) as { data: TrackingSession };
+          setPageState({ phase: 'ready', session: directJson.data });
           return;
         }
 
-        setPageState({ phase: 'ready', session });
+        const json = (await res.json()) as { data: ParentLiveWebSecureEntryResponse };
+        const entry = json.data;
 
-        // Seed live state from session snapshot
-        if (session.parentEta) {
-          setLiveParentEta(session.parentEta);
-          if (session.parentEta.lastUpdatedAt) {
-            setLastEtaUpdate(session.parentEta.lastUpdatedAt);
-          }
+        if (entry.status === 'EXPIRED') {
+          setPageState({
+            phase: 'expired',
+            expiresAt: entry.expiresAt ?? undefined,
+            supportPhone: entry.schoolSupport?.supportPhone ?? undefined,
+            emergencyPhone: entry.schoolSupport?.emergencyPhone ?? undefined,
+            whatsappAction: entry.schoolSupport?.whatsappHelpAction ?? undefined,
+          });
+          return;
         }
 
-        if (session.activeTrip) {
-          setLiveStatus(session.activeTrip.status);
-          setLiveDelay(session.activeTrip.delayMinutes);
-          if (session.activeTrip.lastGpsLocation) {
-            setLiveLocation(session.activeTrip.lastGpsLocation);
-            setLastHeard(session.activeTrip.lastGpsLocation.recordedAt);
+        if (entry.status === 'REVOKED') {
+          setPageState({
+            phase: 'revoked',
+            revokedAt: entry.revokedAt ?? undefined,
+            message: entry.message,
+            supportPhone: entry.schoolSupport?.supportPhone ?? undefined,
+            emergencyPhone: entry.schoolSupport?.emergencyPhone ?? undefined,
+          });
+          return;
+        }
+
+        if (entry.status === 'INVALID' || entry.status === 'MISSING') {
+          setPageState({
+            phase: 'invalid',
+            message: entry.message,
+            supportPhone: entry.schoolSupport?.supportPhone ?? undefined,
+          });
+          return;
+        }
+
+        if (entry.status === 'VALID' && entry.session) {
+          const session = entry.session as TrackingSession;
+          setPageState({
+            phase: 'ready',
+            session,
+            supportPhone: entry.schoolSupport?.supportPhone ?? undefined,
+            emergencyPhone: entry.schoolSupport?.emergencyPhone ?? undefined,
+          });
+
+          // Seed live state from session snapshot
+          if (session.parentEta) {
+            setLiveParentEta(session.parentEta);
+            if (session.parentEta.lastUpdatedAt) {
+              setLastEtaUpdate(session.parentEta.lastUpdatedAt);
+            }
+          }
+
+          if (session.activeTrip) {
+            setLiveStatus(session.activeTrip.status);
+            setLiveDelay(session.activeTrip.delayMinutes);
+            if (session.activeTrip.lastGpsLocation) {
+              setLiveLocation(session.activeTrip.lastGpsLocation);
+              setLastHeard(session.activeTrip.lastGpsLocation.recordedAt);
+            }
           }
         }
       })
@@ -326,7 +381,7 @@ export default function ParentTrackPage() {
         if (err.name !== 'AbortError') {
           setPageState({
             phase: 'error',
-            message: err.message,
+            message: err.message || 'Unable to connect to school bus tracking server',
             retryable: true,
           });
         }
@@ -348,7 +403,23 @@ export default function ParentTrackPage() {
     const es = new EventSource(url);
     sseRef.current = es;
 
-    const handleEvent = (raw: MessageEvent) => {
+    es.onopen = () => {
+      setSseConnected(true);
+      reconnectAttempts.current = 0;
+    };
+
+    es.onerror = () => {
+      setSseConnected(false);
+      es.close();
+      sseRef.current = null;
+
+      // Exponential back-off: 2s, 4s, 8s … capped at 30s
+      const delay = Math.min(2000 * Math.pow(2, reconnectAttempts.current), 30000);
+      reconnectAttempts.current += 1;
+      reconnectTimer.current = setTimeout(() => connectSse(), delay);
+    };
+
+    es.onmessage = (raw: MessageEvent) => {
       try {
         const evt = JSON.parse(raw.data as string) as SseFeedEvent;
         setLastHeard(new Date().toISOString());
@@ -380,29 +451,8 @@ export default function ParentTrackPage() {
           }
         }
       } catch {
-        // malformed message — ignore
+        // Ignore unparseable frames
       }
-    };
-
-    es.addEventListener('initial_state', handleEvent);
-    es.addEventListener('location_update', handleEvent);
-    es.addEventListener('eta_update', handleEvent);
-    es.addEventListener('message', handleEvent);
-
-    es.onopen = () => {
-      setSseConnected(true);
-      reconnectAttempts.current = 0;
-    };
-
-    es.onerror = () => {
-      setSseConnected(false);
-      es.close();
-      sseRef.current = null;
-
-      // Exponential back-off: 2s, 4s, 8s … capped at 30s
-      const delay = Math.min(2000 * Math.pow(2, reconnectAttempts.current), 30000);
-      reconnectAttempts.current += 1;
-      reconnectTimer.current = setTimeout(() => connectSse(), delay);
     };
   }, [token]);
 
@@ -435,88 +485,191 @@ export default function ParentTrackPage() {
     connectSse();
 
     return () => {
-      if (sseRef.current) { sseRef.current.close(); sseRef.current = null; }
+      if (sseRef.current) {
+        sseRef.current.close();
+        sseRef.current = null;
+      }
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     };
   }, [pageState.phase, connectSse]);
 
-  // Tick to keep "X ago" fresh
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 15000);
-    return () => clearInterval(id);
-  }, []);
-  void tick; // consumed for re-render
-
   // ── 3. Derived display values ─────────────────────────────
 
   const session = pageState.phase === 'ready' ? pageState.session : null;
-  const effectiveStatus: TripStatus = liveStatus ?? session?.activeTrip?.status ?? 'SCHEDULED';
+  const effectiveStatus: TripStatus = liveStatus ?? session?.activeTrip?.status ?? TripStatus.SCHEDULED;
   const effectiveDelay = liveDelay ?? session?.activeTrip?.delayMinutes ?? 0;
   const tz = session?.school.timezone ?? 'Asia/Kolkata';
-  const statusMeta = STATUS_META[effectiveStatus];
-
-  // Effective Parent Pickup ETA
+  const statusMeta = STATUS_META[effectiveStatus] ?? STATUS_META[TripStatus.SCHEDULED];
   const effectiveEta: ParentPickupEta | null = liveParentEta ?? session?.parentEta ?? null;
 
   // ── 4. Render states ──────────────────────────────────────
 
+  // 4a. Loading State
   if (pageState.phase === 'loading') {
     return (
       <Shell>
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 py-24">
-          <div className="w-8 h-8 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-slate-500">Verifying your tracking link…</p>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 py-28 px-4 text-center">
+          <div className="relative">
+            <div className="w-12 h-12 border-3 border-sky-600/30 border-t-sky-600 rounded-full animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Bus className="w-5 h-5 text-sky-600 animate-pulse" />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-slate-800">Verifying secure tracking link…</p>
+            <p className="text-xs text-slate-400">Authenticating student and school transport credentials</p>
+          </div>
         </div>
       </Shell>
     );
   }
 
+  // 4b. No Token State
   if (pageState.phase === 'no_token') {
     return (
       <Shell>
-        <ErrorCard
-          icon={<XCircle className="w-8 h-8 text-red-400" />}
-          title="No tracking link found"
-          body="Please use the secure link sent to your WhatsApp to track your child's bus."
-          retryable={false}
+        <SecureCard
+          badge={{ label: 'Link Required', color: 'bg-slate-100 text-slate-700' }}
+          icon={<MessageSquare className="w-8 h-8 text-sky-600" />}
+          title="No Tracking Link Found"
+          body="Live bus tracking requires a secure student link sent directly to your WhatsApp mobile number."
+          tips="To track your child's bus, open the link in your WhatsApp transport messages or reply TRACK on WhatsApp."
         />
       </Shell>
     );
   }
 
+  // 4c. Expired Token State
   if (pageState.phase === 'expired') {
     return (
       <Shell>
-        <ErrorCard
-          icon={<Clock className="w-8 h-8 text-amber-400" />}
-          title="Tracking link expired"
-          body="This tracking link is no longer valid. Contact your school transport office for a new link."
-          retryable={false}
+        <SecureCard
+          badge={{ label: 'Session Expired', color: 'bg-amber-100 text-amber-800' }}
+          icon={<Clock className="w-8 h-8 text-amber-600" />}
+          title="Tracking Link Has Expired"
+          body="For student privacy and safety, live tracking links expire after each journey or scheduled duration."
+          metaTime={pageState.expiresAt ? `Expired on ${fmtDateTime(pageState.expiresAt)}` : undefined}
+          tips="You can instantly request a fresh live tracking link by replying TRACK or 1 to your school WhatsApp chat."
+          actions={
+            <div className="flex flex-col gap-2 pt-2 w-full">
+              <a
+                href="https://wa.me/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xs transition-colors"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Request Fresh Link via WhatsApp
+              </a>
+              {pageState.supportPhone && (
+                <a
+                  href={`tel:${pageState.supportPhone}`}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  Call Transport Desk: {pageState.supportPhone}
+                </a>
+              )}
+            </div>
+          }
         />
       </Shell>
     );
   }
 
+  // 4d. Revoked Token State
+  if (pageState.phase === 'revoked') {
+    return (
+      <Shell>
+        <SecureCard
+          badge={{ label: 'Security Deactivation', color: 'bg-red-100 text-red-800' }}
+          icon={<ShieldAlert className="w-8 h-8 text-red-600" />}
+          title="Tracking Link Deactivated"
+          body="This live tracking link was revoked by school transport administration for security reasons (e.g. stop update, student reassignment, or coordinator reset)."
+          metaTime={pageState.revokedAt ? `Deactivated on ${fmtDateTime(pageState.revokedAt)}` : undefined}
+          tips="To protect student safety, revoked links cannot be reused. Please contact your school coordinator for an updated link."
+          actions={
+            <div className="flex flex-col gap-2 pt-2 w-full">
+              {pageState.emergencyPhone ? (
+                <a
+                  href={`tel:${pageState.emergencyPhone}`}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xs transition-colors"
+                >
+                  <Phone className="w-4 h-4" />
+                  Call Emergency Desk: {pageState.emergencyPhone}
+                </a>
+              ) : pageState.supportPhone ? (
+                <a
+                  href={`tel:${pageState.supportPhone}`}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xs transition-colors"
+                >
+                  <Phone className="w-4 h-4" />
+                  Call Transport Helpline: {pageState.supportPhone}
+                </a>
+              ) : null}
+            </div>
+          }
+        />
+      </Shell>
+    );
+  }
+
+  // 4e. Invalid Token State
+  if (pageState.phase === 'invalid') {
+    return (
+      <Shell>
+        <SecureCard
+          badge={{ label: 'Link Not Recognized', color: 'bg-slate-100 text-slate-700' }}
+          icon={<XCircle className="w-8 h-8 text-red-500" />}
+          title="Invalid Tracking Link"
+          body={pageState.message || 'We could not recognize or verify this link in the school transport system.'}
+          tips="Please verify that you tapped the full link from your WhatsApp message without truncation."
+          actions={
+            pageState.supportPhone ? (
+              <a
+                href={`tel:${pageState.supportPhone}`}
+                className="mt-2 inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                Call Helpline: {pageState.supportPhone}
+              </a>
+            ) : undefined
+          }
+        />
+      </Shell>
+    );
+  }
+
+  // 4f. Error / Network State
   if (pageState.phase === 'error') {
     return (
       <Shell>
-        <ErrorCard
-          icon={<AlertTriangle className="w-8 h-8 text-red-400" />}
-          title="Unable to load tracking"
+        <SecureCard
+          badge={{ label: 'Network Error', color: 'bg-amber-100 text-amber-800' }}
+          icon={<AlertTriangle className="w-8 h-8 text-amber-500" />}
+          title="Unable to Load Live Tracking"
           body={pageState.message}
-          retryable={pageState.retryable}
-          onRetry={() => {
-            setPageState({ phase: 'loading' });
-            // retrigger useEffect by forcing token re-read
-            window.location.reload();
-          }}
+          actions={
+            pageState.retryable ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPageState({ phase: 'loading' });
+                  window.location.reload();
+                }}
+                className="mt-2 inline-flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry Connection
+              </button>
+            ) : undefined
+          }
         />
       </Shell>
     );
   }
 
-  // ── phase === 'ready' ──────────────────────────────────────
+  // ── 5. Ready State (Live Tracking View) ────────────────────
 
   const { student, school, pickupStop, activeTrip } = session!;
   const loc = liveLocation ?? activeTrip?.lastGpsLocation ?? null;
@@ -524,40 +677,47 @@ export default function ParentTrackPage() {
   return (
     <Shell sseConnected={sseConnected} hasActiveTrip={!!activeTrip}>
       <div className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-3">
-
-        {/* ── Student & School Card ─────────────────── */}
+        {/* Student & School Banner */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4">
-          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-            Tracking
-          </p>
-          <p className="text-xl font-bold text-slate-900 leading-tight">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
+              Live Student Transport
+            </span>
+            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+              <ShieldCheck className="w-3 h-3" />
+              Verified Link
+            </span>
+          </div>
+          <p className="text-xl font-bold text-slate-900 leading-tight mt-1">
             {student.fullName}
           </p>
-          {student.gradeSection && (
-            <p className="text-xs text-slate-500 mt-0.5">{student.gradeSection}</p>
+          {(student.classGrade || student.admissionNumber) && (
+            <p className="text-xs text-slate-500 mt-0.5">
+              {student.classGrade ? `Class ${student.classGrade}${student.section ? `-${student.section}` : ''}` : ''}
+              {student.admissionNumber ? ` · ID: ${student.admissionNumber}` : ''}
+            </p>
           )}
           <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-            <MapPin className="w-3 h-3" />
+            <MapPin className="w-3 h-3 text-slate-400" />
             {school.name}
           </p>
         </div>
 
-        {/* ── No active trip ───────────────────────── */}
+        {/* No active trip notice */}
         {!activeTrip && (
           <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-6 text-center space-y-2">
             <Bus className="w-10 h-10 text-slate-300 mx-auto" />
-            <p className="text-sm font-semibold text-slate-700">No trip in progress</p>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Live tracking activates automatically once a trip for your child begins.
-              You will receive a WhatsApp message when the bus departs.
+            <p className="text-sm font-semibold text-slate-700">No Trip Currently in Progress</p>
+            <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto">
+              Live bus telemetry activates automatically when the morning pickup or afternoon drop trip begins.
             </p>
             {pickupStop && (
               <div className="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500">
-                Your pickup stop:{' '}
-                <span className="font-medium text-slate-700">{pickupStop.stopName}</span>
+                Assigned pickup stop:{' '}
+                <span className="font-semibold text-slate-700">{pickupStop.stopName}</span>
                 {pickupStop.scheduledTime && (
                   <span className="ml-1 text-slate-400">
-                    · {fmtTime(pickupStop.scheduledTime, tz)}
+                    · {pickupStop.scheduledTime}
                   </span>
                 )}
               </div>
@@ -565,10 +725,10 @@ export default function ParentTrackPage() {
           </div>
         )}
 
-        {/* ── Active trip panels ───────────────────── */}
+        {/* Active Trip Panels */}
         {activeTrip && (
           <>
-            {/* Status banner */}
+            {/* Status Banner */}
             <div
               className={`rounded-xl border shadow-xs p-4 flex items-start gap-3 ${statusMeta.bg} border-transparent`}
             >
@@ -592,7 +752,7 @@ export default function ParentTrackPage() {
               </div>
             </div>
 
-            {/* ETA card */}
+            {/* ETA Card */}
             {pickupStop && (
               <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
                 <div className="flex items-center justify-between">
@@ -619,14 +779,13 @@ export default function ParentTrackPage() {
                   </div>
                 </div>
 
-                {/* Stop info & primary ETA */}
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-slate-800 text-sm">
                       {pickupStop.stopName}
                     </p>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      Scheduled: {fmtTime(pickupStop.scheduledTime, tz)}
+                      Scheduled: {pickupStop.scheduledTime}
                     </p>
                   </div>
 
@@ -654,15 +813,7 @@ export default function ParentTrackPage() {
                       </div>
                     ) : (
                       <div className="text-right">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${
-                            effectiveEta?.status === 'PASSED'
-                              ? 'bg-slate-100 text-slate-600'
-                              : effectiveEta?.unavailableReason === 'GPS_UNAVAILABLE'
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-slate-100 text-slate-500'
-                          }`}
-                        >
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
                           {effectiveEta?.status === 'PASSED'
                             ? 'Passed'
                             : effectiveEta?.unavailableReason === 'TRIP_NOT_STARTED'
@@ -676,33 +827,18 @@ export default function ParentTrackPage() {
                   </div>
                 </div>
 
-                {/* Contextual notice banners */}
                 {effectiveEta?.isApproaching && (
                   <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-2.5 flex items-center gap-2 text-xs text-emerald-800 animate-pulse">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
                     <span className="font-medium">
-                      The bus is approaching {pickupStop.stopName}! Please be ready at the stop.
+                      The bus is approaching {pickupStop.stopName}! Please be at the stop.
                     </span>
-                  </div>
-                )}
-
-                {effectiveEta?.isStoppedBus && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 flex items-center gap-2 text-xs text-amber-800">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
-                    <span>The bus is currently stationary (traffic hold applied to ETA).</span>
-                  </div>
-                )}
-
-                {!effectiveEta?.isAvailable && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-600 leading-relaxed">
-                    {effectiveEta?.unavailableMessage ??
-                      'Live arrival estimate is currently unavailable. Scheduled pickup is active.'}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Map */}
+            {/* Static Map */}
             {loc && (
               <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
                 <div className="px-4 pt-3 pb-2 flex items-center justify-between">
@@ -715,7 +851,6 @@ export default function ParentTrackPage() {
                   </span>
                 </div>
 
-                {/* Static map tile */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={staticMapUrl(loc.latitude, loc.longitude)}
@@ -724,15 +859,10 @@ export default function ParentTrackPage() {
                   loading="lazy"
                 />
 
-                {/* Speed / bearing pill */}
                 <div className="px-4 py-2.5 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs text-slate-600">
-                    <span className="text-base">
-                      {bearing2Arrow(loc.bearingDegrees)}
-                    </span>
-                    <span className="font-medium">
-                      {Math.round(loc.speedKmh)} km/h
-                    </span>
+                    <span className="text-base">{bearing2Arrow(loc.bearingDegrees)}</span>
+                    <span className="font-medium">{Math.round(loc.speedKmh)} km/h</span>
                   </div>
                   <p className="text-[10px] text-slate-400 font-mono">
                     {loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)}
@@ -741,10 +871,10 @@ export default function ParentTrackPage() {
               </div>
             )}
 
-            {/* Driver info */}
+            {/* Driver Card */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-2">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                Driver
+                Bus Crew
               </p>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -752,19 +882,14 @@ export default function ParentTrackPage() {
                     <User className="w-4 h-4 text-slate-500" />
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {activeTrip.driverName}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {activeTrip.registrationNumber}
-                    </p>
+                    <p className="text-sm font-semibold text-slate-800">{activeTrip.driverName}</p>
+                    <p className="text-xs text-slate-400">{activeTrip.registrationNumber}</p>
                   </div>
                 </div>
                 {activeTrip.driverPhone && (
                   <a
                     href={`tel:${activeTrip.driverPhone}`}
                     className="flex items-center gap-1.5 text-xs font-semibold text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 px-3 py-1.5 rounded-lg transition-colors"
-                    aria-label={`Call driver ${activeTrip.driverName}`}
                   >
                     <Phone className="w-3.5 h-3.5" />
                     Call
@@ -772,46 +897,12 @@ export default function ParentTrackPage() {
                 )}
               </div>
             </div>
-
-            {/* Emergency banner */}
-            {effectiveStatus === 'EMERGENCY' && (
-              <div className="bg-red-600 rounded-xl p-4 flex items-start gap-3 shadow-sm">
-                <ShieldAlert className="w-5 h-5 text-white flex-shrink-0 mt-0.5 animate-pulse" />
-                <div>
-                  <p className="text-sm font-bold text-white">Emergency Alert Active</p>
-                  <p className="text-xs text-red-100 mt-0.5 leading-relaxed">
-                    The driver has triggered an emergency. School transport staff have been
-                    notified. If you cannot reach the school, call emergency services.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Completed / cancelled message */}
-            {(effectiveStatus === 'COMPLETED' ||
-              effectiveStatus === 'ARRIVED_SCHOOL' ||
-              effectiveStatus === 'CANCELLED') && (
-              <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 text-center">
-                <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-slate-700">
-                  {effectiveStatus === 'CANCELLED'
-                    ? 'Trip was cancelled'
-                    : 'Trip completed'}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  {effectiveStatus === 'CANCELLED'
-                    ? 'Please contact your school for alternative transport arrangements.'
-                    : 'Your child has reached school. Have a great day!'}
-                </p>
-              </div>
-            )}
           </>
         )}
 
-        {/* Safety note */}
-        <p className="text-[10px] text-slate-400 text-center px-4 pb-2">
-          This is a secure, read-only view linked to your child's trip.
-          Location updates every 5 seconds when the bus is moving.
+        {/* Safety Note */}
+        <p className="text-[10px] text-slate-400 text-center px-4 pt-2">
+          This is an encrypted, secure view linked directly to your child's bus trip.
         </p>
       </div>
     </Shell>
@@ -833,8 +924,7 @@ function Shell({
 }) {
   return (
     <main className="min-h-screen bg-slate-50 flex flex-col">
-      {/* Header */}
-      <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+      <header className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg bg-sky-600 flex items-center justify-center">
             <Bus className="w-4 h-4 text-white" />
@@ -842,20 +932,17 @@ function Shell({
           <div>
             <p className="text-sm font-bold text-slate-800 leading-none">BUSLOARD</p>
             <p className="text-[10px] text-slate-400 leading-none mt-0.5">
-              Safe School Transport
+              School Transport Safety Platform
             </p>
           </div>
         </div>
 
-        {/* SSE connection indicator — only shown when a trip is active */}
         {hasActiveTrip && (
           <div className="flex items-center gap-1.5">
             {sseConnected ? (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[10px] text-emerald-600 font-medium hidden xs:inline">
-                  Live
-                </span>
+                <span className="text-[10px] text-emerald-600 font-medium">Live</span>
                 <Wifi className="w-3.5 h-3.5 text-emerald-500" />
               </>
             ) : (
@@ -873,39 +960,64 @@ function Shell({
   );
 }
 
-function ErrorCard({
+function SecureCard({
+  badge,
   icon,
   title,
   body,
-  retryable,
-  onRetry,
+  metaTime,
+  tips,
+  actions,
 }: {
+  badge?: { label: string; color: string };
   icon: React.ReactNode;
   title: string;
   body: string;
-  retryable: boolean;
-  onRetry?: () => void;
+  metaTime?: string;
+  tips?: string;
+  actions?: React.ReactNode;
 }) {
   return (
     <div className="flex-1 flex items-center justify-center px-4 py-16">
-      <div className="max-w-xs w-full bg-white border border-slate-200 rounded-xl p-6 text-center shadow-xs space-y-3">
-        <div className="flex justify-center">{icon}</div>
-        <p className="text-sm font-semibold text-slate-800">{title}</p>
-        <p className="text-xs text-slate-500 leading-relaxed">{body}</p>
-        {retryable && onRetry && (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-sky-600 hover:text-sky-700"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Try again
-          </button>
+      <div className="max-w-sm w-full bg-white border border-slate-200 rounded-xl p-6 text-center shadow-xs space-y-3.5">
+        {badge && (
+          <div className="flex justify-center">
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${badge.color}`}>
+              {badge.label}
+            </span>
+          </div>
         )}
-        <p className="text-[10px] text-slate-400 pt-1">
-          Need help? Contact your school transport office.
-        </p>
+        <div className="flex justify-center">{icon}</div>
+        <div className="space-y-1">
+          <p className="text-base font-bold text-slate-900">{title}</p>
+          <p className="text-xs text-slate-500 leading-relaxed">{body}</p>
+          {metaTime && (
+            <p className="text-[11px] font-medium text-slate-400 pt-1">{metaTime}</p>
+          )}
+        </div>
+        {tips && (
+          <div className="bg-slate-50 rounded-lg p-2.5 text-[11px] text-slate-500 leading-relaxed border border-slate-100">
+            {tips}
+          </div>
+        )}
+        {actions}
       </div>
     </div>
+  );
+}
+
+export default function ParentTrackPage() {
+  return (
+    <Suspense
+      fallback={
+        <Shell>
+          <div className="flex-1 flex items-center justify-center py-24">
+            <div className="w-8 h-8 border-2 border-sky-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        </Shell>
+      }
+    >
+      <ParentTrackContent />
+    </Suspense>
   );
 }

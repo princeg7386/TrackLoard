@@ -21,6 +21,7 @@ import {
   TripStatus,
   RouteType,
   ParentPickupEta,
+  ParentLiveWebSecureEntryResponse,
 } from '@school-bus/shared';
 import {
   NotFoundError,
@@ -252,7 +253,7 @@ export class ParentIdentityService {
     rawToken: string
   ): Promise<ParentLiveTrackingSession> {
     if (!rawToken || typeof rawToken !== 'string') {
-      throw new UnauthorizedError('Tracking token is missing');
+      throw new UnauthorizedError('Tracking token is missing', { reason: 'TOKEN_MISSING' });
     }
 
     const tokenHash = this.hashToken(rawToken);
@@ -276,20 +277,26 @@ export class ParentIdentityService {
     );
 
     if (tokenRows.length === 0 || tokenRows[0].deleted_at) {
-      throw new UnauthorizedError('Invalid tracking link or link does not exist');
+      throw new UnauthorizedError('Invalid tracking link or link does not exist', { reason: 'TOKEN_INVALID' });
     }
 
     const token = tokenRows[0];
 
     // Check revocation
     if (token.revoked_at) {
-      throw new UnauthorizedError('This live tracking link has been revoked for security');
+      throw new UnauthorizedError('This live tracking link has been revoked for security', {
+        reason: 'TOKEN_REVOKED',
+        revokedAt: token.revoked_at,
+      });
     }
 
     // Check expiration
     const expiresAt = new Date(token.expires_at);
     if (expiresAt.getTime() <= Date.now()) {
-      throw new UnauthorizedError('This live tracking link has expired');
+      throw new UnauthorizedError('This live tracking link has expired', {
+        reason: 'TOKEN_EXPIRED',
+        expiresAt: token.expires_at,
+      });
     }
 
     // Asynchronously log access activity and increment access count
@@ -523,6 +530,127 @@ export class ParentIdentityService {
       activeTrip,
       parentEta,
     };
+  }
+
+  /**
+   * Micro-phase 23.1: Secure Entry Token Validation for Parent Web
+   * Validates token and returns structured status, expiration time, revocation time,
+   * school support contacts, and full tracking session without throwing HTTP exceptions.
+   */
+  public static async validateTrackingTokenForWeb(
+    rawToken?: string | null
+  ): Promise<ParentLiveWebSecureEntryResponse> {
+    if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
+      return {
+        status: 'MISSING',
+        isValid: false,
+        errorCode: 'TOKEN_MISSING',
+        message: 'Live tracking link is missing. Please use the secure link sent to your WhatsApp.',
+        session: null,
+        schoolSupport: null,
+      };
+    }
+
+    const cleanToken = rawToken.trim();
+    const tokenHash = this.hashToken(cleanToken);
+
+    const tokenRows = await query<any>(
+      `
+      SELECT 
+        ptt.id AS token_id,
+        ptt.school_id,
+        ptt.parent_id,
+        ptt.student_id,
+        ptt.trip_id,
+        ptt.purpose,
+        ptt.expires_at,
+        ptt.revoked_at,
+        ptt.deleted_at,
+        sch.name AS school_name,
+        sch.phone AS school_phone,
+        sch.emergency_contact_phone AS school_emergency_phone
+      FROM parent_tracking_tokens ptt
+      LEFT JOIN schools sch ON ptt.school_id = sch.id
+      WHERE ptt.token_hash = $1
+      `,
+      [tokenHash]
+    );
+
+    if (tokenRows.length === 0 || tokenRows[0].deleted_at) {
+      return {
+        status: 'INVALID',
+        isValid: false,
+        errorCode: 'TOKEN_INVALID',
+        message: 'Invalid tracking link or link does not exist in our system.',
+        session: null,
+        schoolSupport: null,
+      };
+    }
+
+    const token = tokenRows[0];
+    const schoolSupport = {
+      schoolName: token.school_name || null,
+      supportPhone: token.school_phone || null,
+      emergencyPhone: token.school_emergency_phone || token.school_phone || null,
+      supportEmail: null,
+      whatsappHelpAction: 'Reply 1 or TRACK on WhatsApp to receive a fresh tracking link',
+    };
+
+    // Check revocation
+    if (token.revoked_at) {
+      return {
+        status: 'REVOKED',
+        isValid: false,
+        errorCode: 'TOKEN_REVOKED',
+        message: 'This live tracking link has been deactivated/revoked by school administration for security reasons.',
+        revokedAt: new Date(token.revoked_at).toISOString(),
+        expiresAt: new Date(token.expires_at).toISOString(),
+        session: null,
+        schoolSupport,
+      };
+    }
+
+    // Check expiration
+    const expiresAt = new Date(token.expires_at);
+    if (expiresAt.getTime() <= Date.now()) {
+      return {
+        status: 'EXPIRED',
+        isValid: false,
+        errorCode: 'TOKEN_EXPIRED',
+        message: 'This live tracking link has expired for student safety and privacy.',
+        expiresAt: expiresAt.toISOString(),
+        session: null,
+        schoolSupport,
+      };
+    }
+
+    // Token is valid — retrieve full session
+    try {
+      const session = await this.verifyTrackingToken(cleanToken);
+      return {
+        status: 'VALID',
+        isValid: true,
+        message: 'Live tracking link verified successfully.',
+        expiresAt: session.expiresAt,
+        session,
+        schoolSupport: {
+          schoolName: session.school.name,
+          supportPhone: token.school_phone || null,
+          emergencyPhone: token.school_emergency_phone || token.school_phone || null,
+          supportEmail: null,
+          whatsappHelpAction: 'Reply 1 or TRACK on WhatsApp',
+        },
+      };
+    } catch (err: any) {
+      return {
+        status: 'INVALID',
+        isValid: false,
+        errorCode: 'TOKEN_INVALID',
+        message: err.message || 'Unable to retrieve tracking session',
+        session: null,
+        schoolSupport,
+      };
+    }
   }
 
   /**

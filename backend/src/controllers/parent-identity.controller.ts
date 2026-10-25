@@ -137,6 +137,43 @@ export class ParentIdentityController {
   }
 
   /**
+   * Micro-phase 23.1: Secure Entry Token Validation endpoint
+   * GET /api/v1/parent/track/:token/verify-entry
+   * GET /api/v1/parent/track/verify-entry?token=...
+   * Returns structured token validation status (VALID, EXPIRED, REVOKED, INVALID, MISSING)
+   * with support contacts and full session without throwing HTTP exceptions.
+   */
+  public static async verifyLiveWebEntry(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const rawToken =
+        typeof req.query.token === 'string'
+          ? req.query.token
+          : typeof req.params.token === 'string'
+            ? req.params.token
+            : (req.headers['x-tracking-token'] as string | undefined) ||
+              (req.headers.authorization?.startsWith('Bearer ')
+                ? req.headers.authorization.split(' ')[1]
+                : undefined);
+
+      const result = await ParentIdentityService.validateTrackingTokenForWeb(rawToken);
+
+      sendSuccess(
+        res,
+        result,
+        result.isValid
+          ? 'Parent live web entry verified successfully'
+          : `Live tracking link is ${result.status.toLowerCase()}`
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * GET /api/v1/parent/track/:token/feed
    * Real-time SSE stream for parent live bus tracking.
    * Auth: authenticateParentTrackingToken (parent tracking token, no admin JWT).

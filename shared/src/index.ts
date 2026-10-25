@@ -4228,5 +4228,47 @@ export const ParentReportIssueResponseSchema = z.object({
 });
 export type ParentReportIssueResponse = z.infer<typeof ParentReportIssueResponseSchema>;
 
+/**
+ * Phase 23.1: Parent Live Web Secure Entry & Token Validation Schemas
+ */
+export const ParentTokenStatusSchema = z.enum([
+  'VALID',
+  'EXPIRED',
+  'REVOKED',
+  'INVALID',
+  'MISSING',
+]);
+export type ParentTokenStatus = z.infer<typeof ParentTokenStatusSchema>;
+
+export const ParentTokenValidationErrorCodeSchema = z.enum([
+  'TOKEN_EXPIRED',
+  'TOKEN_REVOKED',
+  'TOKEN_INVALID',
+  'TOKEN_MISSING',
+  'STUDENT_UNASSIGNED',
+]);
+export type ParentTokenValidationErrorCode = z.infer<typeof ParentTokenValidationErrorCodeSchema>;
+
+export const ParentLiveWebSecureEntryResponseSchema = z.object({
+  status: ParentTokenStatusSchema,
+  isValid: z.boolean(),
+  errorCode: ParentTokenValidationErrorCodeSchema.optional().nullable(),
+  message: z.string(),
+  expiresAt: z.string().optional().nullable(),
+  revokedAt: z.string().optional().nullable(),
+  session: z.lazy(() => z.any()).optional().nullable(),
+  schoolSupport: z
+    .object({
+      schoolName: z.string().optional().nullable(),
+      supportPhone: z.string().optional().nullable(),
+      emergencyPhone: z.string().optional().nullable(),
+      supportEmail: z.string().optional().nullable(),
+      whatsappHelpAction: z.string().default('Reply 1 or TRACK on WhatsApp'),
+    })
+    .optional()
+    .nullable(),
+});
+export type ParentLiveWebSecureEntryResponse = z.infer<typeof ParentLiveWebSecureEntryResponseSchema>;
+
 
 

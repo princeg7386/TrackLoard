@@ -1,4 +1,4 @@
-﻿import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
 import { ApiResponse } from '@school-bus/shared';
 import { env } from '../config/env.js';
@@ -40,8 +40,8 @@ export class NotFoundError extends AppError {
 }
 
 export class UnauthorizedError extends AppError {
-  constructor(message: string = 'Unauthorized access') {
-    super(message, 401);
+  constructor(message: string = 'Unauthorized access', details?: any) {
+    super(message, 401, details);
   }
 }
 

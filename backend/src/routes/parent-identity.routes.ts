@@ -62,7 +62,18 @@ parentRouter.post(
   ParentIdentityController.revokeStudentTokens
 );
 
-// 5. Parent Live Tracking Session Verification (Public tokenized web entry — parent token auth)
+// 5. Micro-phase 23.1: Secure Entry Token Verification (Public endpoint returning structured token status & session)
+parentRouter.get(
+  '/track/:token/verify-entry',
+  ParentIdentityController.verifyLiveWebEntry
+);
+
+parentRouter.get(
+  '/track/verify-entry',
+  ParentIdentityController.verifyLiveWebEntry
+);
+
+// 5a. Parent Live Tracking Session Verification (Public tokenized web entry — parent token auth)
 parentRouter.get(
   '/track/:token',
   authenticateParentTrackingToken,
