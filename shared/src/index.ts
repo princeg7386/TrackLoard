@@ -1875,6 +1875,8 @@ export interface ParentLiveTrackingSession {
     id: string;
     routeId: string;
     routeName: string;
+    routeCode?: string | null;
+    totalStops?: number | null;
     routeType: RouteType;
     status: TripStatus;
     busNumber: string;
