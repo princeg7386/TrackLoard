@@ -1847,6 +1847,7 @@ export interface ParentTrackingTokenData {
 }
 
 export interface ParentLiveTrackingSession {
+  tokenId?: string;
   isValid: boolean;
   expiresAt: string;
   parent: {

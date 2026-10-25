@@ -10,6 +10,7 @@ export interface RateLimiterOptions {
 export interface IRateLimiterStore {
   increment(key: string, windowMs: number): Promise<{ count: number; resetTimeMs: number }>;
   reset(key: string): Promise<void>;
+  clear?(): Promise<void>;
 }
 
 /**
@@ -43,6 +44,10 @@ export class InMemoryRateLimiterStore implements IRateLimiterStore {
     this.hits.delete(key);
   }
 
+  async clear(): Promise<void> {
+    this.hits.clear();
+  }
+
   // Periodic memory cleanup of expired records
   cleanup(): void {
     const now = Date.now();
@@ -63,8 +68,16 @@ export function createRateLimiter(options: RateLimiterOptions, store?: IRateLimi
     windowMs,
     maxRequests,
     message = 'Too many requests, please try again later.',
-    keyGenerator = (req: Request) =>
-      req.ip || (req.headers['x-forwarded-for'] as string) || 'unknown-client',
+    keyGenerator = (req: Request) => {
+      const forwarded = req.headers['x-forwarded-for'];
+      const forwardedIp =
+        typeof forwarded === 'string'
+          ? forwarded.split(',')[0]?.trim()
+          : Array.isArray(forwarded)
+            ? forwarded[0]
+            : undefined;
+      return (req.app?.get?.('trust proxy') ? req.ip : (forwardedIp || req.ip)) || 'unknown-client';
+    },
   } = options;
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -118,14 +131,19 @@ export const authRateLimiter = createRateLimiter({
 });
 
 /**
- * Specialized rate limiter for Parent token lookup and generation
+ * Specialized rate limiter for Parent token lookup, generation, and public verification
  * Policy: 20 requests per 5 minutes per IP
  */
-export const parentTokenRateLimiter = createRateLimiter({
-  windowMs: 5 * 60 * 1000,
-  maxRequests: 20,
-  message: 'Too many parent tracking requests. Please try again in 5 minutes.',
-});
+export const parentTokenRateLimiterStore = new InMemoryRateLimiterStore();
+
+export const parentTokenRateLimiter = createRateLimiter(
+  {
+    windowMs: 5 * 60 * 1000,
+    maxRequests: 20,
+    message: 'Too many parent tracking requests. Please try again in 5 minutes.',
+  },
+  parentTokenRateLimiterStore
+);
 
 /**
  * High-throughput rate limiter for GPS telemetry ingestion

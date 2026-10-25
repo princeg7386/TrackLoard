@@ -3,6 +3,7 @@ import request from 'supertest';
 import app from '../src/app.js';
 import * as db from '../src/config/database.js';
 import { ParentIdentityService } from '../src/services/parent-identity.service.js';
+import { parentTokenRateLimiterStore } from '../src/middlewares/rate-limiter.middleware.js';
 import {
   ParentLiveTrackingSession,
   ParentLiveWebSecureEntryResponseSchema,
@@ -69,8 +70,9 @@ const mockLiveSession: ParentLiveTrackingSession = {
 };
 
 describe('Phase 23.1: Parent Live Web Page — Secure Entry (Token Validation, Expiry, Revocation)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks();
+    await parentTokenRateLimiterStore.clear?.();
   });
 
   describe('1. Task 1: Token Validation Domain Logic', () => {

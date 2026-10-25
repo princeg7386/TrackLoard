@@ -31,6 +31,7 @@ import {
 import { logger } from './logger.service.js';
 import { AuditService } from './audit.service.js';
 import { EtaService } from './eta.service.js';
+import { RealtimeFeedService } from './realtime-feed.service.js';
 
 export interface CreateTokenParams {
   parentId: string;
@@ -496,6 +497,7 @@ export class ParentIdentityService {
     }
 
     return {
+      tokenId: token.token_id,
       isValid: true,
       expiresAt: expiresAt.toISOString(),
       parent: {
@@ -718,6 +720,12 @@ export class ParentIdentityService {
         schoolId,
         reason: reason || 'Manual revocation',
       });
+
+      // Terminate any active SSE connections associated with this token ID or hash
+      RealtimeFeedService.terminateParentStreamsByToken(rows[0].id, reason);
+      if (tokenOrId.startsWith('trk_')) {
+        RealtimeFeedService.terminateParentStreamsByToken(this.hashToken(tokenOrId), reason);
+      }
     }
 
     return revoked;
@@ -745,6 +753,13 @@ export class ParentIdentityService {
       reason: reason || 'Student-wide revocation',
     });
 
+    if (rows.length > 0) {
+      for (const row of rows) {
+        RealtimeFeedService.terminateParentStreamsByToken(row.id, reason);
+      }
+      RealtimeFeedService.terminateParentStreamsByStudentId(studentId, reason);
+    }
+
     return rows.length;
   }
 
@@ -769,6 +784,13 @@ export class ParentIdentityService {
       schoolId,
       reason: reason || 'Parent-wide revocation',
     });
+
+    if (rows.length > 0) {
+      for (const row of rows) {
+        RealtimeFeedService.terminateParentStreamsByToken(row.id, reason);
+      }
+      RealtimeFeedService.terminateParentStreamsByParentId(parentId, reason);
+    }
 
     return rows.length;
   }

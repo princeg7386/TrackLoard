@@ -204,6 +204,30 @@ export class ParentIdentityController {
 
       const { id: tripId, busNumber } = session.activeTrip;
 
+      // Extract raw token if present to compute tokenHash for robust revocation matching
+      const rawToken =
+        typeof req.params.token === 'string'
+          ? req.params.token
+          : typeof req.query.token === 'string'
+            ? req.query.token
+            : (req.headers['x-tracking-token'] as string | undefined) ||
+              (req.headers.authorization?.startsWith('Bearer ')
+                ? req.headers.authorization.split(' ')[1]
+                : undefined);
+      const tokenHash = rawToken ? ParentIdentityService.hashToken(rawToken) : undefined;
+
+      // Check whether session has already expired before opening stream
+      if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+        res.status(401).json({
+          success: false,
+          error: {
+            message: 'This live tracking link has expired',
+            code: 'TOKEN_EXPIRED',
+          },
+        });
+        return;
+      }
+
       // Set SSE headers
       RealtimeFeedService.initSseStream(res);
 
@@ -220,7 +244,9 @@ export class ParentIdentityController {
       });
 
       // Subscribe to trip channel — forward location updates and ETA updates
+      let isSubscribed = true;
       const unsubscribe = RealtimeFeedService.subscribeTrip(tripId, (event) => {
+        if (!isSubscribed) return;
         if (event.type === 'ETA_UPDATE' && event.etaSummary) {
           const parentEta = session.pickupStop
             ? EtaService.extractParentEtaFromSummary(
@@ -246,15 +272,58 @@ export class ParentIdentityController {
         }
       });
 
-      const heartbeatInterval = setInterval(() => {
+      let heartbeatInterval: NodeJS.Timeout | null = null;
+      let expiryTimeout: NodeJS.Timeout | null = null;
+
+      const cleanup = () => {
+        isSubscribed = false;
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
+        if (expiryTimeout) {
+          clearTimeout(expiryTimeout);
+          expiryTimeout = null;
+        }
+        unsubscribe();
+      };
+
+      // Register connection with RealtimeFeedService for revocation management
+      const streamRegistration = RealtimeFeedService.registerParentStream({
+        tokenId: session.tokenId,
+        tokenHash,
+        studentId: session.student?.id,
+        parentId: session.parent?.id,
+        tripId,
+        res,
+        cleanup,
+      });
+
+      // Schedule expiry timer if session has an expiration timestamp
+      if (session.expiresAt) {
+        const msUntilExpiry = new Date(session.expiresAt).getTime() - Date.now();
+        if (msUntilExpiry > 0 && msUntilExpiry < 2147483647) {
+          expiryTimeout = setTimeout(() => {
+            streamRegistration.close();
+          }, msUntilExpiry);
+        }
+      }
+
+      heartbeatInterval = setInterval(() => {
+        if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+          streamRegistration.close();
+          return;
+        }
         RealtimeFeedService.sendSseHeartbeat(res);
       }, 20000);
 
-      req.on('close', () => {
-        clearInterval(heartbeatInterval);
-        unsubscribe();
-        res.end();
-      });
+      const handleClose = () => {
+        streamRegistration.close();
+      };
+
+      req.on('close', handleClose);
+      res.on('finish', handleClose);
+      res.on('error', handleClose);
     } catch (error) {
       next(error);
     }

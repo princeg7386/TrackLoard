@@ -3,6 +3,7 @@ import request from 'supertest';
 import app from '../src/app.js';
 import * as db from '../src/config/database.js';
 import { ParentIdentityService } from '../src/services/parent-identity.service.js';
+import { parentTokenRateLimiterStore } from '../src/middlewares/rate-limiter.middleware.js';
 import { EtaService } from '../src/services/eta.service.js';
 import {
   ParentLiveTrackingSession,
@@ -19,8 +20,9 @@ const mockRouteId = '77777777-7777-7777-7777-777777777777';
 const mockStopId = '55555555-5555-5555-5555-555555555555';
 
 describe('Phase 23.2: Parent Live Web Page — Live View (Bus Marker, Route, Pickup, ETA, Bus Number, Trip Status, Last Update)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks();
+    await parentTokenRateLimiterStore.clear?.();
     vi.spyOn(ParentIdentityService, 'recordTokenAccess').mockResolvedValue(undefined);
   });
 

@@ -62,14 +62,16 @@ parentRouter.post(
   ParentIdentityController.revokeStudentTokens
 );
 
-// 5. Micro-phase 23.1: Secure Entry Token Verification (Public endpoint returning structured token status & session)
+// 5. Micro-phase 23.1 / SEC-001: Secure Entry Token Verification with Rate Limiting (Public endpoint returning structured token status & session)
 parentRouter.get(
   '/track/:token/verify-entry',
+  parentTokenRateLimiter,
   ParentIdentityController.verifyLiveWebEntry
 );
 
 parentRouter.get(
   '/track/verify-entry',
+  parentTokenRateLimiter,
   ParentIdentityController.verifyLiveWebEntry
 );
 
