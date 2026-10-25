@@ -1,9 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
+import { GpsOfflineDetectionService } from '../services/gps-offline-detection.service.js';
+import { RouteDeviationService } from '../services/route-deviation.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { EtaService } from '../services/eta.service.js';
 import { GeofenceService } from '../services/geofence.service.js';
+import { NotFoundError } from '../middlewares/error.middleware.js';
 import { TelemetryIngestPayload } from '@school-bus/shared';
 
 export class TelemetryController {
@@ -328,6 +331,235 @@ export class TelemetryController {
         success: true,
         message: 'Trip geofence events retrieved successfully',
         data: events,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/offline-events
+   * Phase 27.1 — Retrieve active GPS offline/disconnect events for a school
+   */
+  static async getSchoolOfflineEvents(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const events = await GpsOfflineDetectionService.getActiveOfflineEvents(schoolId!);
+
+      res.status(200).json({
+        success: true,
+        data: events,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/telemetry/schools/:schoolId/offline-events/scan
+   * Phase 27.1 — Trigger fleet offline evaluation across all active trips
+   */
+  static async scanFleetOfflineStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const staleThreshold = req.body?.staleThresholdSeconds ? Number(req.body.staleThresholdSeconds) : undefined;
+      const disconnectThreshold = req.body?.disconnectThresholdSeconds ? Number(req.body.disconnectThresholdSeconds) : undefined;
+
+      const summary = await GpsOfflineDetectionService.scanActiveTripsForOffline(schoolId!, {
+        staleThresholdSeconds: staleThreshold,
+        disconnectThresholdSeconds: disconnectThreshold,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: summary,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/offline-status
+   * Phase 27.1 — Check real-time offline/connectivity status for a single trip
+   */
+  static async getTripOfflineStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+      const callerSchoolId = (req as any).tenantSchoolId ?? req.user?.schoolId;
+
+      const result = await GpsOfflineDetectionService.detectTripOfflineStatus(tripId!);
+
+      // Enforce tenant isolation if schoolId is available on the caller
+      if (callerSchoolId && result.schoolId !== callerSchoolId) {
+        throw new NotFoundError(`Trip with ID '${tripId}' not found`);
+      }
+
+      res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/telemetry/trips/:tripId/app-disconnect
+   * Phase 27.1 — Driver app lifecycle disconnect reporting
+   */
+  static async reportAppDisconnect(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+      const driverId = (req as any).driver?.id || (req as any).user?.id;
+
+      const event = await GpsOfflineDetectionService.reportAppDisconnect({
+        tripId: tripId!,
+        driverId,
+        payload: req.body,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Driver app disconnect recorded successfully',
+        data: event,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/telemetry/schools/:schoolId/trips/:tripId/offline/respond
+   * Phase 27.2 — Trigger offline response workflow (store last known, notify school, notify driver)
+   */
+  static async respondToOfflineTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId, schoolId } = req.params;
+      const forceNotify = Boolean(req.body?.forceNotify);
+
+      const result = await GpsOfflineDetectionService.respondToOfflineTrip({
+        tripId: tripId!,
+        schoolId,
+        forceNotify,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/last-known-location
+   * Phase 27.2 — Retrieve locked last known location details with staleness indicators
+   */
+  static async getLastKnownLocation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+
+      const location = await GpsOfflineDetectionService.getLastKnownLocation(tripId!);
+
+      res.status(200).json({
+        success: true,
+        data: location,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/telemetry/trips/:tripId/reconnect
+   * Phase 27.3 — Automatic reconnection & queued batch upload from driver app
+   */
+  static async reconnectTrip(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+      const driverId = (req as any).driver?.id || (req as any).user?.id;
+      const locations = req.body?.locations || [];
+
+      const result = await GpsOfflineDetectionService.processRecoveryBatch({
+        tripId: tripId!,
+        locations,
+        authenticatedDriverId: driverId,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/telemetry/schools/:schoolId/trips/:tripId/offline/recover
+   * Phase 27.3 — Manually mark an offline event as recovered by school coordinator
+   */
+  static async recoverTripOffline(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+      const recoveryReason = req.body?.recoveryReason || 'MANUAL_COORDINATOR_RECOVERY';
+
+      const result = await GpsOfflineDetectionService.markTripRecovered({
+        tripId: tripId!,
+        recoveryReason,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/routes/:routeId/geometry
+   * Phase 28.1 — Load expected route geometry, stops, and coordinates
+   */
+  static async getRouteGeometry(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { routeId } = req.params;
+      const geometry = await RouteDeviationService.loadRouteGeometry(routeId!);
+
+      res.status(200).json({
+        success: true,
+        message: 'Route geometry retrieved successfully',
+        data: geometry,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/trips/:tripId/route-position
+   * Phase 28.1 — Real-time bus position relative to expected route
+   */
+  static async getTripRoutePosition(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+      const thresholdQuery = req.query.deviationThresholdMeters;
+      const options = thresholdQuery
+        ? { deviationThresholdMeters: Number(thresholdQuery) }
+        : undefined;
+
+      const position = await RouteDeviationService.getTripRoutePosition(tripId!, options);
+
+      res.status(200).json({
+        success: true,
+        message: 'Trip route position evaluated successfully',
+        data: position,
       });
     } catch (error) {
       next(error);

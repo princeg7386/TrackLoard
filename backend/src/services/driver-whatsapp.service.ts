@@ -12,6 +12,8 @@ import {
   RecordBoardingResponse,
   RecordDropResponse,
   RecordDropStatus,
+  LongStopDriverReason,
+  LONG_STOP_REASON_LABELS,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { MessagingService } from './messaging/messaging.service.js';
@@ -19,6 +21,8 @@ import { logger } from './logger.service.js';
 import { TripService } from './trip.service.js';
 import { ParentIdentityService } from './parent-identity.service.js';
 import { DriverAttendanceService } from './driver-attendance.service.js';
+import { OperationalNotificationService } from './operational-notification.service.js';
+import { LongStopDetectionService } from './long-stop-detection.service.js';
 import { BadRequestError, NotFoundError } from '../middlewares/error.middleware.js';
 
 export class DriverWhatsappService {
@@ -485,6 +489,114 @@ export class DriverWhatsappService {
   }
 
   /**
+   * Micro-phase 26.2: Parses driver long stop reason from incoming WhatsApp text.
+   * Standard reasons: TRAFFIC, VEHICLE_PROBLEM, STUDENT_ISSUE, ROAD_BLOCK, OTHER, NO_PROBLEM
+   */
+  public static parseLongStopReason(
+    rawText: string
+  ): { reason: LongStopDriverReason; notes?: string } | null {
+    const text = (rawText || '').trim().toLowerCase();
+    let candidate = text;
+
+    if (candidate.startsWith('reason ')) {
+      candidate = candidate.slice(7).trim();
+    } else if (candidate.startsWith('stop reason ')) {
+      candidate = candidate.slice(12).trim();
+    } else if (candidate.startsWith('stop ')) {
+      candidate = candidate.slice(5).trim();
+    }
+
+    // 1. Traffic (1, traffic, jam)
+    if (
+      (candidate === '1' && (text.startsWith('reason') || text.startsWith('stop'))) ||
+      candidate === 'traffic' ||
+      candidate.startsWith('traffic ') ||
+      candidate.includes('traffic jam') ||
+      candidate === 'jam'
+    ) {
+      const notes = candidate.startsWith('traffic ') ? candidate.slice(8).trim() : undefined;
+      return { reason: LongStopDriverReason.TRAFFIC, notes };
+    }
+
+    // 2. Vehicle Problem (2, vehicle, vehicle problem, breakdown, puncture, mechanical)
+    if (
+      (candidate === '2' && (text.startsWith('reason') || text.startsWith('stop'))) ||
+      candidate === 'vehicle' ||
+      candidate === 'vehicle problem' ||
+      candidate === 'breakdown' ||
+      candidate === 'puncture' ||
+      candidate === 'mechanical' ||
+      candidate.startsWith('vehicle ') ||
+      candidate.startsWith('breakdown ')
+    ) {
+      const notes = candidate.startsWith('vehicle ')
+        ? candidate.slice(8).trim()
+        : candidate.startsWith('breakdown ')
+        ? candidate.slice(10).trim()
+        : undefined;
+      return { reason: LongStopDriverReason.VEHICLE_PROBLEM, notes };
+    }
+
+    // 3. Student Issue (3, student issue, waiting student, student late, student unwell)
+    if (
+      (candidate === '3' && (text.startsWith('reason') || text.startsWith('stop'))) ||
+      candidate === 'student issue' ||
+      candidate === 'student problem' ||
+      candidate === 'waiting student' ||
+      candidate === 'waiting for student' ||
+      candidate === 'student delay' ||
+      candidate.startsWith('student issue') ||
+      candidate.startsWith('student problem')
+    ) {
+      const notes = candidate.startsWith('student issue ') ? candidate.slice(14).trim() : undefined;
+      return { reason: LongStopDriverReason.STUDENT_ISSUE, notes };
+    }
+
+    // 4. Road Block (4, roadblock, road block, road closed, diversion, construction)
+    if (
+      (candidate === '4' && (text.startsWith('reason') || text.startsWith('stop'))) ||
+      candidate === 'road block' ||
+      candidate === 'roadblock' ||
+      candidate === 'road blocked' ||
+      candidate === 'diversion' ||
+      candidate === 'road closed' ||
+      candidate.startsWith('road block ') ||
+      candidate.startsWith('roadblock ')
+    ) {
+      const notes = candidate.startsWith('road block ')
+        ? candidate.slice(11).trim()
+        : candidate.startsWith('roadblock ')
+        ? candidate.slice(10).trim()
+        : undefined;
+      return { reason: LongStopDriverReason.ROAD_BLOCK, notes };
+    }
+
+    // 5. Other (5, other <notes>)
+    if (
+      (candidate === '5' && (text.startsWith('reason') || text.startsWith('stop'))) ||
+      candidate === 'other' ||
+      candidate.startsWith('other ')
+    ) {
+      const notes = candidate.startsWith('other ') ? candidate.slice(6).trim() : undefined;
+      return { reason: LongStopDriverReason.OTHER, notes };
+    }
+
+    // 6. No Problem (6, no problem, all ok, all good, normal, safe, clear)
+    if (
+      (candidate === '6' && (text.startsWith('reason') || text.startsWith('stop'))) ||
+      candidate === 'no problem' ||
+      candidate === 'no issue' ||
+      candidate === 'all good' ||
+      candidate === 'all ok' ||
+      candidate === 'safe'
+    ) {
+      return { reason: LongStopDriverReason.NO_PROBLEM };
+    }
+
+    return null;
+  }
+
+  /**
    * Resolves inbound message text to a specific DriverWhatsAppAction
    */
   public static parseActionFromInput(
@@ -598,6 +710,12 @@ export class DriverWhatsappService {
       return 'CORRECT_ATTENDANCE' as any;
     }
 
+    // 2h. Long Stop Reason (Micro-phase 26.2: Traffic, Vehicle problem, Student issue, Road block, Other, No problem)
+    const longStopReasonParsed = this.parseLongStopReason(clean);
+    if (longStopReasonParsed) {
+      return 'LONG_STOP_REASON' as any;
+    }
+
     // 3. Student Search
     if (
       clean === '3' ||
@@ -632,7 +750,9 @@ export class DriverWhatsappService {
       clean === 'sos' ||
       clean === 'accident' ||
       clean === 'danger' ||
-      clean === 'driver_action_emergency'
+      clean === 'driver_action_emergency' ||
+      clean === 'confirm sos' ||
+      clean === 'confirm_sos'
     ) {
       return DriverWhatsAppAction.EMERGENCY;
     }
@@ -1042,22 +1162,103 @@ export class DriverWhatsappService {
           ? `Active Route: *${menu.activeTrip.routeName || 'Assigned Route'}*\n\n`
           : '';
         replyText =
-          `⚠️ *Report Operational Problem*\n\n` +
+          `⚠️ *Report Operational Problem / Stop Reason*\n\n` +
           routeInfo +
-          `Please reply with your issue code:\n` +
-          `• *TRAFFIC* <minutes> (e.g., Traffic 15 mins)\n` +
-          `• *BREAKDOWN* (mechanical issue)\n` +
-          `• *ROAD BLOCKED* (route deviation required)\n\n` +
-          `The transport coordinator desk will be alerted immediately.`;
+          `Please reply with your issue or reason number:\n` +
+          `1️⃣ *Traffic*\n` +
+          `2️⃣ *Vehicle problem*\n` +
+          `3️⃣ *Student issue*\n` +
+          `4️⃣ *Road block*\n` +
+          `5️⃣ *Other <note>*\n` +
+          `6️⃣ *No problem*\n\n` +
+          `_Example: "Traffic 15 mins" or "reason 2" or "No problem"_`;
+        break;
+      }
+
+      case 'LONG_STOP_REASON' as any: {
+        const cleanInput = (text || '').trim();
+        const parsedReason = DriverWhatsappService.parseLongStopReason(cleanInput);
+        if (!parsedReason) {
+          replyText =
+            `⚠️ *Invalid Stop Reason*\n\n` +
+            `Please reply with a valid stop reason:\n` +
+            `1️⃣ *Traffic*\n` +
+            `2️⃣ *Vehicle problem*\n` +
+            `3️⃣ *Student issue*\n` +
+            `4️⃣ *Road block*\n` +
+            `5️⃣ *Other <note>*\n` +
+            `6️⃣ *No problem*`;
+          break;
+        }
+
+        const activeTrip = menu.activeTrip;
+        if (!activeTrip) {
+          replyText =
+            `⚠️ *No Active Trip Found*\n\n` +
+            `You do not have an active trip in progress. Stop reasons can only be reported during an active trip.\n\n` +
+            `Reply *1* or *start trip* to begin your route.`;
+          break;
+        }
+
+        try {
+          const recResult = await LongStopDetectionService.recordDriverReason({
+            schoolId: driver.schoolId,
+            tripId: activeTrip.id,
+            driverId: driver.id,
+            reason: parsedReason.reason,
+            notes: parsedReason.notes,
+            source: 'WHATSAPP',
+          });
+
+          const notesLine = parsedReason.notes ? `Notes: _${parsedReason.notes}_\n` : '';
+          replyText =
+            `✅ *Stop Reason Recorded*\n\n` +
+            `Reason: *${recResult.reasonLabel}*\n` +
+            notesLine +
+            `Trip: *${activeTrip.routeName || 'Assigned Route'}*\n\n` +
+            `The school transport control desk has been updated.\n\n` +
+            `Reply *menu* to view your options.`;
+        } catch (err: any) {
+          replyText =
+            `⚠️ *Could Not Record Stop Reason*\n\n` +
+            `${err.message || 'Unable to record stop reason at this moment.'}\n\n` +
+            `Reply *menu* to check status.`;
+        }
         break;
       }
 
       case DriverWhatsAppAction.EMERGENCY: {
-        replyText =
-          `🚨 *EMERGENCY / SOS DISPATCH*\n\n` +
-          `If in immediate life-threatening danger, dial *112* immediately!\n\n` +
-          `To trigger a priority SOS alert to the school management and transport coordinator, reply *CONFIRM SOS*.\n` +
-          `Emergency Control Desk: *+91 1800 123 4567*`;
+        const cleanInput = (text || '').trim().toLowerCase();
+        const isConfirmed = cleanInput.includes('confirm');
+
+        if (isConfirmed && menu.activeTrip) {
+          // Trigger immediate SOS broadcast via OperationalNotificationService
+          OperationalNotificationService.notifyEmergencySos({
+            schoolId: driver.schoolId,
+            tripId: menu.activeTrip.id,
+            triggerSource: 'WHATSAPP_DRIVER_CONFIRM_SOS',
+            latitude: 0,
+            longitude: 0,
+            notes: `Emergency SOS triggered via WhatsApp by Driver ${driver.fullName} (${driver.phone})`,
+          }).catch((err: unknown) => {
+            logger.warn('[DriverWhatsAppService] Failed to dispatch SOS notification (suppressed)', {
+              tripId: menu.activeTrip?.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+
+          replyText =
+            `🚨 *EMERGENCY SOS BROADCASTED!*\n\n` +
+            `The school administration and transport coordinator desk have been alerted to your vehicle's live location.\n` +
+            `Support helpline: *+91 1800 123 4567*\n` +
+            `Please stay calm and keep your mobile phone accessible.`;
+        } else {
+          replyText =
+            `🚨 *EMERGENCY / SOS DISPATCH*\n\n` +
+            `If in immediate life-threatening danger, dial *112* immediately!\n\n` +
+            `To trigger a priority SOS alert to the school management and transport coordinator, reply *CONFIRM SOS*.\n` +
+            `Emergency Control Desk: *+91 1800 123 4567*`;
+        }
         break;
       }
 

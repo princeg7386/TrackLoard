@@ -1316,7 +1316,9 @@ export type TelemetryFeedEventType =
   /** Phase 20.3: Emitted after every GPS ping with a freshly computed RouteEtaSummary */
   | 'ETA_UPDATE'
   /** Phase 21.1: Emitted when a bus enters or exits a pickup stop geofence */
-  | 'GEOFENCE_EVENT';
+  | 'GEOFENCE_EVENT'
+  /** Phase 24.4: Real-time operational or safety notification alert */
+  | 'NOTIFICATION_ALERT';
 
 export interface TelemetryFeedEvent {
   type: TelemetryFeedEventType;
@@ -1352,6 +1354,16 @@ export interface TelemetryFeedEvent {
   distanceMeters?: number;
   distanceToCenterMeters?: number;
   dwellTimeSeconds?: number;
+  // Phase 24.4: Operational Notification & Delivery alert
+  notificationAlert?: {
+    id: string;
+    eventType: NotificationEventType;
+    priority: NotificationPriority;
+    title: string;
+    message: string;
+    recipientRole?: string;
+    channel?: string;
+  };
 }
 
 export const TelemetryFeedQuerySchema = z.object({
@@ -1433,19 +1445,72 @@ export type DropEvent = z.infer<typeof DropEventSchema>;
  * -----------------------------------------------------------------------------
  */
 
-// 13. Notification
+// 13. Notification & Event Model
+export const NotificationPrioritySchema = z.enum([
+  'CRITICAL',
+  'HIGH',
+  'NORMAL',
+  'LOW',
+]);
+export type NotificationPriority = z.infer<typeof NotificationPrioritySchema>;
+
+export const NotificationRecipientRoleSchema = z.enum([
+  'PARENT',
+  'DRIVER',
+  'ADMIN',
+  'SCHOOL_ADMIN',
+  'TRANSPORT_COORDINATOR',
+  'EMERGENCY_CONTACT',
+]);
+export type NotificationRecipientRole = z.infer<typeof NotificationRecipientRoleSchema>;
+
+export const NotificationEventTypeSchema = z.enum([
+  // Safety / Incident & SOS
+  'EMERGENCY_SOS',
+  'BUS_BREAKDOWN',
+  'ROUTE_DEVIATION',
+  'ACCIDENT_ALERT',
+
+  // Geofence & Proximity
+  'BUS_APPROACHING',
+  'BUS_APPROACHING_10M',
+  'BUS_APPROACHING_3M',
+  'BUS_ARRIVED_STOP',
+  'STUDENT_BOARDED',
+  'STUDENT_DROPPED',
+  'MISSED_BOARDING',
+
+  // Trip Lifecycle & ETA
+  'TRIP_STARTED',
+  'TRIP_DELAYED',
+  'TRIP_COMPLETED',
+  'BUS_ARRIVED_SCHOOL',
+
+  // Identity & Onboarding
+  'PARENT_INVITE',
+  'TOKEN_REVOKED_NOTICE',
+
+  // Operational & General
+  'GPS_UNAVAILABLE',
+  'UNUSUAL_STOP',
+  'GENERAL_ALERT',
+]);
+export type NotificationEventType = z.infer<typeof NotificationEventTypeSchema>;
+
 export const NotificationSchema = z.object({
   id: z.string().uuid().optional(),
   schoolId: z.string().uuid(),
   tripId: z.string().uuid().nullable().optional(),
   recipientPhone: z.string().regex(/^\+?[1-9]\d{9,14}$/),
-  recipientRole: z.enum(['PARENT', 'DRIVER', 'ADMIN']).default('PARENT'),
+  recipientRole: NotificationRecipientRoleSchema.default('PARENT'),
   channel: z.enum(['WHATSAPP', 'SMS', 'PUSH', 'WEBHOOK']).default('WHATSAPP'),
   templateName: z.string().optional(),
   messageBody: z.string().min(1),
   status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED']).default('SENT'),
   providerMessageId: z.string().optional(),
   failureReason: z.string().optional(),
+  eventType: NotificationEventTypeSchema.optional().nullable(),
+  priority: NotificationPrioritySchema.default('NORMAL'),
   createdAt: z.string().datetime().optional(),
 });
 export type NotificationRecord = z.infer<typeof NotificationSchema>;
@@ -2658,6 +2723,8 @@ export const SendMessageOptionsSchema = z.object({
   directText: z.string().optional(),
   interactiveType: z.enum(['location_request_message', 'button', 'list']).optional(),
   actionButtons: z.array(z.object({ title: z.string(), payload: z.string() })).optional(),
+  eventType: NotificationEventTypeSchema.optional(),
+  priority: NotificationPrioritySchema.optional(),
 });
 export type SendMessageOptions = z.infer<typeof SendMessageOptionsSchema>;
 
@@ -4273,5 +4340,980 @@ export const ParentLiveWebSecureEntryResponseSchema = z.object({
 });
 export type ParentLiveWebSecureEntryResponse = z.infer<typeof ParentLiveWebSecureEntryResponseSchema>;
 
+// =============================================================================
+// Phase 24 — Notification Engine: Event Model, Recipients & Priority
+// =============================================================================
 
+export const NotificationRecipientSchema = z.object({
+  id: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  phone: z.string().regex(/^\+?[1-9]\d{9,14}$/),
+  role: NotificationRecipientRoleSchema,
+  name: z.string().min(1).optional(),
+  studentId: z.string().uuid().optional().nullable(),
+  tripId: z.string().uuid().optional().nullable(),
+  parentId: z.string().uuid().optional().nullable(),
+  preferredChannel: z.enum(['WHATSAPP', 'SMS', 'PUSH', 'WEBHOOK']).default('WHATSAPP'),
+});
+export type NotificationRecipient = z.infer<typeof NotificationRecipientSchema>;
+
+export const NotificationEventPayloadSchema = z.object({
+  eventId: z.string().uuid().optional(),
+  schoolId: z.string().uuid(),
+  eventType: NotificationEventTypeSchema,
+  priority: NotificationPrioritySchema.optional(),
+  tripId: z.string().uuid().optional().nullable(),
+  studentId: z.string().uuid().optional().nullable(),
+  stopId: z.string().uuid().optional().nullable(),
+  busId: z.string().uuid().optional().nullable(),
+  driverId: z.string().uuid().optional().nullable(),
+  title: z.string().min(1),
+  message: z.string().min(1),
+  metadata: z.record(z.unknown()).optional(),
+  createdAt: z.string().datetime().optional(),
+});
+export type NotificationEventPayload = z.infer<typeof NotificationEventPayloadSchema>;
+
+export const NotificationEventConfigSchema = z.object({
+  eventType: NotificationEventTypeSchema,
+  defaultPriority: NotificationPrioritySchema,
+  defaultRecipients: z.array(NotificationRecipientRoleSchema),
+  requiresImmediateDispatch: z.boolean(),
+  allowOptOut: z.boolean(),
+  description: z.string(),
+});
+export type NotificationEventConfig = z.infer<typeof NotificationEventConfigSchema>;
+
+export const NOTIFICATION_EVENT_CONFIGS: Record<NotificationEventType, NotificationEventConfig> = {
+  EMERGENCY_SOS: {
+    eventType: 'EMERGENCY_SOS',
+    defaultPriority: 'CRITICAL',
+    defaultRecipients: ['SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR', 'PARENT', 'EMERGENCY_CONTACT'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Driver or transport staff activated an SOS emergency broadcast',
+  },
+  BUS_BREAKDOWN: {
+    eventType: 'BUS_BREAKDOWN',
+    defaultPriority: 'CRITICAL',
+    defaultRecipients: ['SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR', 'PARENT'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Vehicle mechanical breakdown or technical immobilization reported',
+  },
+  ACCIDENT_ALERT: {
+    eventType: 'ACCIDENT_ALERT',
+    defaultPriority: 'CRITICAL',
+    defaultRecipients: ['SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR', 'PARENT', 'EMERGENCY_CONTACT'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Vehicle collision or traffic incident reported',
+  },
+  ROUTE_DEVIATION: {
+    eventType: 'ROUTE_DEVIATION',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Bus deviated significantly from planned route corridor',
+  },
+  BUS_APPROACHING: {
+    eventType: 'BUS_APPROACHING',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: true,
+    allowOptOut: true,
+    description: 'Bus is nearing student pickup or drop stop (within proximity window)',
+  },
+  BUS_APPROACHING_10M: {
+    eventType: 'BUS_APPROACHING_10M',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: true,
+    allowOptOut: true,
+    description: 'Bus is approximately 10 minutes away from designated stop',
+  },
+  BUS_APPROACHING_3M: {
+    eventType: 'BUS_APPROACHING_3M',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: true,
+    allowOptOut: true,
+    description: 'Bus is approximately 3 minutes / nearby student pickup stop',
+  },
+  MISSED_BOARDING: {
+    eventType: 'MISSED_BOARDING',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['PARENT', 'TRANSPORT_COORDINATOR'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Bus departed stop without expected student boarding',
+  },
+  TRIP_DELAYED: {
+    eventType: 'TRIP_DELAYED',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['PARENT', 'SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR'],
+    requiresImmediateDispatch: false,
+    allowOptOut: true,
+    description: 'Route delayed beyond the allowable threshold',
+  },
+  BUS_ARRIVED_STOP: {
+    eventType: 'BUS_ARRIVED_STOP',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: false,
+    allowOptOut: true,
+    description: 'Bus entered geofence boundary of designated stop',
+  },
+  STUDENT_BOARDED: {
+    eventType: 'STUDENT_BOARDED',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: false,
+    allowOptOut: false,
+    description: 'Student successfully boarded the bus',
+  },
+  STUDENT_DROPPED: {
+    eventType: 'STUDENT_DROPPED',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: false,
+    allowOptOut: false,
+    description: 'Student safely disembarked at destination stop',
+  },
+  TRIP_STARTED: {
+    eventType: 'TRIP_STARTED',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT', 'SCHOOL_ADMIN'],
+    requiresImmediateDispatch: false,
+    allowOptOut: true,
+    description: 'Bus trip commenced from origin depot or school',
+  },
+  TRIP_COMPLETED: {
+    eventType: 'TRIP_COMPLETED',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR'],
+    requiresImmediateDispatch: false,
+    allowOptOut: true,
+    description: 'Bus completed scheduled route run',
+  },
+  BUS_ARRIVED_SCHOOL: {
+    eventType: 'BUS_ARRIVED_SCHOOL',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT', 'SCHOOL_ADMIN'],
+    requiresImmediateDispatch: false,
+    allowOptOut: true,
+    description: 'Bus safely arrived inside school campus perimeter',
+  },
+  PARENT_INVITE: {
+    eventType: 'PARENT_INVITE',
+    defaultPriority: 'LOW',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: false,
+    allowOptOut: false,
+    description: 'Initial WhatsApp onboarding invitation with live tracking link',
+  },
+  TOKEN_REVOKED_NOTICE: {
+    eventType: 'TOKEN_REVOKED_NOTICE',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT'],
+    requiresImmediateDispatch: false,
+    allowOptOut: false,
+    description: 'Notice that live tracking token was updated or revoked',
+  },
+  GPS_UNAVAILABLE: {
+    eventType: 'GPS_UNAVAILABLE',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['TRANSPORT_COORDINATOR', 'SCHOOL_ADMIN', 'DRIVER'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Vehicle GPS telemetry is lost or unavailable during an active trip',
+  },
+  UNUSUAL_STOP: {
+    eventType: 'UNUSUAL_STOP',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['TRANSPORT_COORDINATOR', 'SCHOOL_ADMIN'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Vehicle has remained stationary outside designated stops during an active trip',
+  },
+  GENERAL_ALERT: {
+    eventType: 'GENERAL_ALERT',
+    defaultPriority: 'NORMAL',
+    defaultRecipients: ['PARENT', 'SCHOOL_ADMIN'],
+    requiresImmediateDispatch: false,
+    allowOptOut: true,
+    description: 'General administrative or transport announcement',
+  },
+};
+
+export function getNotificationEventDefaultPriority(type: NotificationEventType): NotificationPriority {
+  return NOTIFICATION_EVENT_CONFIGS[type]?.defaultPriority ?? 'NORMAL';
+}
+
+export function getNotificationEventDefaultRoles(type: NotificationEventType): NotificationRecipientRole[] {
+  return NOTIFICATION_EVENT_CONFIGS[type]?.defaultRecipients ?? ['PARENT'];
+}
+
+export function isUrgentNotificationPriority(priority: NotificationPriority): boolean {
+  return priority === 'CRITICAL' || priority === 'HIGH';
+}
+
+export const ParentNotificationEventResultSchema = z.object({
+  tripId: z.string().uuid(),
+  eventType: NotificationEventTypeSchema,
+  notificationsSent: z.number().int().min(0),
+  parentsChecked: z.number().int().min(0),
+  alreadyNotified: z.number().int().min(0),
+  optedOut: z.number().int().min(0),
+});
+export type ParentNotificationEventResult = z.infer<typeof ParentNotificationEventResultSchema>;
+
+export const OperationalNotificationResultSchema = z.object({
+  tripId: z.string().uuid(),
+  eventType: NotificationEventTypeSchema,
+  notificationsSent: z.number().int().min(0),
+  recipientsCount: z.number().int().min(0),
+  cooldownActive: z.boolean().default(false),
+  details: z.record(z.unknown()).optional(),
+});
+export type OperationalNotificationResult = z.infer<typeof OperationalNotificationResultSchema>;
+
+export const NotificationAlertItemSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid().nullable().optional(),
+  recipientPhone: z.string(),
+  recipientRole: NotificationRecipientRoleSchema,
+  channel: z.enum(['WHATSAPP', 'SMS', 'PUSH', 'WEBHOOK']),
+  templateName: z.string().nullable().optional(),
+  messageBody: z.string(),
+  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED']),
+  failureReason: z.string().nullable().optional(),
+  eventType: NotificationEventTypeSchema.nullable().optional(),
+  priority: NotificationPrioritySchema.default('NORMAL'),
+  deliveredAt: z.string().datetime().nullable().optional(),
+  readAt: z.string().datetime().nullable().optional(),
+  retryCount: z.number().int().default(0),
+  createdAt: z.string().datetime(),
+});
+export type NotificationAlertItem = z.infer<typeof NotificationAlertItemSchema>;
+
+export const NotificationAlertsQuerySchema = z.object({
+  priority: NotificationPrioritySchema.optional(),
+  eventType: NotificationEventTypeSchema.optional(),
+  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED']).optional(),
+  tripId: z.string().uuid().optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+export type NotificationAlertsQuery = z.infer<typeof NotificationAlertsQuerySchema>;
+
+export const NotificationAlertsResponseSchema = z.object({
+  alerts: z.array(NotificationAlertItemSchema),
+  pagination: z.object({
+    total: z.number().int().min(0),
+    page: z.number().int().min(1),
+    limit: z.number().int().min(1),
+    totalPages: z.number().int().min(0),
+  }),
+});
+export type NotificationAlertsResponse = z.infer<typeof NotificationAlertsResponseSchema>;
+
+export const NotificationDeliveryStatsSchema = z.object({
+  schoolId: z.string().uuid(),
+  totalSent: z.number().int().min(0),
+  deliveredCount: z.number().int().min(0),
+  readCount: z.number().int().min(0),
+  failedCount: z.number().int().min(0),
+  pendingCount: z.number().int().min(0),
+  deliveryRatePercent: z.number().min(0).max(100),
+  priorityBreakdown: z.object({
+    critical: z.number().int().min(0),
+    high: z.number().int().min(0),
+    normal: z.number().int().min(0),
+    low: z.number().int().min(0),
+  }),
+});
+export type NotificationDeliveryStats = z.infer<typeof NotificationDeliveryStatsSchema>;
+
+export const RetryNotificationResponseSchema = z.object({
+  success: z.boolean(),
+  notificationId: z.string().uuid(),
+  status: z.enum(['QUEUED', 'SENT', 'DELIVERED', 'READ', 'FAILED']),
+  retryCount: z.number().int().min(0),
+  message: z.string(),
+  failureReason: z.string().nullable().optional(),
+});
+export type RetryNotificationResponse = z.infer<typeof RetryNotificationResponseSchema>;
+
+export const AntiSpamCheckResultSchema = z.object({
+  allowed: z.boolean(),
+  reason: z.string().optional(),
+  deduplicated: z.boolean().default(false),
+  throttled: z.boolean().default(false),
+  cooldownRemainingSeconds: z.number().int().min(0).optional(),
+});
+export type AntiSpamCheckResult = z.infer<typeof AntiSpamCheckResultSchema>;
+
+export const NOTIFICATION_ANTI_SPAM_CONFIG = {
+  BURST_THROTTLE_SECONDS: 30,
+  DELAY_ALERT_COOLDOWN_MINUTES: 15,
+  GPS_ALERT_COOLDOWN_MINUTES: 10,
+  DEVIATION_ALERT_COOLDOWN_MINUTES: 10,
+  UNUSUAL_STOP_COOLDOWN_MINUTES: 15,
+} as const;
+
+
+export const NotificationAntiSpamEvaluateRequestSchema = z.object({
+  tripId: z.string().uuid(),
+  eventType: NotificationEventTypeSchema,
+  recipientPhone: z.string().regex(/^\+?[1-9]\d{9,14}$/, 'Invalid phone number format').optional(),
+  priority: NotificationPrioritySchema.default('NORMAL'),
+  stopId: z.string().uuid().optional(),
+  studentId: z.string().uuid().optional(),
+  routeId: z.string().uuid().optional(),
+  isDownstreamOnly: z.boolean().optional(),
+});
+export type NotificationAntiSpamEvaluateRequest = z.infer<typeof NotificationAntiSpamEvaluateRequestSchema>;
+
+
+// ============================================================================
+// Phase 25.1 — Smart Delay Engine: Expected Timeline & Pickup Arrival Contracts
+// ============================================================================
+
+export const TripStopTimelineItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int().min(1),
+  scheduledTime: z.string().nullable().optional(),
+  expectedArrival: z.string(),
+  expectedDeparture: z.string().nullable().optional(),
+  distanceFromStartMeters: z.number().int().min(0).default(0),
+  durationFromStartSeconds: z.number().int().min(0).default(0),
+  dwellSeconds: z.number().int().min(0).default(45),
+  createdAt: z.string().optional(),
+});
+export type TripStopTimelineItem = z.infer<typeof TripStopTimelineItemSchema>;
+
+export const TripExpectedTimelineSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  routeName: z.string(),
+  scheduledDate: z.string(),
+  scheduledStartTime: z.string(),
+  totalDistanceMeters: z.number().int().min(0),
+  totalDurationSeconds: z.number().int().min(0),
+  expectedCompletionAt: z.string(),
+  stopsCount: z.number().int().min(0),
+  timeline: z.array(TripStopTimelineItemSchema),
+});
+export type TripExpectedTimeline = z.infer<typeof TripExpectedTimelineSchema>;
+
+
+// ============================================================================
+// Phase 25.2 — Smart Delay Engine: Actual Timeline & Delay Comparison Contracts
+// ============================================================================
+
+export const DelaySeveritySchema = z.enum([
+  'EARLY',
+  'ON_TIME',
+  'MINOR_DELAY',
+  'MODERATE_DELAY',
+  'SEVERE_DELAY',
+]);
+export type DelaySeverity = z.infer<typeof DelaySeveritySchema>;
+
+export const StopDelayComparisonSchema = z.object({
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int().min(1),
+  expectedArrival: z.string(),
+  predictedArrival: z.string(),
+  delayMinutes: z.number().int(),
+  delayStatus: DelaySeveritySchema,
+  hasPassed: z.boolean().default(false),
+});
+export type StopDelayComparison = z.infer<typeof StopDelayComparisonSchema>;
+
+export const TripDelayComparisonResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  overallDelayMinutes: z.number().int(),
+  overallDelayStatus: DelaySeveritySchema,
+  nextStopDelayMinutes: z.number().int(),
+  nextStopId: z.string().uuid().nullable().optional(),
+  stopsEvaluatedCount: z.number().int().min(0),
+  delayedStopsCount: z.number().int().min(0),
+  stopComparisons: z.array(StopDelayComparisonSchema),
+  evaluatedAt: z.string(),
+});
+export type TripDelayComparisonResult = z.infer<typeof TripDelayComparisonResultSchema>;
+
+
+// ============================================================================
+// Phase 25.3 — Smart Delay Engine: Affected Pickups & Waiting Parent Contracts
+// ============================================================================
+
+export const WaitingParentTargetSchema = z.object({
+  parentId: z.string().uuid(),
+  parentName: z.string(),
+  parentPhone: z.string(),
+  studentId: z.string().uuid(),
+  studentName: z.string(),
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int().min(1),
+  expectedArrival: z.string(),
+  predictedArrival: z.string(),
+  delayMinutes: z.number().int(),
+  delayStatus: DelaySeveritySchema,
+  trackingToken: z.string().nullable().optional(),
+  trackingUrl: z.string().nullable().optional(),
+});
+export type WaitingParentTarget = z.infer<typeof WaitingParentTargetSchema>;
+
+export const AffectedPickupStopSummarySchema = z.object({
+  stopId: z.string().uuid(),
+  stopName: z.string(),
+  sequenceOrder: z.number().int().min(1),
+  expectedArrival: z.string(),
+  predictedArrival: z.string(),
+  delayMinutes: z.number().int(),
+  delayStatus: DelaySeveritySchema,
+  waitingStudentsCount: z.number().int().min(0),
+});
+export type AffectedPickupStopSummary = z.infer<typeof AffectedPickupStopSummarySchema>;
+
+export const TripAffectedParentsResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  overallDelayMinutes: z.number().int(),
+  overallDelayStatus: DelaySeveritySchema,
+  minDelayThresholdMinutes: z.number().int().min(0),
+  alreadyServedPickupsCount: z.number().int().min(0),
+  affectedPickupsCount: z.number().int().min(0),
+  waitingParentsCount: z.number().int().min(0),
+  affectedPickups: z.array(AffectedPickupStopSummarySchema),
+  waitingParents: z.array(WaitingParentTargetSchema),
+  evaluatedAt: z.string(),
+});
+export type TripAffectedParentsResult = z.infer<typeof TripAffectedParentsResultSchema>;
+
+export const AffectedParentsQuerySchema = z.object({
+  minDelayMinutes: z
+    .string()
+    .optional()
+    .transform((val) => (val ? Number(val) : 5)),
+});
+export type AffectedParentsQuery = z.infer<typeof AffectedParentsQuerySchema>;
+
+
+// ============================================================================
+// Phase 25.4 — Smart Delay Engine: Delay Notifications & Recovery Contracts
+// ============================================================================
+
+export const DelayAlertDispatchResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  dispatched: z.boolean(),
+  cooldownActive: z.boolean().default(false),
+  spamControlled: z.boolean().default(false),
+  isEscalation: z.boolean().default(false),
+  delayMinutes: z.number().int(),
+  affectedParentsCount: z.number().int().min(0),
+  notificationsSent: z.number().int().min(0),
+  delayRecordId: z.string().uuid().nullable().optional(),
+  message: z.string(),
+});
+export type DelayAlertDispatchResult = z.infer<typeof DelayAlertDispatchResultSchema>;
+
+export const DelayRecoveryResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  recovered: z.boolean(),
+  delayRecordId: z.string().uuid().nullable().optional(),
+  initialDelayMinutes: z.number().int().min(0),
+  currentDelayMinutes: z.number().int(),
+  parentsNotified: z.number().int().min(0),
+  message: z.string(),
+});
+export type DelayRecoveryResult = z.infer<typeof DelayRecoveryResultSchema>;
+
+export const DelayAlertDispatchRequestSchema = z.object({
+  minDelayMinutes: z.number().int().min(1).default(10),
+  reason: z.string().max(255).optional(),
+});
+export type DelayAlertDispatchRequest = z.infer<typeof DelayAlertDispatchRequestSchema>;
+
+
+// ============================================================================
+// Phase 25.5 — Smart Delay Engine: Delay Spam Control & Escalation Contracts
+// ============================================================================
+
+export const DELAY_SPAM_CONTROL_CONFIG = {
+  /** Minimum delay increase (in minutes) required to trigger a repeated escalation alert */
+  MEANINGFUL_CHANGE_THRESHOLD_MINUTES: 5,
+  /** Minimum interval (in seconds) between alerts to the same recipient */
+  BURST_THROTTLE_SECONDS: 30,
+  /** Critical delay threshold that triggers urgent escalation */
+  CRITICAL_DELAY_THRESHOLD_MINUTES: 20,
+} as const;
+
+export const DelaySpamControlEvaluationSchema = z.object({
+  allowed: z.boolean(),
+  isFirstAlert: z.boolean(),
+  isEscalation: z.boolean(),
+  suppressedAsSpam: z.boolean(),
+  previousDelayMinutes: z.number().int().nullable().optional(),
+  currentDelayMinutes: z.number().int(),
+  deltaMinutes: z.number().int().nullable().optional(),
+  reason: z.string().optional(),
+});
+export type DelaySpamControlEvaluation = z.infer<typeof DelaySpamControlEvaluationSchema>;
+
+export const EvaluateDelaySpamControlRequestSchema = z.object({
+  currentDelayMinutes: z.number().int().min(0),
+});
+export type EvaluateDelaySpamControlRequest = z.infer<typeof EvaluateDelaySpamControlRequestSchema>;
+
+// ============================================================================
+// Phase 26: Long Stop Detection — Contracts & Configuration
+// ============================================================================
+
+export const LONG_STOP_CONFIG = {
+  /** Speed below which a vehicle is considered stationary (km/h) */
+  DEFAULT_STATIONARY_SPEED_THRESHOLD_KMH: 3.0,
+  /** Minimum stationary duration (in minutes) to classify as a Long Stop */
+  DEFAULT_LONG_STOP_THRESHOLD_MINUTES: 5,
+  /** Maximum GPS drift distance (in meters) to still consider stationary despite coordinate jitter */
+  DEFAULT_JITTER_RADIUS_METERS: 35.0,
+  /** Minimum consecutive telemetry pings to confirm a stationary cluster */
+  MIN_STATIONARY_POINTS: 2,
+  /** Maximum time gap (in seconds) between pings to treat as contiguous stream */
+  MAX_PING_GAP_SECONDS: 300,
+} as const;
+
+export const LongStopDetectionOptionsSchema = z.object({
+  stationarySpeedThresholdKmh: z.number().positive().max(20).default(LONG_STOP_CONFIG.DEFAULT_STATIONARY_SPEED_THRESHOLD_KMH),
+  longStopThresholdMinutes: z.number().positive().max(120).default(LONG_STOP_CONFIG.DEFAULT_LONG_STOP_THRESHOLD_MINUTES),
+  jitterRadiusMeters: z.number().positive().max(200).default(LONG_STOP_CONFIG.DEFAULT_JITTER_RADIUS_METERS),
+  minStationaryPoints: z.number().int().min(1).max(20).default(LONG_STOP_CONFIG.MIN_STATIONARY_POINTS),
+});
+export type LongStopDetectionOptions = z.infer<typeof LongStopDetectionOptionsSchema>;
+
+export const LongStopDetectionResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  busId: z.string().uuid(),
+  isStationary: z.boolean(),
+  isLongStop: z.boolean(),
+  stationarySince: z.string().datetime().nullable(),
+  durationSeconds: z.number().int().min(0),
+  durationMinutes: z.number().min(0),
+  thresholdMinutes: z.number().positive(),
+  anchorLatitude: z.number().nullable(),
+  anchorLongitude: z.number().nullable(),
+  averageSpeedKmh: z.number().min(0),
+  maxDriftMeters: z.number().min(0),
+  stationaryPointsCount: z.number().int().min(0),
+  totalPointsAnalyzed: z.number().int().min(0),
+  status: z.enum(['MOVING', 'STATIONARY_SHORT', 'LONG_STOP']),
+  longStopRecordId: z.string().uuid().nullable().optional(),
+});
+export type LongStopDetectionResult = z.infer<typeof LongStopDetectionResultSchema>;
+
+export const LongStopRecordSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  latitude: z.number(),
+  longitude: z.number(),
+  startedAt: z.string().datetime(),
+  durationSeconds: z.number().int().min(0),
+  thresholdMinutes: z.number().int().min(1),
+  speedKmh: z.number().min(0),
+  status: z.enum(['ACTIVE', 'RESOLVED']),
+  stopType: z.string().default('UNKNOWN'),
+  driverReason: z.string().nullable().optional(),
+  driverNotes: z.string().nullable().optional(),
+  reasonReportedAt: z.string().datetime().nullable().optional(),
+  reasonSource: z.string().nullable().optional(),
+  schoolNotifiedAt: z.string().datetime().nullable().optional(),
+  acknowledgedBy: z.string().uuid().nullable().optional(),
+  acknowledgedAt: z.string().datetime().nullable().optional(),
+  resolvedBy: z.string().uuid().nullable().optional(),
+  resolutionNotes: z.string().nullable().optional(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
+});
+export type LongStopRecord = z.infer<typeof LongStopRecordSchema>;
+
+export const EvaluateLongStopRequestSchema = z.object({
+  stationarySpeedThresholdKmh: z.number().positive().max(20).optional(),
+  longStopThresholdMinutes: z.number().positive().max(120).optional(),
+  jitterRadiusMeters: z.number().positive().max(200).optional(),
+  autoPersist: z.boolean().default(true),
+});
+export type EvaluateLongStopRequest = z.infer<typeof EvaluateLongStopRequestSchema>;
+
+// ============================================================================
+// Phase 26.2: Long Stop Driver Reason — Standard Categories & Contracts
+// ============================================================================
+
+export const LongStopDriverReason = {
+  TRAFFIC: 'TRAFFIC',
+  VEHICLE_PROBLEM: 'VEHICLE_PROBLEM',
+  STUDENT_ISSUE: 'STUDENT_ISSUE',
+  ROAD_BLOCK: 'ROAD_BLOCK',
+  OTHER: 'OTHER',
+  NO_PROBLEM: 'NO_PROBLEM',
+} as const;
+export type LongStopDriverReason = typeof LongStopDriverReason[keyof typeof LongStopDriverReason];
+
+export const LONG_STOP_REASON_LABELS: Record<LongStopDriverReason, string> = {
+  TRAFFIC: 'Traffic',
+  VEHICLE_PROBLEM: 'Vehicle problem',
+  STUDENT_ISSUE: 'Student issue',
+  ROAD_BLOCK: 'Road block',
+  OTHER: 'Other',
+  NO_PROBLEM: 'No problem',
+};
+
+export const RecordLongStopReasonRequestSchema = z.object({
+  reason: z.nativeEnum(LongStopDriverReason),
+  notes: z.string().max(500).optional(),
+  longStopId: z.string().uuid().optional(),
+});
+export type RecordLongStopReasonRequest = z.infer<typeof RecordLongStopReasonRequestSchema>;
+
+export const RecordLongStopReasonResponseSchema = z.object({
+  success: z.boolean(),
+  longStopId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  reason: z.nativeEnum(LongStopDriverReason),
+  reasonLabel: z.string(),
+  notes: z.string().nullable().optional(),
+  reportedAt: z.string().datetime(),
+  source: z.string(),
+  message: z.string(),
+});
+export type RecordLongStopReasonResponse = z.infer<typeof RecordLongStopReasonResponseSchema>;
+
+// ============================================================================
+// Phase 26.3: Long Stop School Workflow — Operations & Resolution Contracts
+// ============================================================================
+
+export const ResolveLongStopRequestSchema = z.object({
+  resolutionNotes: z.string().max(500).optional(),
+  longStopId: z.string().uuid().optional(),
+});
+export type ResolveLongStopRequest = z.infer<typeof ResolveLongStopRequestSchema>;
+
+export const AcknowledgeLongStopRequestSchema = z.object({
+  longStopId: z.string().uuid().optional(),
+  notes: z.string().max(500).optional(),
+});
+export type AcknowledgeLongStopRequest = z.infer<typeof AcknowledgeLongStopRequestSchema>;
+
+export const LongStopWorkflowResultSchema = z.object({
+  success: z.boolean(),
+  longStopId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  status: z.enum(['ACTIVE', 'RESOLVED']),
+  eventCreated: z.boolean(),
+  schoolNotified: z.boolean(),
+  reasonStored: z.boolean(),
+  driverReason: z.string().nullable().optional(),
+  resolved: z.boolean(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+  message: z.string(),
+});
+export type LongStopWorkflowResult = z.infer<typeof LongStopWorkflowResultSchema>;
+
+// ============================================================================
+// Phase 27.1: GPS Offline & Recovery — Detection Contracts & Types
+// ============================================================================
+
+export const GPS_OFFLINE_THRESHOLDS = {
+  DEFAULT_STALE_LOCATION_SECONDS: 60,
+  DEFAULT_APP_DISCONNECT_SECONDS: 120,
+  DEFAULT_SIGNAL_LOST_SECONDS: 300,
+} as const;
+
+export const GpsOfflineDetectionTypeSchema = z.enum([
+  'STALE_LOCATION',
+  'INTERNET_LOSS',
+  'APP_DISCONNECT',
+]);
+export type GpsOfflineDetectionType = z.infer<typeof GpsOfflineDetectionTypeSchema>;
+
+export const GpsOfflineEventStatusSchema = z.enum(['ACTIVE', 'RESOLVED']);
+export type GpsOfflineEventStatus = z.infer<typeof GpsOfflineEventStatusSchema>;
+
+export const GpsOfflineEvaluationResultSchema = z.object({
+  isOffline: z.boolean(),
+  detectionType: GpsOfflineDetectionTypeSchema.nullable(),
+  status: z.enum(['HEALTHY', 'STALE_LOCATION', 'INTERNET_LOSS', 'APP_DISCONNECT']),
+  ageSeconds: z.number(),
+  disconnectAgeSeconds: z.number(),
+  staleThresholdSeconds: z.number(),
+  disconnectThresholdSeconds: z.number(),
+  message: z.string(),
+});
+export type GpsOfflineEvaluationResult = z.infer<typeof GpsOfflineEvaluationResultSchema>;
+
+export const GpsOfflineEventRecordSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  detectionType: GpsOfflineDetectionTypeSchema,
+  status: GpsOfflineEventStatusSchema,
+  startedAt: z.string().datetime(),
+  durationSeconds: z.number(),
+  staleThresholdSeconds: z.number(),
+  disconnectThresholdSeconds: z.number(),
+  lastKnownLatitude: z.number().nullable().optional(),
+  lastKnownLongitude: z.number().nullable().optional(),
+  lastKnownRecordedAt: z.string().datetime().nullable().optional(),
+  lastNetworkType: z.string().nullable().optional(),
+  lastBatteryPercentage: z.number().nullable().optional(),
+  lastKnownSpeedKmh: z.number().nullable().optional(),
+  lastKnownBearingDegrees: z.number().nullable().optional(),
+  lastKnownAddress: z.string().nullable().optional(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+  recoveryReason: z.string().nullable().optional(),
+  schoolNotifiedAt: z.string().datetime().nullable().optional(),
+  driverNotifiedAt: z.string().datetime().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
+});
+export type GpsOfflineEventRecord = z.infer<typeof GpsOfflineEventRecordSchema>;
+
+export const LastKnownLocationDetailsSchema = z.object({
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
+  speedKmh: z.number().nullable().optional(),
+  bearingDegrees: z.number().nullable().optional(),
+  accuracyMeters: z.number().nullable().optional(),
+  batteryPercentage: z.number().nullable().optional(),
+  networkType: z.string().nullable().optional(),
+  recordedAt: z.string().datetime().nullable().optional(),
+  address: z.string().nullable().optional(),
+  ageSeconds: z.number().optional(),
+  isStale: z.boolean().optional(),
+});
+export type LastKnownLocationDetails = z.infer<typeof LastKnownLocationDetailsSchema>;
+
+export const GpsOfflineResponseResultSchema = z.object({
+  success: z.boolean(),
+  eventId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  detectionType: GpsOfflineDetectionTypeSchema,
+  status: GpsOfflineEventStatusSchema,
+  lastKnownLocation: LastKnownLocationDetailsSchema,
+  schoolNotified: z.boolean(),
+  schoolNotifiedAt: z.string().datetime().nullable().optional(),
+  driverNotified: z.boolean(),
+  driverNotifiedAt: z.string().datetime().nullable().optional(),
+  message: z.string(),
+});
+export type GpsOfflineResponseResult = z.infer<typeof GpsOfflineResponseResultSchema>;
+
+export const TripOfflineDetectionResultSchema = z.object({
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  hasActiveTrip: z.boolean(),
+  tripStatus: z.string(),
+  evaluation: GpsOfflineEvaluationResultSchema,
+  activeOfflineEvent: GpsOfflineEventRecordSchema.nullable().optional(),
+  lastKnownLocation: z.object({
+    latitude: z.number().nullable().optional(),
+    longitude: z.number().nullable().optional(),
+    recordedAt: z.string().datetime().nullable().optional(),
+    speedKmh: z.number().nullable().optional(),
+    accuracyMeters: z.number().nullable().optional(),
+    networkType: z.string().nullable().optional(),
+    batteryPercentage: z.number().nullable().optional(),
+  }).optional(),
+});
+export type TripOfflineDetectionResult = z.infer<typeof TripOfflineDetectionResultSchema>;
+
+export const FleetOfflineDetectionSummarySchema = z.object({
+  schoolId: z.string().uuid(),
+  evaluatedAt: z.string().datetime(),
+  totalActiveTrips: z.number(),
+  healthyCount: z.number(),
+  staleLocationCount: z.number(),
+  internetLossCount: z.number(),
+  appDisconnectCount: z.number(),
+  totalOfflineCount: z.number(),
+  trips: z.array(TripOfflineDetectionResultSchema),
+});
+export type FleetOfflineDetectionSummary = z.infer<typeof FleetOfflineDetectionSummarySchema>;
+
+export const ReportAppDisconnectRequestSchema = z.object({
+  reason: z.string().max(255).optional(),
+  batteryPercentage: z.number().min(0).max(100).optional(),
+  networkType: z.string().max(50).optional(),
+  lastLatitude: z.number().min(-90).max(90).optional(),
+  lastLongitude: z.number().min(-180).max(180).optional(),
+});
+export type ReportAppDisconnectRequest = z.infer<typeof ReportAppDisconnectRequestSchema>;
+
+// ============================================================================
+// Phase 27.3: GPS Offline & Recovery — Recovery Contracts & Types
+// ============================================================================
+
+export const GpsOfflineRecoveryResultSchema = z.object({
+  success: z.boolean(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid().optional(),
+  schoolId: z.string().uuid().optional(),
+  wasOffline: z.boolean(),
+  resolvedEventId: z.string().uuid().nullable().optional(),
+  recoveryReason: z.string(),
+  recoveredAt: z.string().datetime(),
+  message: z.string(),
+});
+export type GpsOfflineRecoveryResult = z.infer<typeof GpsOfflineRecoveryResultSchema>;
+
+export const GpsOfflineBatchRecoveryResultSchema = z.object({
+  success: z.boolean(),
+  tripId: z.string().uuid(),
+  totalPointsReceived: z.number(),
+  validPointsIngested: z.number(),
+  duplicatePointsSkipped: z.number(),
+  invalidPointsSkipped: z.number(),
+  isRecovered: z.boolean(),
+  resolvedEventId: z.string().uuid().nullable().optional(),
+  latestLocation: z.object({
+    latitude: z.number().nullable().optional(),
+    longitude: z.number().nullable().optional(),
+    speedKmh: z.number().nullable().optional(),
+    bearingDegrees: z.number().nullable().optional(),
+    recordedAt: z.string().datetime().nullable().optional(),
+  }).optional(),
+  message: z.string(),
+});
+export type GpsOfflineBatchRecoveryResult = z.infer<typeof GpsOfflineBatchRecoveryResultSchema>;
+
+export const ReconnectTripRequestSchema = z.object({
+  locations: z.array(TelemetryBatchItemSchema).optional(),
+  clientTimestamp: z.string().datetime().optional(),
+  batteryPercentage: z.number().min(0).max(100).optional(),
+  networkType: z.string().max(50).optional(),
+});
+export type ReconnectTripRequest = z.infer<typeof ReconnectTripRequestSchema>;
+
+// ============================================================================
+// Phase 28: Route Deviation — Expected Route & Real-Time Position Analysis
+// ============================================================================
+
+export const ROUTE_DEVIATION_CONFIG = {
+  /** Default corridor tolerance threshold in meters before flagging deviation */
+  DEFAULT_DEVIATION_THRESHOLD_METERS: 100,
+  /** Buffer zone corridor tolerance in meters */
+  DEFAULT_CORRIDOR_TOLERANCE_METERS: 50,
+  /** Consecutive telemetry points required outside threshold to debounce GPS spikes */
+  DEFAULT_DEBOUNCE_POINTS: 3,
+  /** Severity grading by distance from route corridor */
+  SEVERITY_THRESHOLDS: {
+    LOW_METERS: 100,
+    MEDIUM_METERS: 250,
+    HIGH_METERS: 500,
+    CRITICAL_METERS: 1000,
+  },
+} as const;
+
+export const RouteDeviationStatusSchema = z.enum(['ACTIVE', 'RESOLVED']);
+export type RouteDeviationStatus = z.infer<typeof RouteDeviationStatusSchema>;
+
+export const RouteDeviationSeveritySchema = z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+export type RouteDeviationSeverity = z.infer<typeof RouteDeviationSeveritySchema>;
+
+export const RouteWayStopSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  sequenceOrder: z.number(),
+  latitude: z.number(),
+  longitude: z.number(),
+  radiusMeters: z.number().default(50),
+});
+export type RouteWayStop = z.infer<typeof RouteWayStopSchema>;
+
+export const RouteGeometrySchema = z.object({
+  routeId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  name: z.string(),
+  code: z.string(),
+  routeType: z.string(),
+  deviationThresholdMeters: z.number(),
+  coordinates: z.array(GeoCoordinatesSchema),
+  totalDistanceMeters: z.number(),
+  segmentCount: z.number(),
+  stops: z.array(RouteWayStopSchema),
+  isFallbackFromStops: z.boolean(),
+});
+export type RouteGeometry = z.infer<typeof RouteGeometrySchema>;
+
+export const BusRoutePositionResultSchema = z.object({
+  isOnRoute: z.boolean(),
+  isDeviated: z.boolean(),
+  distanceToRouteMeters: z.number(),
+  deviationThresholdMeters: z.number(),
+  nearestPointOnRoute: GeoCoordinatesSchema,
+  nearestSegmentIndex: z.number(),
+  nearestStop: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    sequenceOrder: z.number(),
+    distanceMeters: z.number(),
+  }).nullable(),
+  progressPercentage: z.number().min(0).max(100),
+  bearingDegrees: z.number().nullable().optional(),
+});
+export type BusRoutePositionResult = z.infer<typeof BusRoutePositionResultSchema>;
+
+export const TripRoutePositionResponseSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  routeId: z.string().uuid(),
+  busLocation: z.object({
+    latitude: z.number(),
+    longitude: z.number(),
+    speedKmh: z.number().nullable().optional(),
+    bearingDegrees: z.number().nullable().optional(),
+    recordedAt: z.string().datetime().nullable().optional(),
+  }),
+  position: BusRoutePositionResultSchema,
+  activeDeviation: z.object({
+    id: z.string().uuid(),
+    status: RouteDeviationStatusSchema,
+    severity: RouteDeviationSeveritySchema,
+    startedAt: z.string().datetime(),
+    durationSeconds: z.number(),
+    maxDeviationDistanceMeters: z.number(),
+    currentDeviationDistanceMeters: z.number(),
+  }).nullable(),
+});
+export type TripRoutePositionResponse = z.infer<typeof TripRoutePositionResponseSchema>;
 

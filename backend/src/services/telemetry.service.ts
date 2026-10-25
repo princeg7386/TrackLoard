@@ -15,6 +15,8 @@ import { RealtimeFeedService } from './realtime-feed.service.js';
 import { EtaRefreshService } from './eta-refresh.service.js';
 import { GeofenceNotificationService } from './geofence-notification.service.js';
 import { GeofenceService } from './geofence.service.js';
+import { OperationalNotificationService } from './operational-notification.service.js';
+import { LongStopDetectionService } from './long-stop-detection.service.js';
 import { logger } from './logger.service.js';
 
 
@@ -276,6 +278,21 @@ export class TelemetryService {
       recordedAt: new Date(payload.recordedAt).toISOString(),
     });
 
+    // Phase 24.3 — If GPS health status is lost or offline during active trip, alert transport desk (cooldown-guarded)
+    if (healthStatus === 'SIGNAL_LOST' || healthStatus === 'OFFLINE') {
+      OperationalNotificationService.notifyGpsUnavailable({
+        schoolId: trip.school_id,
+        tripId: payload.tripId,
+        lastSeenAt: new Date(payload.recordedAt).toISOString(),
+        reason: `GPS status degraded to ${healthStatus}`,
+      }).catch((err: unknown) => {
+        logger.warn('[TelemetryService] Failed to notify GPS unavailable (suppressed)', {
+          tripId: payload.tripId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+
     // 5. Phase 21.1 — Fire-and-forget geofence approach notifications (non-blocking)
     GeofenceNotificationService.checkAndNotify(
       payload.tripId,
@@ -313,6 +330,18 @@ export class TelemetryService {
       recordedAt: new Date(payload.recordedAt),
     }).catch((err: unknown) => {
       logger.warn('GeofenceService.evaluateSchoolArrival error (suppressed)', {
+        tripId: payload.tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // 7. Phase 26.1 — Long Stop Detection (fire-and-forget, non-blocking)
+    LongStopDetectionService.detectStationaryBus({
+      tripId: payload.tripId,
+      schoolId: trip.school_id,
+      autoPersist: true,
+    }).catch((err: unknown) => {
+      logger.warn('LongStopDetectionService.detectStationaryBus error (suppressed)', {
         tripId: payload.tripId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -594,6 +623,23 @@ export class TelemetryService {
           error: err instanceof Error ? err.message : String(err),
         });
       });
+    }
+
+    // Phase 26.1 — Long Stop Detection per unique trip in the batch (fire-and-forget)
+    for (const [tripId] of latestPerTrip.entries()) {
+      const schoolId = tripSchoolMap.get(tripId) ?? '';
+      if (schoolId) {
+        LongStopDetectionService.detectStationaryBus({
+          tripId,
+          schoolId,
+          autoPersist: true,
+        }).catch((err: unknown) => {
+          logger.warn('LongStopDetectionService.detectStationaryBus batch error (suppressed)', {
+            tripId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
     }
 
     const latest = sorted[sorted.length - 1]!;

@@ -32,6 +32,7 @@ import {
 } from '@school-bus/shared';
 import { EtaService } from './eta.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
+import { ParentNotificationService } from './parent-notification.service.js';
 import { logger } from './logger.service.js';
 
 // ---------------------------------------------------------------------------
@@ -293,6 +294,40 @@ export class EtaRefreshService {
         isStoppedBus,
         speedKmh,
       });
+
+      // 5. Phase 24.2 — Evaluate 10-minute and 3-minute parent proximity alerts
+      if (summary.stopEtas && summary.stopEtas.length > 0) {
+        for (const stopEta of summary.stopEtas) {
+          const etaMins = Math.round(stopEta.durationSeconds / 60);
+          if (etaMins >= 7 && etaMins <= 12) {
+            ParentNotificationService.notifyApproaching10Min({
+              schoolId,
+              tripId,
+              stopId: stopEta.stopId,
+              etaMinutes: etaMins,
+            }).catch((err) => {
+              logger.warn('[EtaRefresh] 10m approaching notification error (suppressed)', {
+                tripId,
+                stopId: stopEta.stopId,
+                error: (err as Error).message,
+              });
+            });
+          } else if (etaMins <= 3 && etaMins > 0) {
+            ParentNotificationService.notifyApproaching3Min({
+              schoolId,
+              tripId,
+              stopId: stopEta.stopId,
+              etaMinutes: etaMins,
+            }).catch((err) => {
+              logger.warn('[EtaRefresh] 3m approaching notification error (suppressed)', {
+                tripId,
+                stopId: stopEta.stopId,
+                error: (err as Error).message,
+              });
+            });
+          }
+        }
+      }
     } catch (err: unknown) {
       // Non-fatal — log and continue. ETA refresh failures must not affect telemetry ingest.
       logger.warn('[EtaRefresh] ETA refresh failed (non-fatal)', {

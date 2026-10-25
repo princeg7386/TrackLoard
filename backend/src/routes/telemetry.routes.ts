@@ -7,7 +7,13 @@ import {
   requireTenantScope,
   requireActorTenantScope,
 } from '../middlewares/tenant-isolation.middleware.js';
-import { TelemetryIngestSchema, TelemetryBatchIngestSchema, UserRole } from '@school-bus/shared';
+import {
+  TelemetryIngestSchema,
+  TelemetryBatchIngestSchema,
+  ReportAppDisconnectRequestSchema,
+  ReconnectTripRequestSchema,
+  UserRole,
+} from '@school-bus/shared';
 import { telemetryIngestRateLimiter } from '../middlewares/rate-limiter.middleware.js';
 
 const telemetryRouter = Router();
@@ -140,6 +146,94 @@ telemetryRouter.get(
   requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
   requireActorTenantScope,
   TelemetryController.getTripGeofenceEvents
+);
+
+// 14. Phase 27.1 — Get active GPS offline events for a school
+telemetryRouter.get(
+  '/schools/:schoolId/offline-events',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getSchoolOfflineEvents
+);
+
+// 15. Phase 27.1 — Trigger fleet offline evaluation across all active trips
+telemetryRouter.post(
+  '/schools/:schoolId/offline-events/scan',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.scanFleetOfflineStatus
+);
+
+// 16. Phase 27.1 — Check real-time offline status for a specific trip
+telemetryRouter.get(
+  '/trips/:tripId/offline-status',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getTripOfflineStatus
+);
+
+// 17. Phase 27.1 — Driver app lifecycle disconnect reporting
+telemetryRouter.post(
+  '/trips/:tripId/app-disconnect',
+  authenticateDriver,
+  validateRequest({ body: ReportAppDisconnectRequestSchema }),
+  TelemetryController.reportAppDisconnect
+);
+
+// 18. Phase 27.2 — Trigger offline response workflow (Store last known, notify school, notify driver)
+telemetryRouter.post(
+  '/schools/:schoolId/trips/:tripId/offline/respond',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.respondToOfflineTrip
+);
+
+// 19. Phase 27.2 — Retrieve locked last known location for a trip
+telemetryRouter.get(
+  '/trips/:tripId/last-known-location',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getLastKnownLocation
+);
+
+// 20. Phase 27.3 — Driver automatic reconnection & queued batch sync
+telemetryRouter.post(
+  '/trips/:tripId/reconnect',
+  authenticateDriver,
+  validateRequest({ body: ReconnectTripRequestSchema }),
+  TelemetryController.reconnectTrip
+);
+
+// 21. Phase 27.3 — Manual recovery of an offline trip by school coordinator
+telemetryRouter.post(
+  '/schools/:schoolId/trips/:tripId/offline/recover',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.recoverTripOffline
+);
+
+// 22. Phase 28.1 — Load expected route geometry and stops
+telemetryRouter.get(
+  '/schools/:schoolId/routes/:routeId/geometry',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getRouteGeometry
+);
+
+// 23. Phase 28.1 — Real-time bus position relative to expected route
+telemetryRouter.get(
+  '/trips/:tripId/route-position',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireActorTenantScope,
+  TelemetryController.getTripRoutePosition
 );
 
 export default telemetryRouter;

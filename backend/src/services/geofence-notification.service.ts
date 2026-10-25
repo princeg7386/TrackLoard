@@ -128,6 +128,8 @@ export class GeofenceNotificationService {
           studentId: parent.studentId,
           directText: messageBody,
           templateId: 'GEOFENCE_APPROACH',
+          eventType: 'BUS_APPROACHING_3M',
+          priority: 'HIGH',
         });
         messageSid = sendResult.messageId;
         result.notificationsSent += 1;
@@ -272,6 +274,8 @@ export class GeofenceNotificationService {
             studentId: candidate.studentId,
             directText: messageBody,
             templateId: 'GEOFENCE_MISSED_BOARDING',
+            eventType: 'MISSED_BOARDING',
+            priority: 'HIGH',
           });
           messageSid = sendResult.messageId;
           result.missedBoardingNotificationsSent += 1;

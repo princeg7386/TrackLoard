@@ -188,4 +188,180 @@ tripRouter.post(
   TripController.cancelTrip
 );
 
+// 9. Get Expected Timeline (Admin, Coordinator, Driver)
+tripRouter.get(
+  '/:schoolId/trips/:tripId/timeline',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.getTripTimeline
+);
+
+// 9b. Regenerate Expected Timeline (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/timeline/generate',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.generateTripTimeline
+);
+
+// 9c. Trip Delay Comparison (Admin, Coordinator, Driver)
+tripRouter.get(
+  '/:schoolId/trips/:tripId/delay-comparison',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.getTripDelayComparison
+);
+
+// 9d. Identify Affected Parents on Delayed Pickups (Admin, Coordinator, Driver)
+tripRouter.get(
+  '/:schoolId/trips/:tripId/affected-parents',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.getAffectedParents
+);
+
+// 9e. Dispatch Delay Alert (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/delay-alerts/dispatch',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.dispatchDelayAlert
+);
+
+// 9f. Check Delay Recovery & Send Recovery Update (Admin, Coordinator, Driver)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/delay-alerts/check-recovery',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.checkDelayRecovery
+);
+
+// 9g. Evaluate Delay Spam Control (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/delay-alerts/evaluate-spam-control',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.evaluateDelaySpamControl
+);
+
+// 10a. Phase 26.1: Evaluate Long Stop (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/long-stop/evaluate',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.evaluateLongStop
+);
+
+// 10b. Phase 26.1: Get Trip Long Stop Status (Admin, Coordinator, Driver)
+tripRouter.get(
+  '/:schoolId/trips/:tripId/long-stop/status',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.getTripLongStopStatus
+);
+
+// 10c. Phase 26.1: Get Active Long Stops for School (Admin, Coordinator)
+tripRouter.get(
+  '/:schoolId/long-stops/active',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.getActiveLongStops
+);
+
+// 10d. Phase 26.2: Record Driver Reason for Long Stop (Driver, Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/long-stop/reason',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.recordLongStopReason
+);
+
+// 10e. Phase 26.3: Resolve Long Stop Event (Admin, Coordinator, Driver)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/long-stop/resolve',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.DRIVER,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.resolveLongStop
+);
+
+// 10f. Phase 26.3: Acknowledge Long Stop Event (Admin, Coordinator)
+tripRouter.post(
+  '/:schoolId/trips/:tripId/long-stop/acknowledge',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  TripController.acknowledgeLongStop
+);
+
 export default tripRouter;

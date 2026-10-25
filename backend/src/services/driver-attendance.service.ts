@@ -28,6 +28,7 @@ import {
 import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../middlewares/error.middleware.js';
+import { ParentNotificationService } from './parent-notification.service.js';
 
 export interface DriverAttendanceActorContext {
   userId?: string;
@@ -638,6 +639,25 @@ export class DriverAttendanceService {
       `[DriverAttendance] Recorded boarding for student ${student.full_name} (${student.admission_number}): ${payload.status} at stop ${resolvedStopId} (Trip: ${payload.tripId})`
     );
 
+    // Notify parent on WhatsApp when student is marked BOARDED (non-blocking)
+    if (payload.status === 'BOARDED') {
+      setImmediate(() => {
+        ParentNotificationService.notifyStudentBoarded({
+          schoolId,
+          tripId: payload.tripId,
+          studentId: payload.studentId,
+          stopId: resolvedStopId,
+          recordedAt,
+        }).catch((err: unknown) => {
+          logger.warn('[DriverAttendanceService] Failed to notify parent of student boarding (suppressed)', {
+            tripId: payload.tripId,
+            studentId: payload.studentId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      });
+    }
+
     // 5. Query updated attendance summary counts for this trip
     const countsRows = await query<{
       total_students: number;
@@ -938,6 +958,25 @@ export class DriverAttendanceService {
     logger.info(
       `[DriverAttendance] Recorded drop for student ${student.full_name} (${student.admission_number}): ${status} at stop ${resolvedStopId} (Trip: ${payload.tripId})`
     );
+
+    // Notify parent on WhatsApp when student is marked DEBOARDED (non-blocking)
+    if (status === 'DEBOARDED') {
+      setImmediate(() => {
+        ParentNotificationService.notifyStudentDropped({
+          schoolId,
+          tripId: payload.tripId,
+          studentId: payload.studentId,
+          stopId: resolvedStopId,
+          recordedAt,
+        }).catch((err: unknown) => {
+          logger.warn('[DriverAttendanceService] Failed to notify parent of student drop (suppressed)', {
+            tripId: payload.tripId,
+            studentId: payload.studentId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      });
+    }
 
     // 5. Query updated attendance summary counts for this trip
     const countsRows = await query<{

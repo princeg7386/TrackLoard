@@ -22,6 +22,8 @@ import {
 import { logger } from './logger.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
 import { EtaRefreshService } from './eta-refresh.service.js';
+import { ParentNotificationService } from './parent-notification.service.js';
+import { TripTimelineService } from './trip-timeline.service.js';
 
 export interface TripActorContext {
   schoolId?: string;
@@ -272,6 +274,15 @@ export class TripService {
         scheduledStartTime: r.scheduled_start_time,
         stage: TripLifecycleStage.NOT_STARTED,
       },
+    });
+
+    // Phase 25.1: Pre-calculate & persist expected timeline for pickup stops
+    setImmediate(() => {
+      TripTimelineService.generateAndStoreTimeline(r.id, schoolId).catch((err: any) => {
+        logger.warn(`[TripService] Failed to auto-generate trip timeline: ${err.message}`, {
+          tripId: r.id,
+        });
+      });
     });
 
     return this.getTripById(schoolId, r.id, actor);
@@ -708,6 +719,20 @@ export class TripService {
       `[TripService] Trip ${tripId} STARTED by ${actor?.userId || 'admin'}. Activated ${activatedTokensCount} parent tracking tokens.`
     );
 
+    // Notify parents on route that the trip has started (non-blocking)
+    setImmediate(() => {
+      ParentNotificationService.notifyTripStarted({
+        schoolId,
+        tripId,
+        startedAt: explicitStartTime || new Date().toISOString(),
+      }).catch((err: unknown) => {
+        logger.warn('[TripService] Failed to dispatch parent trip started notifications (suppressed)', {
+          tripId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
+
     // 6. Broadcast real-time feed event to update dashboard and parent live tracking
     const effectiveStartTime = explicitStartTime || new Date().toISOString();
     const effectiveHealthStatus: GpsHealthStatus =
@@ -1032,6 +1057,20 @@ export class TripService {
     );
 
     logger.info(`[TripService] Trip ${tripId} COMPLETED and tracking session detached`);
+
+    // Notify parents on route that the trip has completed (non-blocking)
+    setImmediate(() => {
+      ParentNotificationService.notifyTripCompleted({
+        schoolId,
+        tripId,
+        endedAt: explicitEndTime || new Date().toISOString(),
+      }).catch((err: unknown) => {
+        logger.warn('[TripService] Failed to dispatch parent trip completed notifications (suppressed)', {
+          tripId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
 
     // 6. Broadcast real-time feed update indicating trip concluded
     const effectiveEndTime = explicitEndTime || new Date().toISOString();

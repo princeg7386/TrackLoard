@@ -13,6 +13,7 @@ import { SpatialService } from './spatial.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
 import { TripService } from './trip.service.js';
 import { GeofenceNotificationService } from './geofence-notification.service.js';
+import { ParentNotificationService } from './parent-notification.service.js';
 import { logger } from './logger.service.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../middlewares/error.middleware.js';
 
@@ -205,6 +206,22 @@ export class GeofenceService {
           stopId: stop.id,
           distanceMeters,
         });
+
+        // Phase 24.2 — Notify parents that bus reached pickup stop (non-blocking)
+        if (triggerWorkflows) {
+          ParentNotificationService.notifyBusArrivedStop({
+            schoolId,
+            tripId,
+            stopId: stop.id,
+            stopName: stop.stopName,
+          }).catch((err: unknown) => {
+            logger.warn('[GeofenceService] Failed to notify parents of stop arrival (suppressed)', {
+              tripId,
+              stopId: stop.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
       }
 
       // ── Transition: EXIT (INSIDE -> OUTSIDE) ───────────────────────────

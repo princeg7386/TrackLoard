@@ -2,6 +2,7 @@ import {
   IMessagingProvider,
   SendMessageOptions,
   MessageSendResult,
+  getNotificationEventDefaultPriority,
 } from '@school-bus/shared';
 import { MockMessagingAdapter } from './mock-messaging.adapter.js';
 import { MetaCloudWhatsAppAdapter } from './meta-cloud-whatsapp.adapter.js';
@@ -47,11 +48,18 @@ export class MessagingService {
     // Asynchronously log to PostgreSQL notifications table if schoolId is provided
     if (options.schoolId) {
       try {
+        const priority =
+          options.priority ||
+          (options.eventType
+            ? getNotificationEventDefaultPriority(options.eventType)
+            : 'NORMAL');
+
         await query(
           `INSERT INTO notifications (
              school_id, recipient_phone, recipient_role, channel,
-             template_name, message_body, status, provider_message_id
-           ) VALUES ($1, $2, $3, 'WHATSAPP', $4, $5, $6, $7)`,
+             template_name, message_body, status, provider_message_id,
+             event_type, priority
+           ) VALUES ($1, $2, $3, 'WHATSAPP', $4, $5, $6, $7, $8, $9)`,
           [
             options.schoolId,
             options.recipientPhone,
@@ -60,6 +68,8 @@ export class MessagingService {
             options.directText || 'WhatsApp notification',
             result.status.toUpperCase(),
             result.messageId,
+            options.eventType || null,
+            priority,
           ]
         );
       } catch {
@@ -95,8 +105,9 @@ export class MessagingService {
         await query(
           `INSERT INTO notifications (
              school_id, recipient_phone, recipient_role, channel,
-             template_name, message_body, status, provider_message_id
-           ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', 'LOCATION_REQUEST', $3, $4, $5)`,
+             template_name, message_body, status, provider_message_id,
+             event_type, priority
+           ) VALUES ($1, $2, 'PARENT', 'WHATSAPP', 'LOCATION_REQUEST', $3, $4, $5, 'PARENT_INVITE', 'LOW')`,
           [
             context.schoolId,
             recipientPhone,
