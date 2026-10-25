@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import {
   ParentWhatsAppInboundRequest,
   ParentWhatsAppActionExecuteRequest,
+  ParentReportIssueRequest,
 } from '@school-bus/shared';
 import { ParentWhatsappService } from '../services/parent-whatsapp.service.js';
 import { sendSuccess } from '../utils/response.util.js';
@@ -299,6 +300,66 @@ export class ParentWhatsappController {
           ? 'Pickup stop updated successfully'
           : 'Unable to update pickup location'
       );
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/parent/whatsapp/help
+   * Retrieves FAQ, support contacts, operating hours, and active bus driver details (Micro-phase 22.6: Help)
+   */
+  public static async getHelp(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const phone = req.query.phone as string | undefined;
+      const schoolId = req.query.schoolId as string | undefined;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number query parameter is required');
+      }
+
+      const result = await ParentWhatsappService.getHelpDetails(phone, schoolId);
+      if (!result) {
+        throw new NotFoundError(`Parent not found for phone number: ${phone}`);
+      }
+
+      sendSuccess(res, result, 'Parent transport help and FAQ details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/parent/whatsapp/help/report-issue
+   * Reports a transport issue or safety concern and creates an incident ticket (Micro-phase 22.6: Issue reporting)
+   */
+  public static async reportIssue(
+    req: Request<{}, {}, ParentReportIssueRequest>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { phone, category, description, schoolId } = req.body;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number is required');
+      }
+      if (!description || description.trim().length < 3) {
+        throw new BadRequestError('Issue description must be at least 3 characters');
+      }
+
+      const result = await ParentWhatsappService.reportIssue({
+        phone,
+        category: category || 'OTHER',
+        description,
+        schoolId,
+      });
+
+      sendSuccess(res, result, 'Transport issue reported successfully and ticket created');
     } catch (error) {
       next(error);
     }

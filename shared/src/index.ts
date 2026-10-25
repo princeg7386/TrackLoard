@@ -4160,5 +4160,73 @@ export const ParentPickupUpdateResultSchema = z.object({
 });
 export type ParentPickupUpdateResult = z.infer<typeof ParentPickupUpdateResultSchema>;
 
+/**
+ * Phase 22.6: Parent WhatsApp Help Schemas
+ */
+export const ParentFaqItemSchema = z.object({
+  id: z.string(),
+  question: z.string(),
+  answer: z.string(),
+  category: z.string().default('GENERAL'),
+});
+export type ParentFaqItem = z.infer<typeof ParentFaqItemSchema>;
+
+export const ParentHelpResponseSchema = z.object({
+  schoolName: z.string(),
+  schoolPhone: z.string().optional().nullable(),
+  emergencyPhone: z.string().optional().nullable(),
+  supportEmail: z.string().optional().nullable(),
+  operatingHours: z.string().default('Monday to Saturday: 06:30 AM – 06:30 PM'),
+  driver: z
+    .object({
+      id: z.string().optional().nullable(),
+      name: z.string().optional().nullable(),
+      phone: z.string().optional().nullable(),
+      busNumber: z.string().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
+  faqs: z.array(ParentFaqItemSchema),
+  availableCommands: z.array(
+    z.object({
+      command: z.string(),
+      description: z.string(),
+    })
+  ),
+  replyText: z.string(),
+});
+export type ParentHelpResponse = z.infer<typeof ParentHelpResponseSchema>;
+
+export const ParentIssueCategorySchema = z.enum([
+  'BUS_DELAY',
+  'MISSED_STOP',
+  'RASH_DRIVING',
+  'ATTENDANCE_DISCREPANCY',
+  'STUDENT_ABSENCE',
+  'OTHER',
+]);
+export type ParentIssueCategory = z.infer<typeof ParentIssueCategorySchema>;
+
+export const ParentReportIssueRequestSchema = z.object({
+  phone: z.string().min(6),
+  category: ParentIssueCategorySchema.default('OTHER'),
+  description: z.string().min(3, 'Description must be at least 3 characters'),
+  schoolId: z.string().uuid().optional(),
+});
+export type ParentReportIssueRequest = z.infer<typeof ParentReportIssueRequestSchema>;
+
+export const ParentReportIssueResponseSchema = z.object({
+  success: z.boolean(),
+  incidentId: z.string().uuid(),
+  ticketNumber: z.string(),
+  category: z.string(),
+  severity: z.string(),
+  status: z.string(),
+  description: z.string(),
+  reportedAt: z.string(),
+  formattedMessage: z.string(),
+});
+export type ParentReportIssueResponse = z.infer<typeof ParentReportIssueResponseSchema>;
+
 
 

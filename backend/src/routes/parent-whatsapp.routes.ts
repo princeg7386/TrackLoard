@@ -3,6 +3,7 @@ import {
   ParentWhatsAppInboundRequestSchema,
   ParentWhatsAppActionExecuteRequestSchema,
   ParentPickupUpdateRequestSchema,
+  ParentReportIssueRequestSchema,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
 import { ParentWhatsappController } from '../controllers/parent-whatsapp.controller.js';
@@ -45,6 +46,14 @@ parentWhatsappRouter.post(
   '/pickup/update',
   validateBody(ParentPickupUpdateRequestSchema),
   ParentWhatsappController.updatePickup
+);
+
+// 9. Help & Issue Reporting (Micro-Phase 22.6)
+parentWhatsappRouter.get('/help', ParentWhatsappController.getHelp);
+parentWhatsappRouter.post(
+  '/help/report-issue',
+  validateBody(ParentReportIssueRequestSchema),
+  ParentWhatsappController.reportIssue
 );
 
 export default parentWhatsappRouter;

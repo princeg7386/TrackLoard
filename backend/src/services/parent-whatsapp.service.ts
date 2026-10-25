@@ -10,6 +10,11 @@ import {
   ParentMyPickupResponse,
   ParentPickupUpdateRequest,
   ParentPickupUpdateResult,
+  ParentFaqItem,
+  ParentHelpResponse,
+  ParentIssueCategory,
+  ParentReportIssueRequest,
+  ParentReportIssueResponse,
   TripStatus,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -1864,13 +1869,74 @@ export class ParentWhatsappService {
   }
 
   /**
-   * Action 6: Help
+   * Action 6: Help (FAQ, Support contact, Driver info, Available Commands)
    */
   public static async handleHelp(
-    parent: ParentContextRecord
+    parent: ParentContextRecord,
+    activeTrip?: ParentActiveTripContext | null
   ): Promise<{ replyText: string; data: any }> {
-    const schoolPhone = parent.schoolPhone || '+91-11-23456789';
-    const emergencyPhone = parent.schoolEmergencyPhone || schoolPhone;
+    const schoolPhone = parent.schoolPhone || '+91-11-26174567';
+    const emergencyPhone = parent.schoolEmergencyPhone || '+91-11-26179999';
+    const cleanSchoolName = parent.schoolName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const supportEmail = `transport@${cleanSchoolName || 'school'}.edu.in`;
+
+    const faqs: ParentFaqItem[] = [
+      {
+        id: 'faq-1',
+        category: 'TRACKING',
+        question: "How do I track my child's bus live?",
+        answer: "Reply *1* or *TRACK* at any time to receive your secure live tracking link. No separate app download is needed; it opens directly in any mobile browser.",
+      },
+      {
+        id: 'faq-2',
+        category: 'ETA',
+        question: "How accurate is the arrival ETA?",
+        answer: "Reply *2* or *ETA* to check the live arrival time calculated using real-time GPS telemetry, traffic conditions, and stop geofences.",
+      },
+      {
+        id: 'faq-3',
+        category: 'ATTENDANCE',
+        question: "How do I know when my child boards or is dropped?",
+        answer: "You will receive an instant WhatsApp alert as soon as the bus driver marks your child boarded or safely deboarded at the stop.",
+      },
+      {
+        id: 'faq-4',
+        category: 'PICKUP',
+        question: "Can I update our pickup location?",
+        answer: "Yes! Simply share your WhatsApp GPS location pin directly in this chat or reply *4* to view your current stop and update instructions.",
+      },
+      {
+        id: 'faq-5',
+        category: 'SUPPORT',
+        question: "How do I report an issue or complaint?",
+        answer: "Type *REPORT <your message>* in this chat (e.g. *REPORT Bus delayed 15 minutes*), or call the transport control room helpline.",
+      },
+    ];
+
+    const availableCommands = [
+      { command: '1 or TRACK', description: 'Live bus map tracking link' },
+      { command: '2 or ETA', description: 'Live arrival time at pickup stop' },
+      { command: '3 or CHILD', description: 'Student info & boarding status' },
+      { command: '4 or PICKUP', description: 'Pickup stop details & update' },
+      { command: '5 or ALERTS', description: 'Recent notifications' },
+      { command: '6 or HELP', description: 'FAQs & support contacts' },
+      { command: 'REPORT <details>', description: 'Report a bus delay or safety issue' },
+    ];
+
+    let driverSection = '';
+    let driverData: { id?: string | null; name?: string | null; phone?: string | null; busNumber?: string | null } | null = null;
+    if (activeTrip?.driverName || activeTrip?.busNumber) {
+      driverData = {
+        id: activeTrip.driverId || null,
+        name: activeTrip.driverName || null,
+        phone: activeTrip.driverPhone || null,
+        busNumber: activeTrip.busNumber || null,
+      };
+      driverSection =
+        `🚍 *Assigned Bus & Driver:*\n` +
+        `Bus: *${activeTrip.busNumber || 'Assigned Bus'}*\n` +
+        `Driver: *${activeTrip.driverName || 'Driver'}* ${activeTrip.driverPhone ? `(${activeTrip.driverPhone})` : ''}\n\n`;
+    }
 
     const replyText =
       `ℹ️ *School Transport Help & Support*\n` +
@@ -1884,16 +1950,134 @@ export class ParentWhatsappService {
       `Type *6* or *HELP* — Show this support menu\n\n` +
       `📞 *Transport Control Room:*\n` +
       `Helpline: *${schoolPhone}*\n` +
-      `Emergency Desk: *${emergencyPhone}*\n\n` +
+      `Emergency Desk: *${emergencyPhone}*\n` +
+      `Operating Hours: Monday to Saturday: 06:30 AM – 06:30 PM\n\n` +
+      driverSection +
+      `❓ *Common Questions:*\n` +
+      `• *Live Tracking:* Reply *1* for real-time map (no app needed).\n` +
+      `• *Stop Update:* Share GPS pin to update pickup point.\n` +
+      `• *Report Issue:* Type *REPORT <details>* anytime.\n\n` +
       `_Reply *0* or *MENU* at any time to return to the main menu._`;
 
     return {
       replyText,
       data: {
+        schoolName: parent.schoolName,
         schoolPhone,
         emergencyPhone,
-        schoolName: parent.schoolName,
+        supportEmail,
+        operatingHours: 'Monday to Saturday: 06:30 AM – 06:30 PM',
+        driver: driverData,
+        faqs,
+        availableCommands,
+        replyText,
       },
+    };
+  }
+
+  /**
+   * Retrieves structured Help Details including FAQs, Support Contacts, and Commands
+   */
+  public static async getHelpDetails(
+    phone: string,
+    schoolId?: string
+  ): Promise<ParentHelpResponse | null> {
+    const parent = await this.findParentByPhone(phone, schoolId);
+    if (!parent) {
+      return null;
+    }
+    const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
+    const { data } = await this.handleHelp(parent, activeTrip);
+    return data as ParentHelpResponse;
+  }
+
+  /**
+   * Reports an issue from a parent and inserts a record into incidents table
+   */
+  public static async reportIssue(
+    params: ParentReportIssueRequest
+  ): Promise<ParentReportIssueResponse> {
+    const parent = await this.findParentByPhone(params.phone, params.schoolId);
+    if (!parent) {
+      throw new NotFoundError(
+        `No registered student transport profile found for mobile ${normalizeIndianPhoneNumber(params.phone)}`
+      );
+    }
+
+    const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
+
+    // Map severity based on issue category
+    let severity = 'MEDIUM';
+    if (params.category === 'RASH_DRIVING') {
+      severity = 'HIGH';
+    } else if (params.category === 'BUS_DELAY') {
+      severity = 'LOW';
+    } else if (params.category === 'MISSED_STOP') {
+      severity = 'HIGH';
+    } else if (params.category === 'ATTENDANCE_DISCREPANCY') {
+      severity = 'MEDIUM';
+    } else if (params.category === 'STUDENT_ABSENCE') {
+      severity = 'LOW';
+    }
+
+    const description = `[Parent: ${parent.parentName} (${parent.relationship}) - Student: ${parent.studentName}] ${params.description.trim()}`;
+
+    const insertResult = await query<{
+      id: string;
+      school_id: string;
+      trip_id: string | null;
+      bus_id: string | null;
+      driver_id: string | null;
+      incident_type: string;
+      severity: string;
+      status: string;
+      description: string;
+      created_at: string;
+    }>(
+      `INSERT INTO incidents (
+        school_id, trip_id, bus_id, driver_id, incident_type, severity, status, description, reported_by
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, 'OPEN', $7, 'PARENT'
+      ) RETURNING id, school_id, trip_id, bus_id, driver_id, incident_type, severity, status, description, created_at;`,
+      [
+        parent.schoolId,
+        activeTrip?.id || null,
+        activeTrip?.busId || null,
+        activeTrip?.driverId || null,
+        params.category,
+        severity,
+        description,
+      ]
+    );
+
+    const row = insertResult[0];
+    if (!row) {
+      throw new Error('Failed to record incident report');
+    }
+    const shortId = (row.id as string).substring(0, 8).toUpperCase();
+    const ticketNumber = `TKT-${shortId}`;
+    const emergencyPhone = parent.schoolEmergencyPhone || parent.schoolPhone || '+91-11-26179999';
+
+    const formattedMessage =
+      `📋 *Transport Issue Logged Successfully*\n` +
+      `Ticket #: *${ticketNumber}*\n` +
+      `Category: *${params.category}*\n` +
+      `Status: *OPEN*\n` +
+      `Student: *${parent.studentName}*\n\n` +
+      `*Report Details:*\n"${params.description.trim()}"\n\n` +
+      `The transport coordinator and safety desk have been notified.\n` +
+      `For emergency assistance, call Control Desk: *${emergencyPhone}*`;
+
+    return {
+      success: true,
+      incidentId: row.id,
+      ticketNumber,
+      category: params.category,
+      severity,
+      status: 'OPEN',
+      description: params.description.trim(),
+      reportedAt: new Date(row.created_at).toISOString(),
+      formattedMessage,
     };
   }
 
@@ -1989,6 +2173,8 @@ export class ParentWhatsappService {
       clean === 'helpline' ||
       clean === 'emergency' ||
       clean === 'sos' ||
+      clean === 'report' ||
+      clean === 'issue' ||
       clean.includes('help') ||
       clean === 'parent_action_help'
     ) {
@@ -2085,6 +2271,71 @@ export class ParentWhatsappService {
       };
     }
 
+    // 2b. Natural language Issue Reporting (e.g. "REPORT Bus is running 20 mins late", "ISSUE missed pickup")
+    const cleanText = text?.trim() || '';
+    const lowerText = cleanText.toLowerCase();
+    if (
+      lowerText.startsWith('report ') ||
+      lowerText.startsWith('report:') ||
+      lowerText.startsWith('issue ') ||
+      lowerText.startsWith('issue:') ||
+      lowerText.startsWith('complaint ') ||
+      lowerText.startsWith('complaint:') ||
+      lowerText.startsWith('problem ') ||
+      lowerText.startsWith('problem:')
+    ) {
+      const issueDescription = cleanText.replace(/^(report|issue|complaint|problem)[:\s]+/i, '').trim();
+      let category: ParentIssueCategory = 'OTHER';
+      const descLower = issueDescription.toLowerCase();
+      if (descLower.includes('delay') || descLower.includes('late')) {
+        category = 'BUS_DELAY';
+      } else if (descLower.includes('miss') || descLower.includes('skip')) {
+        category = 'MISSED_STOP';
+      } else if (
+        descLower.includes('rash') ||
+        descLower.includes('speed') ||
+        descLower.includes('fast') ||
+        descLower.includes('drive')
+      ) {
+        category = 'RASH_DRIVING';
+      } else if (descLower.includes('attendance') || descLower.includes('board')) {
+        category = 'ATTENDANCE_DISCREPANCY';
+      } else if (descLower.includes('absent') || descLower.includes('leave')) {
+        category = 'STUDENT_ABSENCE';
+      }
+
+      const issueResult = await this.reportIssue({
+        phone: from,
+        schoolId: parent.schoolId,
+        category,
+        description: issueDescription.length >= 3 ? issueDescription : cleanText,
+      });
+
+      let whatsappDelivered = false;
+      try {
+        const sendResult = await MessagingService.sendMessage({
+          recipientPhone: normalizedPhone,
+          directText: issueResult.formattedMessage,
+          recipientRole: 'PARENT',
+          schoolId: parent.schoolId,
+        });
+        whatsappDelivered = sendResult.status === 'sent' || sendResult.status === 'queued';
+      } catch (err: any) {
+        logger.warn(`Failed to dispatch WhatsApp reply to parent ${normalizedPhone}: ${err.message}`);
+      }
+
+      return {
+        handled: true,
+        parentId: parent.parentId,
+        studentId: parent.studentId,
+        schoolId: parent.schoolId,
+        actionTriggered: ParentWhatsAppAction.HELP,
+        replyText: issueResult.formattedMessage,
+        data: issueResult as any,
+        whatsappDelivered,
+      };
+    }
+
     // 3. Resolve Active Trip Context
     const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
 
@@ -2127,7 +2378,7 @@ export class ParentWhatsappService {
         break;
       }
       case ParentWhatsAppAction.HELP: {
-        const res = await this.handleHelp(parent);
+        const res = await this.handleHelp(parent, activeTrip);
         replyText = res.replyText;
         actionData = res.data;
         break;
