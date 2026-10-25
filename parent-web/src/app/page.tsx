@@ -3,6 +3,7 @@
  *
  * Micro-phase 23.1: Secure Entry (Token Validation, Expiry, Revocation)
  * Micro-phase 23.2: Live View (Bus Marker, Route, Pickup, ETA, Bus Number, Trip Status, Last Update)
+ * Micro-phase 23.3: Failure States (Bus Offline, Trip Ended, Invalid Link, Stale Location)
  *
  * Accessible via tokenized WhatsApp link:
  *   /track?token=<parent_token>   OR   /?token=<parent_token>
@@ -18,6 +19,7 @@ import {
   CheckCircle2,
   Clock,
   Compass,
+  Info,
   MapPin,
   MessageSquare,
   Navigation,
@@ -156,7 +158,7 @@ const STATUS_META: Record<
 > = {
   [TripStatus.SCHEDULED]: {
     label: 'Scheduled',
-    headline: 'Trip Scheduled · Awaiting Start',
+    headline: 'Trip Scheduled · Awaiting Departure',
     color: 'text-slate-700',
     bg: 'bg-slate-50',
     border: 'border-slate-200',
@@ -284,7 +286,7 @@ function ParentTrackContent() {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
 
-  // Periodic clock ticker so relative timestamps update in real time
+  // Periodic clock ticker so relative timestamps update smoothly
   useEffect(() => {
     const timer = setInterval(() => {
       setClockTick(Date.now());
@@ -528,7 +530,7 @@ function ParentTrackContent() {
     };
   }, [pageState.phase, connectSse]);
 
-  // ── 3. Derived display values ─────────────────────────────
+  // ── 3. Derived display values & Failure State Calculations ──
 
   const session = pageState.phase === 'ready' ? pageState.session : null;
   const effectiveStatus: TripStatus = liveStatus ?? session?.activeTrip?.status ?? TripStatus.SCHEDULED;
@@ -536,6 +538,23 @@ function ParentTrackContent() {
   const tz = session?.school.timezone ?? 'Asia/Kolkata';
   const statusMeta = STATUS_META[effectiveStatus] ?? STATUS_META[TripStatus.SCHEDULED];
   const effectiveEta: ParentPickupEta | null = liveParentEta ?? session?.parentEta ?? null;
+
+  // Telemetry recency & health calculation
+  const loc = liveLocation ?? session?.activeTrip?.lastGpsLocation ?? null;
+  const locAgeSec = loc
+    ? Math.max(0, (Date.now() - new Date(loc.recordedAt).getTime()) / 1000)
+    : Infinity;
+
+  const isLocStale = loc != null && locAgeSec >= 120 && locAgeSec < 300; // 2 to 5 minutes old
+  const isLocLost = loc == null || locAgeSec >= 300; // > 5 minutes old or null fix
+  const isTripActive =
+    effectiveStatus === TripStatus.IN_TRANSIT ||
+    effectiveStatus === TripStatus.DELAYED ||
+    effectiveStatus === TripStatus.EMERGENCY;
+  const isTripEnded =
+    effectiveStatus === TripStatus.ARRIVED_SCHOOL ||
+    effectiveStatus === TripStatus.COMPLETED;
+  const isTripCancelled = effectiveStatus === TripStatus.CANCELLED;
 
   // ── 4. Render states ──────────────────────────────────────
 
@@ -658,17 +677,28 @@ function ParentTrackContent() {
           icon={<XCircle className="w-8 h-8 text-red-500" />}
           title="Invalid Tracking Link"
           body={pageState.message || 'We could not recognize or verify this link in the school transport system.'}
-          tips="Please verify that you tapped the full link from your WhatsApp message without truncation."
+          tips="Tracking links are tied directly to your child's student admission record. Please ensure you tapped the full link from your WhatsApp message without truncation."
           actions={
-            pageState.supportPhone ? (
+            <div className="flex flex-col gap-2 pt-2 w-full">
               <a
-                href={`tel:${pageState.supportPhone}`}
-                className="mt-2 inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+                href="https://wa.me/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-xs transition-colors"
               >
-                <Phone className="w-3.5 h-3.5" />
-                Call Helpline: {pageState.supportPhone}
+                <MessageSquare className="w-4 h-4" />
+                Request Fresh Link via WhatsApp
               </a>
-            ) : undefined
+              {pageState.supportPhone && (
+                <a
+                  href={`tel:${pageState.supportPhone}`}
+                  className="w-full inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2 rounded-lg transition-colors"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  Call Transport Desk: {pageState.supportPhone}
+                </a>
+              )}
+            </div>
           }
         />
       </Shell>
@@ -707,7 +737,6 @@ function ParentTrackContent() {
   // ── 5. Ready State (Live Tracking View) ────────────────────
 
   const { student, school, pickupStop, activeTrip } = session!;
-  const loc = liveLocation ?? activeTrip?.lastGpsLocation ?? null;
 
   // Calculate route sequence progression percentage
   const currentSeq = activeTrip?.currentStopSequence ?? 0;
@@ -810,7 +839,141 @@ function ParentTrackContent() {
               </div>
             </div>
 
-            {/* 2. Interactive Map Canvas */}
+            {/* FAILURE STATE 1: Bus Offline Alert Banner */}
+            {isTripActive && isLocLost && (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 space-y-2.5 shadow-2xs">
+                <div className="flex items-center gap-2 text-rose-800">
+                  <div className="w-6 h-6 rounded-full bg-rose-100 flex items-center justify-center flex-shrink-0">
+                    <WifiOff className="w-3.5 h-3.5 text-rose-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-rose-950 uppercase tracking-wide">
+                      Bus GPS Offline · Signal Disrupted
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-rose-900 leading-relaxed">
+                  Live coordinates from Bus #{activeTrip.busNumber} have not been received for over 5 minutes. The vehicle is still in transit on its assigned route. GPS fixes may temporarily drop due to underpasses, flyovers, or cellular dead zones.
+                </p>
+
+                {loc ? (
+                  <p className="text-[11px] text-rose-700 font-mono">
+                    Last recorded fix: {fmtTime(loc.recordedAt, tz)} ({fmtRelative(loc.recordedAt)})
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-rose-700 font-mono">
+                    Awaiting initial satellite telemetry lock from vehicle device.
+                  </p>
+                )}
+
+                {activeTrip.driverPhone && (
+                  <div className="pt-0.5">
+                    <a
+                      href={`tel:${activeTrip.driverPhone}`}
+                      className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-900 bg-rose-100 hover:bg-rose-200 border border-rose-300 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      <Phone className="w-3.5 h-3.5 text-rose-700" />
+                      Contact Driver: {activeTrip.driverName}
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* FAILURE STATE 2: Stale Location Alert Banner */}
+            {isTripActive && isLocStale && loc && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3 shadow-2xs">
+                <Clock className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-amber-950">
+                    Telemetry Delayed · Fix from {fmtRelative(loc.recordedAt)}
+                  </p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    Location updates are slightly delayed due to cellular reception conditions in this area. Position will refresh automatically as connection stabilizes.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* FAILURE STATE 3: Trip Ended Dedicated View */}
+            {isTripEnded && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 space-y-3.5 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-emerald-100 border border-emerald-300 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-700" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-emerald-950">
+                      {effectiveStatus === TripStatus.ARRIVED_SCHOOL
+                        ? 'Bus Safely Arrived at Campus'
+                        : 'Journey Completed'}
+                    </p>
+                    <p className="text-xs text-emerald-700 mt-0.5">
+                      {effectiveStatus === TripStatus.ARRIVED_SCHOOL
+                        ? 'Student transport for this morning shift is complete.'
+                        : 'Today’s bus transport journey has completed safely.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white/90 rounded-xl p-3.5 text-xs text-slate-700 space-y-2 border border-emerald-100">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Student</span>
+                    <span className="font-bold text-slate-900">{student.fullName}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Pickup/Drop Stop</span>
+                    <span className="font-bold text-slate-900">
+                      {pickupStop?.stopName ?? 'Assigned Stop'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 font-medium">Next Scheduled Journey</span>
+                    <span className="font-semibold text-sky-800 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                      {activeTrip.routeType === RouteType.MORNING_PICKUP
+                        ? 'Afternoon Drop'
+                        : 'Next School Day'}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-emerald-800 text-center font-medium">
+                  Live telemetry has paused. It will automatically reactivate for the next trip.
+                </p>
+              </div>
+            )}
+
+            {/* FAILURE STATE 4: Trip Cancelled View */}
+            {isTripCancelled && (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-5 space-y-3 shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-rose-100 border border-rose-300 flex items-center justify-center flex-shrink-0">
+                    <XCircle className="w-6 h-6 text-rose-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-rose-950">Trip Cancelled</p>
+                    <p className="text-xs text-rose-700 mt-0.5">
+                      This trip was cancelled by school transport dispatch.
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-rose-900 leading-relaxed">
+                  Please consult your school announcements or WhatsApp notifications for alternate vehicle assignments or parent pickup instructions.
+                </p>
+                {pageState.phase === 'ready' && pageState.supportPhone && (
+                  <a
+                    href={`tel:${pageState.supportPhone}`}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-900 bg-rose-100 hover:bg-rose-200 border border-rose-300 px-3 py-2 rounded-lg transition-colors"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                    Call Transport Desk: {pageState.supportPhone}
+                  </a>
+                )}
+              </div>
+            )}
+
+            {/* Interactive Map Canvas (shown for active and ended trips) */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
               <div className="px-4 pt-3 pb-2 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
                 <p className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
@@ -849,7 +1012,7 @@ function ParentTrackContent() {
                   }
                   feedStatus={feedStatus}
                   tripStatus={statusMeta.label}
-                  isApproaching={effectiveEta?.isApproaching ?? false}
+                  isApproaching={!isTripEnded && (effectiveEta?.isApproaching ?? false)}
                 />
               </div>
 
@@ -867,12 +1030,22 @@ function ParentTrackContent() {
                     <span className="text-slate-400">·</span>
                     <span
                       className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${
-                        loc.speedKmh < 2
+                        isLocLost
+                          ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                          : isLocStale
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : loc.speedKmh < 2
                           ? 'bg-amber-50 text-amber-700'
                           : 'bg-emerald-50 text-emerald-700'
                       }`}
                     >
-                      {loc.speedKmh < 2 ? 'Stationary' : 'Moving'}
+                      {isLocLost
+                        ? 'GPS Offline'
+                        : isLocStale
+                        ? 'Stale Location'
+                        : loc.speedKmh < 2
+                        ? 'Stationary'
+                        : 'Moving'}
                     </span>
                   </div>
                   <p className="text-[10px] text-slate-400 font-mono">
@@ -882,54 +1055,56 @@ function ParentTrackContent() {
               )}
             </div>
 
-            {/* 3. Route Details & Sequence Progression */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
-                  <RouteIcon className="w-3.5 h-3.5 text-sky-600" />
-                  Assigned Route
-                </p>
-                <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
-                  {fmtRouteType(activeTrip.routeType)}
-                </span>
-              </div>
-
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-bold text-slate-900 text-sm">
-                    {activeTrip.routeName}
+            {/* Route Details & Sequence Progression (only when trip is active or scheduled) */}
+            {!isTripEnded && !isTripCancelled && (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                    <RouteIcon className="w-3.5 h-3.5 text-sky-600" />
+                    Assigned Route
                   </p>
-                  {activeTrip.routeCode && (
-                    <p className="text-xs text-slate-400 font-mono mt-0.5">
-                      Code: {activeTrip.routeCode}
-                    </p>
-                  )}
-                </div>
-                <div className="text-right">
-                  <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded">
-                    Stop {currentSeq} of {totalStops}
+                  <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                    {fmtRouteType(activeTrip.routeType)}
                   </span>
                 </div>
-              </div>
 
-              {/* Progress bar */}
-              <div className="space-y-1 pt-1">
-                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
-                  <div
-                    className="bg-sky-600 h-2 rounded-full transition-all duration-500 ease-out"
-                    style={{ width: `${Math.max(routePercent, 5)}%` }}
-                  />
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-slate-900 text-sm">
+                      {activeTrip.routeName}
+                    </p>
+                    {activeTrip.routeCode && (
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">
+                        Code: {activeTrip.routeCode}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded">
+                      Stop {currentSeq} of {totalStops}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-                  <span>Start (Depot)</span>
-                  <span>{routePercent}% completed</span>
-                  <span>Destination</span>
+
+                {/* Progress bar */}
+                <div className="space-y-1 pt-1">
+                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden border border-slate-200">
+                    <div
+                      className="bg-sky-600 h-2 rounded-full transition-all duration-500 ease-out"
+                      style={{ width: `${Math.max(routePercent, 5)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                    <span>Start (Depot)</span>
+                    <span>{routePercent}% completed</span>
+                    <span>Destination</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* 4. Pickup Stop & Real-Time ETA Card */}
-            {pickupStop && (
+            {/* Pickup Stop & Real-Time ETA Card (only when trip is active or scheduled) */}
+            {!isTripEnded && !isTripCancelled && pickupStop && (
               <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
@@ -971,7 +1146,7 @@ function ParentTrackContent() {
                   </div>
 
                   <div className="text-right flex-shrink-0">
-                    {effectiveEta?.isAvailable && effectiveEta.etaMinutes != null ? (
+                    {effectiveEta?.isAvailable && effectiveEta.etaMinutes != null && !isLocLost ? (
                       <div>
                         <div className="flex items-baseline justify-end gap-1">
                           <p className="text-3xl font-black text-sky-600 tabular-nums leading-none">
@@ -994,8 +1169,16 @@ function ParentTrackContent() {
                       </div>
                     ) : (
                       <div className="text-right">
-                        <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                          {effectiveEta?.status === 'PASSED'
+                        <span
+                          className={`inline-flex items-center px-2 py-1 rounded text-[11px] font-bold border ${
+                            isLocLost
+                              ? 'bg-rose-50 text-rose-800 border-rose-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}
+                        >
+                          {isLocLost
+                            ? 'GPS Offline'
+                            : effectiveEta?.status === 'PASSED'
                             ? 'Passed'
                             : effectiveEta?.unavailableReason === 'TRIP_NOT_STARTED'
                             ? 'Scheduled'
@@ -1008,7 +1191,7 @@ function ParentTrackContent() {
                   </div>
                 </div>
 
-                {effectiveEta?.isApproaching && (
+                {effectiveEta?.isApproaching && !isLocLost && (
                   <div className="bg-emerald-50 border border-emerald-300 rounded-lg p-3 flex items-center gap-2.5 text-xs text-emerald-900 animate-pulse">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" />
                     <span className="font-bold">
@@ -1019,7 +1202,7 @@ function ParentTrackContent() {
               </div>
             )}
 
-            {/* 5. Bus & Crew Card */}
+            {/* Bus & Crew Card */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">

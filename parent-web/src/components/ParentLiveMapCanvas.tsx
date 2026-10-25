@@ -177,6 +177,10 @@ export function ParentLiveMapCanvas({
     return Math.min(Math.max(px, 14), 50);
   }, [bounds, pickupStop]);
 
+  const ageSec = busLocation ? ageSeconds(busLocation.recordedAt) : Infinity;
+  const isTelemetryStale = ageSec >= STALE_AFTER_S && ageSec < LOST_AFTER_S;
+  const isTelemetryLost = ageSec >= LOST_AFTER_S || !busLocation;
+
   const busCol = busLocation ? busColor(busLocation.recordedAt) : COLORS.busHealthy;
   const fresh = busLocation ? isFresh(busLocation.recordedAt) : false;
   const bearing = busLocation?.bearingDegrees != null ? Number(busLocation.bearingDegrees) : 0;
@@ -306,18 +310,38 @@ export function ParentLiveMapCanvas({
         </button>
       </div>
 
-      {/* Top left telemetry speed & movement badge */}
+      {/* Top left telemetry status badge */}
       {busLocation && (
-        <div className="absolute top-2 left-2 z-10 pointer-events-none flex items-center gap-1.5 bg-slate-900/85 backdrop-blur-xs px-2 py-0.5 rounded border border-slate-700 text-[10px] font-mono">
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              isStationary ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
-            }`}
-          />
-          <span className="text-slate-200 font-bold">{speed} km/h</span>
-          <span className="text-slate-400 font-normal">
-            {isStationary ? 'Stationary' : 'Moving'}
-          </span>
+        <div className="absolute top-2 left-2 z-10 pointer-events-none flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-xs px-2 py-0.5 rounded border border-slate-700 text-[10px] font-mono shadow-xs">
+          {isTelemetryLost ? (
+            <>
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+              <span className="text-rose-200 font-bold">GPS Offline</span>
+              <span className="text-rose-400 font-normal">
+                {ageSec !== Infinity ? `${Math.floor(ageSec / 60)}m ago` : 'Lost'}
+              </span>
+            </>
+          ) : isTelemetryStale ? (
+            <>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              <span className="text-amber-200 font-bold">{speed} km/h</span>
+              <span className="text-amber-300 font-normal">
+                Delayed ({Math.floor(ageSec / 60)}m ago)
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isStationary ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
+                }`}
+              />
+              <span className="text-slate-200 font-bold">{speed} km/h</span>
+              <span className="text-slate-400 font-normal">
+                {isStationary ? 'Stationary' : 'Moving'}
+              </span>
+            </>
+          )}
         </div>
       )}
 
@@ -462,11 +486,25 @@ export function ParentLiveMapCanvas({
         {busPos && (
           <g transform={`translate(${busPos.x}, ${busPos.y})`}>
             {/* Pulse ring for fresh updates (< 30s) */}
-            {fresh && (
+            {fresh && !isTelemetryLost && (
               <circle cx={0} cy={0} r={18} fill={COLORS.busPulse}>
                 <animate attributeName="r" from="10" to="24" dur="2s" repeatCount="indefinite" />
                 <animate attributeName="opacity" from="0.6" to="0" dur="2s" repeatCount="indefinite" />
               </circle>
+            )}
+
+            {/* Offline dashed ring for lost telemetry */}
+            {isTelemetryLost && (
+              <circle
+                cx={0}
+                cy={0}
+                r={20}
+                fill="none"
+                stroke={COLORS.busLost}
+                strokeWidth={1.5}
+                strokeDasharray="3 3"
+                opacity={0.8}
+              />
             )}
 
             {/* Bus vehicle representation with bearing orientation */}
@@ -490,7 +528,7 @@ export function ParentLiveMapCanvas({
             </g>
 
             {/* Bearing & heading degree indicator if moving */}
-            {bearing > 0 && (
+            {bearing > 0 && !isTelemetryLost && (
               <g transform="translate(10, -18)">
                 <rect x={0} y={0} width={26} height={10} rx={2} fill={COLORS.bg} opacity={0.85} />
                 <text
@@ -503,6 +541,24 @@ export function ParentLiveMapCanvas({
                   fontWeight="bold"
                 >
                   {Math.round(bearing)}°
+                </text>
+              </g>
+            )}
+
+            {/* Offline label badge */}
+            {isTelemetryLost && (
+              <g transform="translate(-32, -22)">
+                <rect x={0} y={0} width={64} height={11} rx={2} fill={COLORS.bg} opacity={0.9} stroke={COLORS.busLost} strokeWidth={0.5} />
+                <text
+                  x={32}
+                  y={8}
+                  textAnchor="middle"
+                  fontSize={6.5}
+                  fill={COLORS.busLost}
+                  fontFamily="monospace"
+                  fontWeight="bold"
+                >
+                  Last Known Fix
                 </text>
               </g>
             )}
