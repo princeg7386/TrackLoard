@@ -1,5 +1,5 @@
 import { query } from '../config/database.js';
-import { GeoCoordinates, GeofenceNotificationResult } from '@school-bus/shared';
+import { GeoCoordinates, GeofenceNotificationResult, GeofenceExitWorkflowResult } from '@school-bus/shared';
 import { SpatialService } from './spatial.service.js';
 import { MessagingService } from './messaging/messaging.service.js';
 import { logger } from './logger.service.js';
@@ -22,19 +22,18 @@ interface EligibleParent {
 }
 
 /**
- * Phase 21.1 — Geofence Notification Service
+ * Phase 21.1 & 21.3 — Geofence Notification & Event Workflow Service
  *
- * Sends a WhatsApp approach notification to parents when the bus enters the
- * geofence radius of their child's pickup stop, at most once per
- * (trip, stop, student) combination.
+ * Sends WhatsApp approach notifications to parents when the bus enters the
+ * geofence radius of their child's pickup stop, and triggers stop-departure
+ * missed-boarding notifications when the bus exits a stop.
  *
- * Called fire-and-forget from TelemetryService after every GPS ping.
  * All errors are swallowed so the telemetry path is never blocked.
  */
 export class GeofenceNotificationService {
   /**
    * Default search radius used to find "nearby" stops before doing the
-   * per-stop geofence check.  Picks up stops up to 500 m away so the
+   * per-stop geofence check. Picks up stops up to 500 m away so the
    * notification arrives a little before the bus is actually at the stop.
    */
   private static readonly APPROACH_SEARCH_RADIUS_METERS = 500;
@@ -149,14 +148,14 @@ export class GeofenceNotificationService {
         continue;
       }
 
-      // 4. Insert dedup log row (idempotent — unique constraint on trip+stop+student)
+      // 4. Insert dedup log row (idempotent — unique constraint on trip+stop+student+type)
       try {
         await query(
           `INSERT INTO geofence_notification_log
              (trip_id, stop_id, student_id, parent_id, school_id,
-              trigger_distance_meters, eta_minutes, message_sid)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           ON CONFLICT (trip_id, stop_id, student_id) DO NOTHING`,
+              notification_type, trigger_distance_meters, eta_minutes, message_sid)
+           VALUES ($1, $2, $3, $4, $5, 'APPROACH', $6, $7, $8)
+           ON CONFLICT DO NOTHING`,
           [
             tripId,
             parent.stopId,
@@ -182,10 +181,181 @@ export class GeofenceNotificationService {
   }
 
   /**
+   * Phase 21.3 — Trigger workflow on stop EXIT:
+   * When a bus leaves a pickup stop, identify students assigned to this stop who have
+   * not yet boarded (boarding status not in BOARDED, ABSENT, SKIPPED), and notify their parents.
+   * Deduped per (tripId, stopId, studentId, 'MISSED_BOARDING').
+   */
+  static async notifyMissedBoarding(params: {
+    tripId: string;
+    stopId: string;
+    schoolId: string;
+    busId: string;
+    stopName: string;
+  }): Promise<GeofenceExitWorkflowResult> {
+    const { tripId, stopId, schoolId, busId, stopName } = params;
+    const result: GeofenceExitWorkflowResult = {
+      tripId,
+      stopId,
+      missedBoardingNotificationsSent: 0,
+      studentsAtStop: 0,
+      alreadyBoarded: 0,
+    };
+
+    try {
+      // 1. Fetch all students assigned to this pickup stop who have not been marked boarded/absent/skipped for this trip
+      const sql = `
+        SELECT
+          p.id                          AS "parentId",
+          s.id                          AS "studentId",
+          s.school_id                   AS "schoolId",
+          p.phone                       AS "parentPhone",
+          p.full_name                   AS "parentName",
+          s.full_name                   AS "studentName",
+          be.status                     AS "boardingStatus",
+          ptt.token                     AS "trackingToken"
+        FROM student_stop_assignments ssa
+        JOIN students s ON ssa.student_id = s.id AND s.deleted_at IS NULL
+        JOIN parents p ON p.student_id = s.id AND p.deleted_at IS NULL
+        LEFT JOIN boarding_events be ON be.student_id = s.id AND be.trip_id = $1
+        LEFT JOIN parent_tracking_tokens ptt
+          ON ptt.student_id = s.id AND ptt.expires_at > NOW() AND ptt.revoked_at IS NULL
+        WHERE (ssa.pickup_stop_id = $2 OR ssa.stop_id = $2)
+          AND s.school_id = $3
+          AND p.notifications_enabled = TRUE
+          AND NOT EXISTS (
+            SELECT 1
+            FROM geofence_notification_log gnl
+            WHERE gnl.trip_id = $1
+              AND gnl.stop_id = $2
+              AND gnl.student_id = s.id
+              AND gnl.notification_type = 'MISSED_BOARDING'
+          )
+        ORDER BY s.full_name ASC;
+      `;
+
+      const candidateStudents = (await query<{
+        parentId: string;
+        studentId: string;
+        schoolId: string;
+        parentPhone: string;
+        parentName: string;
+        studentName: string;
+        boardingStatus: string | null;
+        trackingToken: string | null;
+      }>(sql, [tripId, stopId, schoolId])) || [];
+
+      result.studentsAtStop = candidateStudents.length;
+
+      for (const candidate of candidateStudents) {
+        if (candidate.boardingStatus === 'BOARDED' || candidate.boardingStatus === 'ABSENT' || candidate.boardingStatus === 'SKIPPED') {
+          result.alreadyBoarded += 1;
+          continue;
+        }
+
+        const trackingUrl = candidate.trackingToken
+          ? `${env.PARENT_TRACKING_BASE_URL}?token=${candidate.trackingToken}`
+          : null;
+
+        const messageBody = GeofenceNotificationService.buildMissedBoardingMessage({
+          studentName: candidate.studentName,
+          stopName,
+          trackingUrl,
+        });
+
+        let messageSid: string | null = null;
+        try {
+          const sendResult = await MessagingService.sendMessage({
+            recipientPhone: candidate.parentPhone,
+            recipientRole: 'PARENT',
+            schoolId: candidate.schoolId,
+            studentId: candidate.studentId,
+            directText: messageBody,
+            templateId: 'GEOFENCE_MISSED_BOARDING',
+          });
+          messageSid = sendResult.messageId;
+          result.missedBoardingNotificationsSent += 1;
+          logger.info('GeofenceNotificationService: missed boarding notification sent', {
+            tripId,
+            stopId,
+            studentId: candidate.studentId,
+            parentId: candidate.parentId,
+          });
+        } catch (sendErr) {
+          logger.warn('GeofenceNotificationService: missed boarding message dispatch failed', {
+            tripId,
+            stopId,
+            studentId: candidate.studentId,
+            error: sendErr instanceof Error ? sendErr.message : String(sendErr),
+          });
+          continue;
+        }
+
+        // Insert into geofence_notification_log
+        try {
+          await query(
+            `INSERT INTO geofence_notification_log (
+               trip_id, stop_id, student_id, parent_id, school_id,
+               notification_type, message_sid
+             ) VALUES ($1, $2, $3, $4, $5, 'MISSED_BOARDING', $6)
+             ON CONFLICT DO NOTHING;`,
+            [
+              tripId,
+              stopId,
+              candidate.studentId,
+              candidate.parentId,
+              candidate.schoolId,
+              messageSid,
+            ]
+          );
+        } catch (logErr) {
+          logger.error('GeofenceNotificationService: dedup log insert failed for missed boarding', {
+            tripId,
+            stopId,
+            studentId: candidate.studentId,
+            error: logErr instanceof Error ? logErr.message : String(logErr),
+          });
+        }
+      }
+
+      return result;
+    } catch (err) {
+      logger.warn('GeofenceNotificationService: notifyMissedBoarding failed (suppressed)', {
+        tripId,
+        stopId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return result;
+    }
+  }
+
+  /**
+   * Builds the plain-text WhatsApp message for student not marked boarded upon stop departure.
+   */
+  private static buildMissedBoardingMessage(opts: {
+    studentName: string;
+    stopName: string;
+    trackingUrl: string | null;
+  }): string {
+    const lines = [
+      `⚠️ *Stop Departure Alert* — ${opts.studentName}`,
+      `The school bus has departed stop *${opts.stopName}*.`,
+      `${opts.studentName} was not marked boarded.`,
+    ];
+
+    if (opts.trackingUrl) {
+      lines.push(`🔴 Live tracking: ${opts.trackingUrl}`);
+    }
+
+    lines.push('If your child boarded or you made alternative arrangements, please notify the transport desk.');
+    return lines.join('\n');
+  }
+
+  /**
    * Fetches parents eligible for an approach notification for the given stops.
    * Excludes:
    * - parents with notifications_enabled = false
-   * - parents already notified for this (trip, stop, student) combination
+   * - parents already notified for this (trip, stop, student) combination with APPROACH
    */
   private static async fetchEligibleParents(
     tripId: string,
@@ -227,6 +397,7 @@ export class GeofenceNotificationService {
           WHERE gnl.trip_id = $1
             AND gnl.stop_id = ssa.stop_id
             AND gnl.student_id = ssa.student_id
+            AND (gnl.notification_type IS NULL OR gnl.notification_type = 'APPROACH')
         )
       ORDER BY pl.sequence_order ASC, s.full_name ASC
     `;
@@ -269,3 +440,4 @@ export class GeofenceNotificationService {
     return lines.join('\n');
   }
 }
+

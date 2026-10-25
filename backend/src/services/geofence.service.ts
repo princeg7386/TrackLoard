@@ -12,6 +12,7 @@ import {
 import { SpatialService } from './spatial.service.js';
 import { RealtimeFeedService } from './realtime-feed.service.js';
 import { TripService } from './trip.service.js';
+import { GeofenceNotificationService } from './geofence-notification.service.js';
 import { logger } from './logger.service.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../middlewares/error.middleware.js';
 
@@ -31,20 +32,28 @@ interface GeofenceStateRow {
   status: 'INSIDE' | 'OUTSIDE';
   enteredAt: string | null;
   exitedAt: string | null;
+  lastDwellEventAt?: string | null;
   dwellTimeSeconds: number;
 }
 
 /**
- * Phase 21.1 — Pickup Geofence Engine
+ * Phase 21.1, 21.2 & 21.3 — Pickup & Campus Geofence Engine
  *
  * Manages pickup stop geofence radius & custom polygon shapes,
- * evaluates real-time transitions (ENTRY / EXIT), calculates dwell time,
+ * evaluates real-time transitions (ENTRY / EXIT / DWELL), calculates dwell time,
+ * debounces repeated stationary events, triggers stop-departure workflows,
  * records audit logs in geofence_events, and publishes real-time updates.
  */
 export class GeofenceService {
   /**
+   * Debounce threshold for writing DWELL heartbeat events into the ledger.
+   * Emits a DWELL audit event and real-time feed update every 60 seconds of dwell time.
+   */
+  public static readonly DWELL_HEARTBEAT_INTERVAL_SECONDS = 60;
+  /**
    * Evaluates all pickup stops along a trip's route for the given GPS telemetry fix.
    * Detects ENTRY (OUTSIDE -> INSIDE) and EXIT (INSIDE -> OUTSIDE) transitions.
+   * Debounces repeated stationary events and triggers exit workflows when enabled.
    */
   static async evaluateTripStops(params: {
     tripId: string;
@@ -53,8 +62,19 @@ export class GeofenceService {
     latitude: number;
     longitude: number;
     recordedAt: Date;
+    emitDwellEvents?: boolean;
+    triggerWorkflows?: boolean;
   }): Promise<EvaluateTripGeofenceResult> {
-    const { tripId, schoolId, busId, latitude, longitude, recordedAt } = params;
+    const {
+      tripId,
+      schoolId,
+      busId,
+      latitude,
+      longitude,
+      recordedAt,
+      emitDwellEvents = false,
+      triggerWorkflows = false,
+    } = params;
     const busCoords: GeoCoordinates = { latitude, longitude };
     const recordedAtIso = recordedAt.toISOString();
 
@@ -94,6 +114,7 @@ export class GeofenceService {
         status,
         entered_at::text AS "enteredAt",
         exited_at::text AS "exitedAt",
+        last_dwell_event_at::text AS "lastDwellEventAt",
         COALESCE(dwell_time_seconds, 0) AS "dwellTimeSeconds"
       FROM trip_stop_geofence_states
       WHERE trip_id = $1;
@@ -138,11 +159,11 @@ export class GeofenceService {
         // Record in geofence_events ledger
         await query(
           `INSERT INTO geofence_events (
-             school_id, trip_id, bus_id, stop_id, event_type,
-             latitude, longitude, location, distance_to_center_meters, recorded_at
+             school_id, trip_id, bus_id, stop_id, target_type, event_type,
+             latitude, longitude, location, distance_to_center_meters, dwell_time_seconds, recorded_at
            ) VALUES (
-             $1, $2, $3, $4, 'ENTRY',
-             $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7, $8
+             $1, $2, $3, $4, 'STOP', 'ENTRY',
+             $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7, 0, $8
            );`,
           [schoolId, tripId, busId, stop.id, latitude, longitude, distanceMeters, recordedAtIso]
         );
@@ -150,8 +171,8 @@ export class GeofenceService {
         // Upsert state in trip_stop_geofence_states
         await query(
           `INSERT INTO trip_stop_geofence_states (
-             trip_id, stop_id, status, entered_at, exited_at, dwell_time_seconds, last_evaluated_at, updated_at
-           ) VALUES ($1, $2, 'INSIDE', $3, NULL, 0, $3, NOW())
+             trip_id, stop_id, status, entered_at, exited_at, dwell_time_seconds, last_evaluated_at, last_dwell_event_at, updated_at
+           ) VALUES ($1, $2, 'INSIDE', $3, NULL, 0, $3, NULL, NOW())
            ON CONFLICT (trip_id, stop_id)
            DO UPDATE SET
              status = 'INSIDE',
@@ -159,6 +180,7 @@ export class GeofenceService {
              exited_at = NULL,
              dwell_time_seconds = 0,
              last_evaluated_at = EXCLUDED.last_evaluated_at,
+             last_dwell_event_at = NULL,
              updated_at = NOW();`,
           [tripId, stop.id, recordedAtIso]
         );
@@ -209,10 +231,10 @@ export class GeofenceService {
         // Record in geofence_events ledger
         await query(
           `INSERT INTO geofence_events (
-             school_id, trip_id, bus_id, stop_id, event_type,
+             school_id, trip_id, bus_id, stop_id, target_type, event_type,
              latitude, longitude, location, distance_to_center_meters, dwell_time_seconds, recorded_at
            ) VALUES (
-             $1, $2, $3, $4, 'EXIT',
+             $1, $2, $3, $4, 'STOP', 'EXIT',
              $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7, $8, $9
            );`,
           [schoolId, tripId, busId, stop.id, latitude, longitude, distanceMeters, dwellTimeSeconds, recordedAtIso]
@@ -221,14 +243,15 @@ export class GeofenceService {
         // Upsert state in trip_stop_geofence_states
         await query(
           `INSERT INTO trip_stop_geofence_states (
-             trip_id, stop_id, status, entered_at, exited_at, dwell_time_seconds, last_evaluated_at, updated_at
-           ) VALUES ($1, $2, 'OUTSIDE', NULL, $3, $4, $3, NOW())
+             trip_id, stop_id, status, entered_at, exited_at, dwell_time_seconds, last_evaluated_at, last_dwell_event_at, updated_at
+           ) VALUES ($1, $2, 'OUTSIDE', NULL, $3, $4, $3, NULL, NOW())
            ON CONFLICT (trip_id, stop_id)
            DO UPDATE SET
              status = 'OUTSIDE',
              exited_at = EXCLUDED.exited_at,
              dwell_time_seconds = EXCLUDED.dwell_time_seconds,
              last_evaluated_at = EXCLUDED.last_evaluated_at,
+             last_dwell_event_at = NULL,
              updated_at = NOW();`,
           [tripId, stop.id, recordedAtIso, dwellTimeSeconds]
         );
@@ -255,23 +278,99 @@ export class GeofenceService {
           dwellTimeSeconds,
           distanceMeters,
         });
+
+        // Phase 21.3 — Workflow trigger on stop EXIT: notify parents of unboarded students
+        if (triggerWorkflows) {
+          GeofenceNotificationService.notifyMissedBoarding({
+            tripId,
+            stopId: stop.id,
+            schoolId,
+            busId,
+            stopName: stop.stopName,
+          }).catch((err: unknown) => {
+            logger.warn('[GeofenceService] Missed boarding notification workflow error (suppressed)', {
+              tripId,
+              stopId: stop.id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
       }
 
-      // ── Stationary / In-geofence heartbeat: update dwell time ──────────
+      // ── Stationary / In-geofence heartbeat: update dwell time & debounce DWELL events ─
       else if (previousStatus === 'INSIDE' && currentStatus === 'INSIDE') {
         const enteredAt = prevState?.enteredAt ? new Date(prevState.enteredAt) : null;
         const dwellTimeSeconds = enteredAt
           ? Math.max(0, Math.round((recordedAt.getTime() - enteredAt.getTime()) / 1000))
           : 0;
 
-        await query(
-          `UPDATE trip_stop_geofence_states
-           SET dwell_time_seconds = $1,
-               last_evaluated_at = $2,
-               updated_at = NOW()
-           WHERE trip_id = $3 AND stop_id = $4;`,
-          [dwellTimeSeconds, recordedAtIso, tripId, stop.id]
-        );
+        // Debounce check: determine if a new DWELL event should be written to the ledger
+        const lastDwellAt = prevState?.lastDwellEventAt ? new Date(prevState.lastDwellEventAt) : enteredAt;
+        const secondsSinceLastDwell = lastDwellAt
+          ? Math.max(0, Math.round((recordedAt.getTime() - lastDwellAt.getTime()) / 1000))
+          : dwellTimeSeconds;
+
+        const shouldEmitDwell =
+          emitDwellEvents &&
+          dwellTimeSeconds >= GeofenceService.DWELL_HEARTBEAT_INTERVAL_SECONDS &&
+          secondsSinceLastDwell >= GeofenceService.DWELL_HEARTBEAT_INTERVAL_SECONDS;
+
+        if (shouldEmitDwell) {
+          // Record debounced DWELL event in geofence_events ledger
+          await query(
+            `INSERT INTO geofence_events (
+               school_id, trip_id, bus_id, stop_id, target_type, event_type,
+               latitude, longitude, location, distance_to_center_meters, dwell_time_seconds, recorded_at
+             ) VALUES (
+               $1, $2, $3, $4, 'STOP', 'DWELL',
+               $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7, $8, $9
+             );`,
+            [schoolId, tripId, busId, stop.id, latitude, longitude, distanceMeters, dwellTimeSeconds, recordedAtIso]
+          );
+
+          // Update trip_stop_geofence_states with new last_dwell_event_at
+          await query(
+            `UPDATE trip_stop_geofence_states
+             SET dwell_time_seconds = $1,
+                 last_evaluated_at = $2,
+                 last_dwell_event_at = $2,
+                 updated_at = NOW()
+             WHERE trip_id = $3 AND stop_id = $4;`,
+            [dwellTimeSeconds, recordedAtIso, tripId, stop.id]
+          );
+
+          // Broadcast real-time feed DWELL event
+          RealtimeFeedService.publish({
+            type: 'GEOFENCE_EVENT',
+            schoolId,
+            tripId,
+            busId,
+            stopId: stop.id,
+            stopName: stop.stopName,
+            sequenceOrder: stop.sequenceOrder,
+            eventType: 'DWELL',
+            status: 'INSIDE',
+            dwellTimeSeconds,
+            distanceMeters,
+            timestamp: recordedAtIso,
+          });
+
+          logger.info(`[GeofenceService] Emitted debounced DWELL heartbeat for stop "${stop.stopName}" (dwell: ${dwellTimeSeconds}s)`, {
+            tripId,
+            stopId: stop.id,
+            dwellTimeSeconds,
+          });
+        } else {
+          // Simply update dwell_time_seconds and last_evaluated_at (debouncing the ledger write)
+          await query(
+            `UPDATE trip_stop_geofence_states
+             SET dwell_time_seconds = $1,
+                 last_evaluated_at = $2,
+                 updated_at = NOW()
+             WHERE trip_id = $3 AND stop_id = $4;`,
+            [dwellTimeSeconds, recordedAtIso, tripId, stop.id]
+          );
+        }
       }
     }
 
@@ -314,6 +413,7 @@ export class GeofenceService {
         COALESCE(s.status, 'OUTSIDE') AS "status",
         s.entered_at::text AS "enteredAt",
         s.exited_at::text AS "exitedAt",
+        s.last_dwell_event_at::text AS "lastDwellEventAt",
         COALESCE(s.dwell_time_seconds, 0) AS "dwellTimeSeconds",
         COALESCE(s.last_evaluated_at, NOW())::text AS "lastEvaluatedAt"
       FROM trips t

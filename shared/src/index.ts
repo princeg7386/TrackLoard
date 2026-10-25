@@ -3623,6 +3623,9 @@ export type DateAttendanceHistoryResponse = z.infer<typeof DateAttendanceHistory
  * Row shape for the geofence_notification_log table.
  * Used for dedup checking and insertion.
  */
+export const GeofenceNotificationTypeSchema = z.enum(['APPROACH', 'MISSED_BOARDING']);
+export type GeofenceNotificationType = z.infer<typeof GeofenceNotificationTypeSchema>;
+
 export const GeofenceNotificationLogRowSchema = z.object({
   id: z.string().uuid(),
   tripId: z.string().uuid(),
@@ -3630,6 +3633,7 @@ export const GeofenceNotificationLogRowSchema = z.object({
   studentId: z.string().uuid(),
   parentId: z.string().uuid(),
   schoolId: z.string().uuid(),
+  notificationType: GeofenceNotificationTypeSchema.default('APPROACH'),
   triggerDistanceMeters: z.number().nullable().optional(),
   etaMinutes: z.number().int().nullable().optional(),
   messageSid: z.string().nullable().optional(),
@@ -3650,6 +3654,31 @@ export const GeofenceNotificationResultSchema = z.object({
   optedOut: z.number().int().min(0),
 });
 export type GeofenceNotificationResult = z.infer<typeof GeofenceNotificationResultSchema>;
+
+/**
+ * Phase 21.3 — Result returned from DWELL heartbeat emission
+ */
+export const DwellHeartbeatResultSchema = z.object({
+  tripId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  dwellTimeSeconds: z.number().int().min(0),
+  eventWritten: z.boolean(),
+  /** Reason heartbeat was skipped (cooldown or no prior entry) */
+  skippedReason: z.string().optional(),
+});
+export type DwellHeartbeatResult = z.infer<typeof DwellHeartbeatResultSchema>;
+
+/**
+ * Phase 21.3 — Result returned from EXIT workflow trigger
+ */
+export const GeofenceExitWorkflowResultSchema = z.object({
+  tripId: z.string().uuid(),
+  stopId: z.string().uuid(),
+  missedBoardingNotificationsSent: z.number().int().min(0),
+  studentsAtStop: z.number().int().min(0),
+  alreadyBoarded: z.number().int().min(0),
+});
+export type GeofenceExitWorkflowResult = z.infer<typeof GeofenceExitWorkflowResultSchema>;
 
 // =============================================================================
 // Phase 21.1 / 21.2 — Geofence Transition & Event Schemas
@@ -3711,6 +3740,7 @@ export const TripStopGeofenceStateSchema = z.object({
   exitedAt: z.string().nullable().optional(),
   dwellTimeSeconds: z.number().int().default(0),
   lastEvaluatedAt: z.string().optional(),
+  lastDwellEventAt: z.string().nullable().optional(),
 });
 export type TripStopGeofenceState = z.infer<typeof TripStopGeofenceStateSchema>;
 
