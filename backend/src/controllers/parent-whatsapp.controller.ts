@@ -179,5 +179,33 @@ export class ParentWhatsappController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/parent/whatsapp/eta
+   * Retrieves comprehensive My ETA details for parent's assigned stop (Micro-phase 22.3)
+   */
+  public static async getMyEta(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const phone = req.query.phone as string | undefined;
+      const schoolId = req.query.schoolId as string | undefined;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number query parameter is required');
+      }
+
+      const result = await ParentWhatsappService.getMyEtaDetails(phone, schoolId);
+      if (!result) {
+        throw new NotFoundError(`Parent not found for phone number: ${phone}`);
+      }
+
+      sendSuccess(res, result, 'Parent My ETA details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 

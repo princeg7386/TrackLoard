@@ -5,6 +5,7 @@ import {
   ParentWhatsAppInboundRequest,
   ParentWhatsAppInboundResponse,
   ParentTrackBusResponse,
+  ParentMyEtaResponse,
   TripStatus,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -884,115 +885,424 @@ export class ParentWhatsappService {
   }
 
   /**
-   * Action 2: My ETA
+   * Action 2: My ETA (Phase 22.3)
+   * Returns latest dynamic ETA, last update recency/telemetry, and handles unavailable states
    */
   public static async handleMyEta(
     parent: ParentContextRecord,
     activeTrip: ParentActiveTripContext | null
   ): Promise<{ replyText: string; data: any }> {
+    const tokenResult = await this.getOrCreateTrackingUrl(
+      parent.parentId,
+      parent.studentId,
+      parent.schoolId,
+      activeTrip?.id
+    );
+    const trackingUrl = tokenResult.trackingUrl;
+
     const stopName = parent.pickupStop?.stopName || 'Assigned Stop';
     const scheduledTime = parent.pickupStop?.scheduledTime || 'Scheduled Morning Route';
+    const busNumber = activeTrip?.busNumber || 'Assigned';
+    const registrationNumber = activeTrip?.registrationNumber || 'N/A';
+    const driverName = activeTrip?.driverName || 'Assigned Driver';
+    const driverPhone = activeTrip?.driverPhone || '';
 
+    // Calculate lastUpdate telemetry if available
+    let lastUpdateData: {
+      recordedAt: string | null;
+      recencySeconds: number | null;
+      recencyText: string | null;
+      speedKmh: number | null;
+      isMoving: boolean;
+    } | null = null;
+
+    if (activeTrip?.lastGpsLocation) {
+      const loc = activeTrip.lastGpsLocation;
+      const speed = loc.speedKmh || 0;
+      const isMoving = speed > 3;
+      const recencySeconds = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(loc.recordedAt).getTime()) / 1000)
+      );
+      const recencyText =
+        recencySeconds < 60
+          ? 'Updated just now'
+          : `Updated ${Math.floor(recencySeconds / 60)}m ago`;
+
+      lastUpdateData = {
+        recordedAt: loc.recordedAt,
+        recencySeconds,
+        recencyText,
+        speedKmh: loc.speedKmh,
+        isMoving,
+      };
+    }
+
+    // 1. Check if student has no stop assigned
+    if (!parent.pickupStop?.id) {
+      const replyText =
+        `⏱️ *Bus Arrival ETA*\n` +
+        `Student: *${parent.studentName}*\n` +
+        `Status: *No Pickup Stop Assigned* ⚠️\n\n` +
+        `No pickup stop has been assigned for ${parent.studentName} yet.\n` +
+        `Please contact ${parent.schoolName} transport coordinator to configure your pickup stop.\n\n` +
+        `🔗 *Live Web Tracking:*\n${trackingUrl}`;
+
+      const fullData = {
+        student: {
+          id: parent.studentId,
+          fullName: parent.studentName,
+          admissionNumber: parent.admissionNumber,
+          classGrade: parent.classGrade,
+          section: parent.section,
+        },
+        stop: null,
+        bus: activeTrip
+          ? {
+              id: activeTrip.busId,
+              busNumber,
+              registrationNumber,
+              driverName,
+              driverPhone: driverPhone || null,
+            }
+          : null,
+        eta: {
+          isAvailable: false,
+          etaMinutes: null,
+          distanceMeters: null,
+          estimatedArrivalAt: null,
+          isApproaching: false,
+          isPassed: false,
+          status: 'NO_STOP_ASSIGNED',
+          unavailableReason: 'NO_STOP_ASSIGNED',
+          unavailableMessage: 'No pickup stop has been assigned for this student.',
+        },
+        lastUpdate: lastUpdateData,
+        trackingUrl,
+        formattedMessage: replyText,
+        // Backward-compatible properties:
+        isAvailable: false,
+        stopName,
+        scheduledTime,
+        status: 'NO_STOP_ASSIGNED',
+      };
+
+      return { replyText, data: fullData };
+    }
+
+    // 2. Check if trip is not active (SCHEDULED / IDLE / COMPLETED / CANCELLED)
     if (!activeTrip || (activeTrip.status !== TripStatus.IN_TRANSIT && activeTrip.status !== TripStatus.DELAYED)) {
-      const scheduledInfo = parent.pickupStop?.scheduledTime
-        ? `Scheduled pickup is at *${parent.pickupStop.scheduledTime}*.`
-        : 'Bus trip has not started yet.';
+      const isCompleted = activeTrip?.status === TripStatus.COMPLETED;
+      const isCancelled = activeTrip?.status === TripStatus.CANCELLED;
+
+      let statusTitle = 'Bus Not Currently in Transit ⚪';
+      let statusDetail = `Scheduled pickup is at *${scheduledTime}*.\nLive ETA will update in real time once the trip begins.`;
+      let etaStatus = 'TRIP_NOT_STARTED';
+
+      if (isCompleted) {
+        statusTitle = 'Trip Completed for Today 🏁';
+        statusDetail = `Today’s bus trip has been marked as completed.`;
+        etaStatus = 'TRIP_COMPLETED';
+      } else if (isCancelled) {
+        statusTitle = 'Trip Cancelled ❌';
+        statusDetail = `Today’s bus trip was cancelled by the school administration.`;
+        etaStatus = 'TRIP_CANCELLED';
+      }
 
       const replyText =
         `⏱️ *Bus Arrival ETA*\n` +
         `Stop: *${stopName}*\n` +
-        `Status: *Bus Not Currently in Transit* ⚪\n\n` +
-        `${scheduledInfo}\n` +
-        `Live ETA will update in real time once the trip begins.\n\n` +
+        `Status: *${statusTitle}*\n\n` +
+        `${statusDetail}\n\n` +
         `_Reply *1* or *TRACK* to open the live tracking web map._`;
 
-      return {
-        replyText,
-        data: {
-          isAvailable: false,
-          stopName,
-          scheduledTime,
-          status: 'UNAVAILABLE',
+      const fullData = {
+        student: {
+          id: parent.studentId,
+          fullName: parent.studentName,
+          admissionNumber: parent.admissionNumber,
+          classGrade: parent.classGrade,
+          section: parent.section,
         },
+        stop: {
+          id: parent.pickupStop.id,
+          stopName: parent.pickupStop.stopName,
+          sequenceOrder: parent.pickupStop.sequenceOrder,
+          scheduledTime: parent.pickupStop.scheduledTime,
+          geofenceRadiusMeters: parent.pickupStop.geofenceRadiusMeters,
+        },
+        bus: activeTrip
+          ? {
+              id: activeTrip.busId,
+              busNumber,
+              registrationNumber,
+              driverName,
+              driverPhone: driverPhone || null,
+            }
+          : null,
+        eta: {
+          isAvailable: false,
+          etaMinutes: null,
+          distanceMeters: null,
+          estimatedArrivalAt: null,
+          isApproaching: false,
+          isPassed: false,
+          status: etaStatus,
+          unavailableReason: etaStatus,
+          unavailableMessage: statusDetail.replace(/\*/g, ''),
+        },
+        lastUpdate: lastUpdateData,
+        trackingUrl,
+        formattedMessage: replyText,
+        // Backward-compatible properties:
+        isAvailable: false,
+        stopName,
+        scheduledTime,
+        status: etaStatus,
       };
+
+      return { replyText, data: fullData };
     }
 
-    // Try computing dynamic ETA via EtaService if stop ID exists
-    let etaMinutes: number | null = null;
-    let distanceMeters: number | null = null;
-    let etaFormatted = '';
-    let isApproaching = false;
-
-    if (parent.pickupStop?.id) {
-      try {
-        const etaResult = await EtaService.calculateParentEta({
-          tripId: activeTrip.id,
-          schoolId: parent.schoolId,
-          stopId: parent.pickupStop.id,
-        });
-
-        if (etaResult.isAvailable && etaResult.etaMinutes !== null && etaResult.etaMinutes !== undefined) {
-          etaMinutes = etaResult.etaMinutes;
-          distanceMeters = etaResult.distanceMeters || null;
-          isApproaching = etaResult.isApproaching || false;
-          if (etaResult.estimatedArrivalAt) {
-            etaFormatted = new Intl.DateTimeFormat('en-IN', {
-              hour: '2-digit',
-              minute: '2-digit',
-              hour12: true,
-              timeZone: 'Asia/Kolkata',
-            }).format(new Date(etaResult.estimatedArrivalAt));
-          }
-        }
-      } catch (err: any) {
-        logger.warn(`Failed to calculate Parent ETA for stop ${parent.pickupStop.id}: ${err.message}`);
-      }
+    // 3. Trip is active (IN_TRANSIT or DELAYED) -> calculate ETA via EtaService
+    let etaResult: any = null;
+    try {
+      etaResult = await EtaService.calculateParentEta({
+        tripId: activeTrip.id,
+        schoolId: parent.schoolId,
+        stopId: parent.pickupStop.id,
+      });
+    } catch (err: any) {
+      logger.warn(`Failed to calculate Parent ETA for stop ${parent.pickupStop.id}: ${err.message}`);
     }
 
-    if (etaMinutes !== null) {
+    // Handle stop already passed
+    if (etaResult?.isPassed || etaResult?.status === 'PASSED') {
+      const replyText =
+        `⏱️ *Bus Arrival ETA*\n` +
+        `Stop: *${stopName}*\n` +
+        `Status: *Bus Already Passed Your Stop* ℹ️\n\n` +
+        `The bus *#${busNumber}* has already departed from *${stopName}*.\n` +
+        `You can track the continuing route on the live map.\n\n` +
+        `🔗 *Live Map:*\n${trackingUrl}`;
+
+      const fullData = {
+        student: {
+          id: parent.studentId,
+          fullName: parent.studentName,
+          admissionNumber: parent.admissionNumber,
+          classGrade: parent.classGrade,
+          section: parent.section,
+        },
+        stop: {
+          id: parent.pickupStop.id,
+          stopName: parent.pickupStop.stopName,
+          sequenceOrder: parent.pickupStop.sequenceOrder,
+          scheduledTime: parent.pickupStop.scheduledTime,
+          geofenceRadiusMeters: parent.pickupStop.geofenceRadiusMeters,
+        },
+        bus: {
+          id: activeTrip.busId,
+          busNumber,
+          registrationNumber,
+          driverName,
+          driverPhone: driverPhone || null,
+        },
+        eta: {
+          isAvailable: false,
+          etaMinutes: null,
+          distanceMeters: null,
+          estimatedArrivalAt: null,
+          isApproaching: false,
+          isPassed: true,
+          status: 'PASSED',
+          unavailableReason: 'STOP_ALREADY_PASSED',
+          unavailableMessage: `The bus has already passed ${stopName}.`,
+        },
+        lastUpdate: lastUpdateData,
+        trackingUrl,
+        formattedMessage: replyText,
+        // Backward-compatible properties:
+        isAvailable: false,
+        stopName,
+        scheduledTime,
+        status: 'PASSED',
+        isPassed: true,
+      };
+
+      return { replyText, data: fullData };
+    }
+
+    // Handle live ETA available
+    if (etaResult?.isAvailable && etaResult.etaMinutes !== null && etaResult.etaMinutes !== undefined) {
+      const etaMinutes = etaResult.etaMinutes;
+      const distanceMeters = etaResult.distanceMeters || null;
+      const isApproaching = etaResult.isApproaching || false;
+      const estimatedArrivalAt = etaResult.estimatedArrivalAt || null;
+
       const distanceKm = distanceMeters ? (distanceMeters / 1000).toFixed(1) : null;
       const distanceText = distanceKm ? `\nDistance: *${distanceKm} km away*` : '';
-      const arrivalEst = etaFormatted ? ` (~${etaFormatted})` : '';
       const approachTag = isApproaching ? ' ⚠️ *Bus is Approaching!*' : '';
+
+      let etaFormatted = '';
+      if (estimatedArrivalAt) {
+        try {
+          etaFormatted = new Intl.DateTimeFormat('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+            timeZone: 'Asia/Kolkata',
+          }).format(new Date(estimatedArrivalAt));
+        } catch {}
+      }
+      const arrivalEst = etaFormatted ? ` (~${etaFormatted})` : '';
+
+      let lastUpdateLine = '';
+      if (lastUpdateData?.recencyText) {
+        const movementStr =
+          lastUpdateData.isMoving && lastUpdateData.speedKmh
+            ? `Moving at ${Math.round(lastUpdateData.speedKmh)} km/h`
+            : 'Stationary';
+        lastUpdateLine = `📡 *Last Update:* ${lastUpdateData.recencyText} • ${movementStr}\n`;
+      }
 
       const replyText =
         `⏱️ *Bus Arrival ETA*${approachTag}\n` +
         `Stop: *${stopName}*\n` +
         `Expected Arrival: *${etaMinutes} min${etaMinutes === 1 ? '' : 's'}*${arrivalEst}${distanceText}\n` +
-        `Bus: *#${activeTrip.busNumber || 'Assigned'}*\n\n` +
+        `Bus: *#${busNumber}*\n` +
+        `${lastUpdateLine}\n` +
         `_Please arrive at the stop 5 minutes prior to avoid delays._\n` +
         `_Reply *1* to track live location._`;
 
-      return {
-        replyText,
-        data: {
+      const fullData = {
+        student: {
+          id: parent.studentId,
+          fullName: parent.studentName,
+          admissionNumber: parent.admissionNumber,
+          classGrade: parent.classGrade,
+          section: parent.section,
+        },
+        stop: {
+          id: parent.pickupStop.id,
+          stopName: parent.pickupStop.stopName,
+          sequenceOrder: parent.pickupStop.sequenceOrder,
+          scheduledTime: parent.pickupStop.scheduledTime,
+          geofenceRadiusMeters: parent.pickupStop.geofenceRadiusMeters,
+        },
+        bus: {
+          id: activeTrip.busId,
+          busNumber,
+          registrationNumber,
+          driverName,
+          driverPhone: driverPhone || null,
+        },
+        eta: {
           isAvailable: true,
           etaMinutes,
           distanceMeters,
-          stopName,
+          estimatedArrivalAt,
           isApproaching,
+          isPassed: false,
+          status: isApproaching ? 'APPROACHING' : 'CALCULATED',
+          unavailableReason: null,
+          unavailableMessage: null,
         },
+        lastUpdate: lastUpdateData,
+        trackingUrl,
+        formattedMessage: replyText,
+        // Backward-compatible properties:
+        isAvailable: true,
+        etaMinutes,
+        distanceMeters,
+        stopName,
+        isApproaching,
+        status: isApproaching ? 'APPROACHING' : 'CALCULATED',
       };
+
+      return { replyText, data: fullData };
     }
 
-    // Fallback when bus is in transit but ETA is calculating
+    // Telemetry synchronizing, offline, or stale
+    const unavailableReason = etaResult?.unavailableReason || 'GPS_SYNCHRONIZING';
+    const unavailableMessage =
+      etaResult?.unavailableMessage || 'Bus is on route! Live telemetry is synchronizing.';
+
+    let lastUpdateLine = '';
+    if (lastUpdateData?.recencyText) {
+      lastUpdateLine = `📡 *Last Update:* ${lastUpdateData.recencyText}\n`;
+    }
+
     const replyText =
       `⏱️ *Bus Arrival ETA*\n` +
       `Stop: *${stopName}*\n` +
       `Status: *Bus in Transit* 🟢\n` +
-      `Bus: *#${activeTrip.busNumber || 'Assigned'}*\n\n` +
-      `Bus is on route! Live telemetry is synchronizing.\n` +
+      `Bus: *#${busNumber}*\n` +
+      `${lastUpdateLine}\n` +
+      `${unavailableMessage}\n` +
       `_Reply *1* to view the bus position directly on the live map._`;
 
-    return {
-      replyText,
-      data: {
-        isAvailable: false,
-        stopName,
-        status: 'SYNCHRONIZING',
+    const fullData = {
+      student: {
+        id: parent.studentId,
+        fullName: parent.studentName,
+        admissionNumber: parent.admissionNumber,
+        classGrade: parent.classGrade,
+        section: parent.section,
       },
+      stop: {
+        id: parent.pickupStop.id,
+        stopName: parent.pickupStop.stopName,
+        sequenceOrder: parent.pickupStop.sequenceOrder,
+        scheduledTime: parent.pickupStop.scheduledTime,
+        geofenceRadiusMeters: parent.pickupStop.geofenceRadiusMeters,
+      },
+      bus: {
+        id: activeTrip.busId,
+        busNumber,
+        registrationNumber,
+        driverName,
+        driverPhone: driverPhone || null,
+      },
+      eta: {
+        isAvailable: false,
+        etaMinutes: null,
+        distanceMeters: null,
+        estimatedArrivalAt: null,
+        isApproaching: false,
+        isPassed: false,
+        status: unavailableReason,
+        unavailableReason,
+        unavailableMessage,
+      },
+      lastUpdate: lastUpdateData,
+      trackingUrl,
+      formattedMessage: replyText,
+      // Backward-compatible properties:
+      isAvailable: false,
+      stopName,
+      status: unavailableReason,
     };
+
+    return { replyText, data: fullData };
   }
+
+  /**
+   * Retrieves comprehensive My ETA details by phone number (Micro-phase 22.3)
+   */
+  public static async getMyEtaDetails(
+    phone: string,
+    schoolId?: string
+  ): Promise<ParentMyEtaResponse | null> {
+    const parent = await this.findParentByPhone(phone, schoolId);
+    if (!parent) {
+      return null;
+    }
+    const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
+    const result = await this.handleMyEta(parent, activeTrip);
+    return result.data as ParentMyEtaResponse;
+  }
+
 
   /**
    * Action 3: My Child

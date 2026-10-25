@@ -32,5 +32,8 @@ parentWhatsappRouter.post(
 // 5. Track My Bus direct query (Micro-Phase 22.2)
 parentWhatsappRouter.get('/track-bus', ParentWhatsappController.trackBus);
 
+// 6. My ETA direct query (Micro-Phase 22.3)
+parentWhatsappRouter.get('/eta', ParentWhatsappController.getMyEta);
+
 export default parentWhatsappRouter;
 

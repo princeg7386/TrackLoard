@@ -3965,5 +3965,62 @@ export const ParentTrackBusResponseSchema = z.object({
 });
 export type ParentTrackBusResponse = z.infer<typeof ParentTrackBusResponseSchema>;
 
+/**
+ * Phase 22.3: Parent WhatsApp My ETA Schema
+ */
+export const ParentMyEtaResponseSchema = z.object({
+  student: z.object({
+    id: z.string(),
+    fullName: z.string(),
+    admissionNumber: z.string().optional().nullable(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+  }),
+  stop: z
+    .object({
+      id: z.string(),
+      stopName: z.string(),
+      sequenceOrder: z.number().int().optional().nullable(),
+      scheduledTime: z.string().optional().nullable(),
+      geofenceRadiusMeters: z.number().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  bus: z
+    .object({
+      id: z.string(),
+      busNumber: z.string(),
+      registrationNumber: z.string(),
+      driverName: z.string().optional().nullable(),
+      driverPhone: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  eta: z.object({
+    isAvailable: z.boolean(),
+    etaMinutes: z.number().int().optional().nullable(),
+    distanceMeters: z.number().optional().nullable(),
+    estimatedArrivalAt: z.string().optional().nullable(),
+    isApproaching: z.boolean().default(false),
+    isPassed: z.boolean().default(false),
+    status: z.string(),
+    unavailableReason: z.string().optional().nullable(),
+    unavailableMessage: z.string().optional().nullable(),
+  }),
+  lastUpdate: z
+    .object({
+      recordedAt: z.string().optional().nullable(),
+      recencySeconds: z.number().optional().nullable(),
+      recencyText: z.string().optional().nullable(),
+      speedKmh: z.number().optional().nullable(),
+      isMoving: z.boolean().default(false),
+    })
+    .nullable()
+    .optional(),
+  trackingUrl: z.string(),
+  formattedMessage: z.string(),
+});
+export type ParentMyEtaResponse = z.infer<typeof ParentMyEtaResponseSchema>;
+
 
 
