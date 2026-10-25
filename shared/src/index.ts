@@ -3768,3 +3768,113 @@ export const EvaluateTripGeofenceResultSchema = z.object({
 });
 export type EvaluateTripGeofenceResult = z.infer<typeof EvaluateTripGeofenceResultSchema>;
 
+/**
+ * -----------------------------------------------------------------------------
+ * Phase 22.1 — Parent WhatsApp: Menu & Quick Actions
+ * -----------------------------------------------------------------------------
+ */
+
+export enum ParentWhatsAppAction {
+  TRACK_MY_BUS = 'TRACK_MY_BUS',
+  MY_ETA = 'MY_ETA',
+  MY_CHILD = 'MY_CHILD',
+  MY_PICKUP = 'MY_PICKUP',
+  NOTIFICATIONS = 'NOTIFICATIONS',
+  HELP = 'HELP',
+}
+
+export const ParentWhatsAppMenuItemSchema = z.object({
+  action: z.nativeEnum(ParentWhatsAppAction),
+  title: z.string(),
+  description: z.string(),
+  commandCode: z.string(),
+});
+export type ParentWhatsAppMenuItem = z.infer<typeof ParentWhatsAppMenuItemSchema>;
+
+export const ParentWhatsAppMenuResponseSchema = z.object({
+  parent: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    phone: z.string(),
+    schoolId: z.string().uuid(),
+  }),
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string().optional().nullable(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+    rollNumber: z.string().optional().nullable(),
+  }),
+  school: z.object({
+    id: z.string().uuid(),
+    name: z.string(),
+    code: z.string().optional().nullable(),
+    phone: z.string().optional().nullable(),
+    emergencyContactPhone: z.string().optional().nullable(),
+  }),
+  pickupStop: z
+    .object({
+      id: z.string().uuid(),
+      stopName: z.string(),
+      scheduledTime: z.string().optional().nullable(),
+      geofenceRadiusMeters: z.number().optional().nullable(),
+      latitude: z.number().optional().nullable(),
+      longitude: z.number().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  activeTrip: z
+    .object({
+      id: z.string().uuid(),
+      routeId: z.string().uuid(),
+      routeName: z.string().optional().nullable(),
+      status: z.nativeEnum(TripStatus),
+      busNumber: z.string().optional().nullable(),
+      registrationNumber: z.string().optional().nullable(),
+      driverName: z.string().optional().nullable(),
+      driverPhone: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  trackingUrl: z.string(),
+  menuItems: z.array(ParentWhatsAppMenuItemSchema),
+  formattedText: z.string(),
+});
+export type ParentWhatsAppMenuResponse = z.infer<typeof ParentWhatsAppMenuResponseSchema>;
+
+export const ParentWhatsAppInboundRequestSchema = z.object({
+  from: z.string().min(6),
+  text: z.string().optional(),
+  action: z.nativeEnum(ParentWhatsAppAction).optional(),
+  schoolId: z.string().uuid().optional(),
+});
+export type ParentWhatsAppInboundRequest = z.infer<typeof ParentWhatsAppInboundRequestSchema>;
+
+export const ParentWhatsAppActionExecuteRequestSchema = z.object({
+  from: z.string().min(6),
+  action: z.nativeEnum(ParentWhatsAppAction),
+  schoolId: z.string().uuid().optional(),
+});
+export type ParentWhatsAppActionExecuteRequest = z.infer<typeof ParentWhatsAppActionExecuteRequestSchema>;
+
+export const ParentWhatsAppInboundResponseSchema = z.object({
+  handled: z.boolean(),
+  parentId: z.string().uuid().optional(),
+  studentId: z.string().uuid().optional(),
+  schoolId: z.string().uuid().optional(),
+  actionTriggered: z.union([
+    z.nativeEnum(ParentWhatsAppAction),
+    z.literal('MENU'),
+    z.literal('UNREGISTERED'),
+    z.literal('UNKNOWN_COMMAND'),
+  ]),
+  replyText: z.string(),
+  menu: ParentWhatsAppMenuResponseSchema.optional(),
+  data: z.record(z.any()).optional(),
+  whatsappDelivered: z.boolean().optional(),
+  errorCode: z.string().optional(),
+});
+export type ParentWhatsAppInboundResponse = z.infer<typeof ParentWhatsAppInboundResponseSchema>;
+
+

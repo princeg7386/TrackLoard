@@ -13,6 +13,7 @@ import dynamicPickupRouter from './dynamic-pickup.routes.js';
 import tripRouter from './trip.routes.js';
 import driverWhatsappRouter from './driver-whatsapp.routes.js';
 import driverAttendanceRouter from './driver-attendance.routes.js';
+import parentWhatsappRouter from './parent-whatsapp.routes.js';
 
 const apiRouter = Router();
 
@@ -22,6 +23,7 @@ apiRouter.use('/driver/auth', driverAuthRouter);
 apiRouter.use('/driver/whatsapp', driverWhatsappRouter);
 apiRouter.use('/driver/attendance', driverAttendanceRouter);
 apiRouter.use('/attendance', driverAttendanceRouter);
+apiRouter.use('/parent/whatsapp', parentWhatsappRouter);
 apiRouter.use('/parent', parentRouter);
 apiRouter.use('/parent', dynamicPickupRouter);
 apiRouter.use('/telemetry', telemetryRouter);
