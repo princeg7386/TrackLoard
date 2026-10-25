@@ -4,6 +4,7 @@ import {
   ParentWhatsAppMenuResponse,
   ParentWhatsAppInboundRequest,
   ParentWhatsAppInboundResponse,
+  ParentTrackBusResponse,
   TripStatus,
   normalizeIndianPhoneNumber,
 } from '@school-bus/shared';
@@ -47,6 +48,7 @@ export interface ParentActiveTripContext {
   routeId: string;
   routeName?: string;
   routeCode?: string;
+  routeType?: string;
   status: TripStatus;
   busId: string;
   busNumber?: string;
@@ -56,6 +58,15 @@ export interface ParentActiveTripContext {
   driverPhone?: string;
   scheduledStartTime?: string;
   delayMinutes?: number;
+  currentStopSequence?: number;
+  totalStops?: number;
+  lastGpsLocation?: {
+    latitude: number;
+    longitude: number;
+    speedKmh: number;
+    bearingDegrees?: number;
+    recordedAt: string;
+  } | null;
 }
 
 export class ParentWhatsappService {
@@ -226,17 +237,39 @@ export class ParentWhatsappService {
       driver_phone: string | null;
       route_name: string | null;
       route_code: string | null;
+      route_type: string | null;
       delay_minutes: number | null;
+      current_stop_sequence: number | null;
+      total_stops: number | null;
+      latitude: number | null;
+      longitude: number | null;
+      speed_kmh: number | null;
+      bearing_degrees: number | null;
+      gps_recorded_at: string | null;
     }>(
       `SELECT t.id, t.route_id, t.status, t.bus_id, t.driver_id, t.delay_minutes,
+              t.current_stop_sequence,
               b.bus_number, b.registration_number,
               d.full_name AS driver_name, d.phone AS driver_phone,
-              r.name AS route_name, r.code AS route_code
+              r.name AS route_name, r.code AS route_code, r.route_type,
+              (SELECT COUNT(*)::int FROM pickup_locations WHERE route_id = t.route_id AND deleted_at IS NULL) AS total_stops,
+              ST_Y(gps.location::geometry) AS latitude,
+              ST_X(gps.location::geometry) AS longitude,
+              gps.speed_kmh,
+              gps.bearing_degrees,
+              gps.recorded_at::text AS gps_recorded_at
        FROM trips t
        JOIN pickup_locations pl ON pl.route_id = t.route_id AND pl.deleted_at IS NULL
        LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
        LEFT JOIN drivers d ON t.driver_id = d.id AND d.deleted_at IS NULL
        LEFT JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT location, speed_kmh, bearing_degrees, recorded_at
+         FROM gps_locations
+         WHERE trip_id = t.id
+         ORDER BY recorded_at DESC
+         LIMIT 1
+       ) gps ON TRUE
        WHERE pl.id = $1 AND t.school_id = $2
          AND t.status IN ('IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL')
          AND t.deleted_at IS NULL
@@ -248,11 +281,37 @@ export class ParentWhatsappService {
 
     if (activeRows.length > 0 && activeRows[0]) {
       const a = activeRows[0];
+      let lastGpsLocation: ParentActiveTripContext['lastGpsLocation'] = null;
+
+      if (
+        a.latitude !== null &&
+        a.latitude !== undefined &&
+        !isNaN(Number(a.latitude)) &&
+        a.longitude !== null &&
+        a.longitude !== undefined &&
+        !isNaN(Number(a.longitude))
+      ) {
+        lastGpsLocation = {
+          latitude: Number(a.latitude),
+          longitude: Number(a.longitude),
+          speedKmh:
+            a.speed_kmh !== null && a.speed_kmh !== undefined && !isNaN(Number(a.speed_kmh))
+              ? Number(a.speed_kmh)
+              : 0,
+          bearingDegrees:
+            a.bearing_degrees !== null && a.bearing_degrees !== undefined
+              ? Number(a.bearing_degrees)
+              : undefined,
+          recordedAt: a.gps_recorded_at || new Date().toISOString(),
+        };
+      }
+
       return {
         id: a.id,
         routeId: a.route_id,
         routeName: a.route_name || undefined,
         routeCode: a.route_code || undefined,
+        routeType: a.route_type || undefined,
         status: a.status as TripStatus,
         busId: a.bus_id,
         busNumber: a.bus_number || undefined,
@@ -261,6 +320,9 @@ export class ParentWhatsappService {
         driverName: a.driver_name || undefined,
         driverPhone: a.driver_phone || undefined,
         delayMinutes: a.delay_minutes || 0,
+        currentStopSequence: a.current_stop_sequence || 0,
+        totalStops: a.total_stops || undefined,
+        lastGpsLocation,
       };
     }
 
@@ -278,13 +340,16 @@ export class ParentWhatsappService {
       driver_phone: string | null;
       route_name: string | null;
       route_code: string | null;
+      route_type: string | null;
       scheduled_start_time: string | null;
+      total_stops: number | null;
     }>(
       `SELECT t.id, t.route_id, t.status, t.bus_id, t.driver_id,
               t.scheduled_start_time::text AS scheduled_start_time,
               b.bus_number, b.registration_number,
               d.full_name AS driver_name, d.phone AS driver_phone,
-              r.name AS route_name, r.code AS route_code
+              r.name AS route_name, r.code AS route_code, r.route_type,
+              (SELECT COUNT(*)::int FROM pickup_locations WHERE route_id = t.route_id AND deleted_at IS NULL) AS total_stops
        FROM trips t
        JOIN pickup_locations pl ON pl.route_id = t.route_id AND pl.deleted_at IS NULL
        LEFT JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
@@ -306,6 +371,7 @@ export class ParentWhatsappService {
         routeId: s.route_id,
         routeName: s.route_name || undefined,
         routeCode: s.route_code || undefined,
+        routeType: s.route_type || undefined,
         status: s.status as TripStatus,
         busId: s.bus_id,
         busNumber: s.bus_number || undefined,
@@ -314,6 +380,7 @@ export class ParentWhatsappService {
         driverName: s.driver_name || undefined,
         driverPhone: s.driver_phone || undefined,
         scheduledStartTime: s.scheduled_start_time || undefined,
+        totalStops: s.total_stops || undefined,
       };
     }
 
@@ -428,8 +495,7 @@ export class ParentWhatsappService {
     studentId: string,
     schoolId: string,
     tripId?: string | null
-  ): Promise<string> {
-    // Generate fresh session token or re-use active valid token
+  ): Promise<{ trackingUrl: string; expiresAt?: string; isExpired: boolean }> {
     try {
       const tokenData = await ParentIdentityService.createTrackingToken({
         parentId,
@@ -438,10 +504,17 @@ export class ParentWhatsappService {
         tripId: tripId || null,
         purpose: 'LIVE_TRACKING',
       });
-      return tokenData.trackingUrl;
+      return {
+        trackingUrl: tokenData.trackingUrl,
+        expiresAt: tokenData.expiresAt,
+        isExpired: false,
+      };
     } catch {
       // Fallback persistent root url
-      return `${(env.PARENT_TRACKING_BASE_URL || 'https://tracking.schoolbus.in/track').replace(/\/+$/, '')}/live`;
+      return {
+        trackingUrl: `${(env.PARENT_TRACKING_BASE_URL || 'https://tracking.schoolbus.in/track').replace(/\/+$/, '')}/live`,
+        isExpired: false,
+      };
     }
   }
 
@@ -458,12 +531,13 @@ export class ParentWhatsappService {
     }
 
     const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
-    const trackingUrl = await this.getOrCreateTrackingUrl(
+    const tokenResult = await this.getOrCreateTrackingUrl(
       parent.parentId,
       parent.studentId,
       parent.schoolId,
       activeTrip?.id
     );
+    const trackingUrl = tokenResult.trackingUrl;
 
     const menuItems = this.getStandardMenuItems();
     const formattedText = this.formatParentMenuText({
@@ -527,52 +601,286 @@ export class ParentWhatsappService {
   }
 
   /**
-   * Action 1: Track My Bus
+   * Action 1: Track My Bus (Phase 22.2)
+   * Enriches response with: Current bus, Location, Route, Pickup, ETA, Trip status, and Secure live link
    */
   public static async handleTrackMyBus(
     parent: ParentContextRecord,
     activeTrip: ParentActiveTripContext | null
   ): Promise<{ replyText: string; trackingUrl: string; data: any }> {
-    const trackingUrl = await this.getOrCreateTrackingUrl(
+    const tokenResult = await this.getOrCreateTrackingUrl(
       parent.parentId,
       parent.studentId,
       parent.schoolId,
       activeTrip?.id
     );
+    const trackingUrl = tokenResult.trackingUrl;
+    const tokenExpiresAt = tokenResult.expiresAt;
 
-    let statusText = 'Bus is currently *Idle / Not in Transit*.';
-    if (activeTrip?.status === TripStatus.IN_TRANSIT) {
-      statusText = `Bus *#${activeTrip.busNumber || 'Assigned'}* is currently *In Transit* 🟢`;
-    } else if (activeTrip?.status === TripStatus.DELAYED) {
-      statusText = `Bus *#${activeTrip.busNumber || 'Assigned'}* is currently *Delayed (${activeTrip.delayMinutes || 10}m)* 🟡`;
-    } else if (activeTrip?.status === TripStatus.ARRIVED_SCHOOL) {
-      statusText = `Bus *#${activeTrip.busNumber || 'Assigned'}* has *Arrived at School* 🏫`;
-    } else if (activeTrip?.status === TripStatus.SCHEDULED) {
-      statusText = `Bus trip is *Scheduled for Today* 🕒 (${activeTrip.scheduledStartTime || 'Upcoming'})`;
+    let expiryNote = 'Link valid for today’s trip';
+    if (tokenExpiresAt) {
+      try {
+        const expTime = new Intl.DateTimeFormat('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'Asia/Kolkata',
+        }).format(new Date(tokenExpiresAt));
+        expiryNote = `Link valid for today until ${expTime}`;
+      } catch {
+        // Fallback
+      }
     }
 
-    const driverDetails = activeTrip?.driverName
-      ? `\nDriver: *${activeTrip.driverName}*${activeTrip.driverPhone ? ` (📞 ${activeTrip.driverPhone})` : ''}`
-      : '';
+    const busNumber = activeTrip?.busNumber || 'Assigned';
+    const registrationNumber = activeTrip?.registrationNumber || 'N/A';
+    const driverName = activeTrip?.driverName || 'Assigned Driver';
+    const driverPhone = activeTrip?.driverPhone || '';
 
-    const replyText =
-      `🚌 *Live Bus Tracking*\n` +
-      `Student: *${parent.studentName}* (${parent.schoolName})\n` +
-      `${statusText}${driverDetails}\n\n` +
-      `🔗 *Tap to View Live Map:*\n` +
-      `${trackingUrl}\n\n` +
-      `_No app install needed. Live map updates automatically as the bus moves._`;
+    const stopName = parent.pickupStop?.stopName || 'Assigned Stop';
+    const scheduledTime = parent.pickupStop?.scheduledTime || 'Scheduled Morning Route';
+    const sequenceOrder = parent.pickupStop?.sequenceOrder;
+    const stopSeqText = sequenceOrder ? ` (Stop #${sequenceOrder})` : '';
+
+    let tripStatusLabel = 'Idle / Not in Transit ⚪';
+    if (activeTrip) {
+      if (activeTrip.status === TripStatus.IN_TRANSIT) {
+        tripStatusLabel =
+          (activeTrip.delayMinutes || 0) > 5
+            ? `In Transit 🟡 (Delayed by ${activeTrip.delayMinutes}m)`
+            : 'In Transit 🟢 (On Time)';
+      } else if (activeTrip.status === TripStatus.DELAYED) {
+        tripStatusLabel = `Delayed 🟡 (${activeTrip.delayMinutes || 10}m)`;
+      } else if (activeTrip.status === TripStatus.ARRIVED_SCHOOL) {
+        tripStatusLabel = 'Arrived at School Campus 🏫';
+      } else if (activeTrip.status === TripStatus.SCHEDULED) {
+        tripStatusLabel = `Scheduled for Today 🕒 (${activeTrip.scheduledStartTime || 'Upcoming'})`;
+      }
+    }
+
+    // Dynamic ETA Calculation
+    let etaData: any = null;
+    let etaMinutes: number | null = null;
+    let distanceMeters: number | null = null;
+    let isApproaching = false;
+    let estimatedArrivalAtStr: string | null = null;
+
+    if (
+      activeTrip &&
+      (activeTrip.status === TripStatus.IN_TRANSIT || activeTrip.status === TripStatus.DELAYED) &&
+      parent.pickupStop?.id
+    ) {
+      try {
+        const etaResult = await EtaService.calculateParentEta({
+          tripId: activeTrip.id,
+          schoolId: parent.schoolId,
+          stopId: parent.pickupStop.id,
+        });
+
+        if (etaResult.isAvailable && etaResult.etaMinutes !== null && etaResult.etaMinutes !== undefined) {
+          etaMinutes = etaResult.etaMinutes;
+          distanceMeters = etaResult.distanceMeters || null;
+          isApproaching = etaResult.isApproaching || false;
+          estimatedArrivalAtStr = etaResult.estimatedArrivalAt || null;
+        }
+
+        etaData = {
+          isAvailable: etaResult.isAvailable,
+          etaMinutes: etaResult.etaMinutes || null,
+          distanceMeters: etaResult.distanceMeters || null,
+          estimatedArrivalAt: etaResult.estimatedArrivalAt || null,
+          isApproaching: etaResult.isApproaching || false,
+          statusText: etaResult.isApproaching
+            ? 'Approaching Stop'
+            : etaResult.etaMinutes
+            ? `~${etaResult.etaMinutes} mins`
+            : 'Calculating',
+        };
+      } catch (err: any) {
+        logger.warn(`Failed to calculate ETA for track bus: ${err.message}`);
+      }
+    }
+
+    let locationData: any = null;
+    let locationSection = '';
+    if (activeTrip?.lastGpsLocation) {
+      const loc = activeTrip.lastGpsLocation;
+      const speed = loc.speedKmh || 0;
+      const isMoving = speed > 3;
+      const recencySeconds = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(loc.recordedAt).getTime()) / 1000)
+      );
+      const recencyText =
+        recencySeconds < 60
+          ? 'Updated just now'
+          : `Updated ${Math.floor(recencySeconds / 60)}m ago`;
+      const movementText = isMoving ? `Moving at ${Math.round(speed)} km/h` : 'Stationary (0 km/h)';
+
+      locationData = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        speedKmh: loc.speedKmh,
+        bearingDegrees: loc.bearingDegrees,
+        recordedAt: loc.recordedAt,
+        recencySeconds,
+        recencyText,
+        isMoving,
+      };
+
+      locationSection =
+        `\n📍 *Current Bus Location:*\n` +
+        `• ${movementText} • ${recencyText}\n` +
+        `• GPS: ${loc.latitude.toFixed(4)}° N, ${loc.longitude.toFixed(4)}° E\n`;
+    }
+
+    let etaSection = '';
+    if (etaMinutes !== null) {
+      const distanceKm = distanceMeters ? (distanceMeters / 1000).toFixed(1) : null;
+      const distText = distanceKm ? ` (${distanceKm} km away)` : '';
+      const approachTag = isApproaching ? ' ⚠️ *Bus is Approaching!*' : '';
+      let arrTime = '';
+      if (estimatedArrivalAtStr) {
+        try {
+          arrTime = ` (~${new Intl.DateTimeFormat('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+            timeZone: 'Asia/Kolkata',
+          }).format(new Date(estimatedArrivalAtStr))})`;
+        } catch {}
+      }
+
+      etaSection =
+        `\n⏱️ *Arrival ETA:*\n` +
+        `• Expected in *${etaMinutes} min${etaMinutes === 1 ? '' : 's'}*${arrTime}${distText}${approachTag}\n`;
+    }
+
+    const routeName = activeTrip?.routeName || 'Assigned Bus Route';
+    const routeCode = activeTrip?.routeCode ? `[${activeTrip.routeCode}] ` : '';
+    const stopProgress = activeTrip?.totalStops
+      ? `Stop ${activeTrip.currentStopSequence || 1} of ${activeTrip.totalStops}`
+      : `Stop #${activeTrip?.currentStopSequence || 1}`;
+
+    let replyText = '';
+    if (activeTrip?.status === TripStatus.IN_TRANSIT || activeTrip?.status === TripStatus.DELAYED) {
+      const driverPhoneText = driverPhone ? ` (📞 ${driverPhone})` : '';
+
+      replyText =
+        `🚌 *Live Bus Tracking*\n` +
+        `Student: *${parent.studentName}* (${parent.schoolName})\n` +
+        `Bus *#${busNumber}* (${registrationNumber}) is currently *In Transit* 🟢\n` +
+        `Driver: *${driverName}*${driverPhoneText}\n\n` +
+        `🚦 *Trip Status:* *${tripStatusLabel}*\n` +
+        `🗺️ *Route:* *${routeCode}${routeName}* (${stopProgress})\n` +
+        `🚏 *Pickup Stop:* *${stopName}*${stopSeqText}\n` +
+        `• Scheduled: *${scheduledTime}*` +
+        `${locationSection}` +
+        `${etaSection}\n` +
+        `🔗 *Tap to View Live Map:*\n` +
+        `${trackingUrl}\n\n` +
+        `_(${expiryNote}. No app install needed. Live map updates automatically as the bus moves.)_`;
+    } else {
+      const driverPhoneText = driverPhone ? ` (📞 ${driverPhone})` : '';
+      const driverDetails = activeTrip?.driverName ? `\nDriver: *${driverName}*${driverPhoneText}` : '';
+
+      replyText =
+        `🚌 *Live Bus Tracking*\n` +
+        `Student: *${parent.studentName}* (${parent.schoolName})\n` +
+        `Bus is currently *Idle / Not in Transit*.${driverDetails}\n\n` +
+        `🚦 *Trip Status:* *${tripStatusLabel}*\n` +
+        `🚏 *Assigned Stop:* *${stopName}*${stopSeqText}\n` +
+        `🕒 *Scheduled Pickup:* *${scheduledTime}*\n` +
+        `🚌 *Assigned Bus:* Bus *#${busNumber}* (${registrationNumber})\n\n` +
+        `🔗 *Tap to View Live Map:*\n` +
+        `${trackingUrl}\n\n` +
+        `_(${expiryNote}. Live map activates automatically once the driver starts the trip.)_`;
+    }
+
+    const fullData = {
+      student: {
+        id: parent.studentId,
+        fullName: parent.studentName,
+        admissionNumber: parent.admissionNumber,
+        classGrade: parent.classGrade,
+        section: parent.section,
+      },
+      school: {
+        id: parent.schoolId,
+        name: parent.schoolName,
+      },
+      bus: activeTrip
+        ? {
+            id: activeTrip.busId,
+            busNumber,
+            registrationNumber,
+            driverName,
+            driverPhone: driverPhone || null,
+          }
+        : null,
+      location: locationData,
+      route: activeTrip
+        ? {
+            id: activeTrip.routeId,
+            name: routeName,
+            code: activeTrip.routeCode || null,
+            routeType: activeTrip.routeType || null,
+            currentStopSequence: activeTrip.currentStopSequence,
+            totalStops: activeTrip.totalStops,
+          }
+        : null,
+      pickup: parent.pickupStop
+        ? {
+            id: parent.pickupStop.id,
+            stopName: parent.pickupStop.stopName,
+            sequenceOrder: parent.pickupStop.sequenceOrder,
+            scheduledTime: parent.pickupStop.scheduledTime,
+            geofenceRadiusMeters: parent.pickupStop.geofenceRadiusMeters,
+          }
+        : null,
+      eta: etaData,
+      trip: activeTrip
+        ? {
+            id: activeTrip.id,
+            status: activeTrip.status,
+            delayMinutes: activeTrip.delayMinutes || 0,
+            statusLabel: tripStatusLabel,
+          }
+        : null,
+      secureLink: {
+        trackingUrl,
+        expiresAt: tokenExpiresAt || null,
+        isExpired: false,
+      },
+      formattedMessage: replyText,
+      // Backward-compatible properties:
+      trackingUrl,
+      busNumber: activeTrip?.busNumber,
+      driverName: activeTrip?.driverName,
+      status: activeTrip?.status || 'IDLE',
+    };
 
     return {
       replyText,
       trackingUrl,
-      data: {
-        trackingUrl,
-        busNumber: activeTrip?.busNumber,
-        driverName: activeTrip?.driverName,
-        status: activeTrip?.status || 'IDLE',
-      },
+      data: fullData,
     };
+  }
+
+  /**
+   * Retrieves comprehensive Track My Bus details by phone number (Micro-phase 22.2)
+   */
+  public static async getTrackBusDetails(
+    phone: string,
+    schoolId?: string
+  ): Promise<ParentTrackBusResponse | null> {
+    const parent = await this.findParentByPhone(phone, schoolId);
+    if (!parent) {
+      return null;
+    }
+    const activeTrip = await this.getParentTripContext(parent.schoolId, parent.pickupStop?.id);
+    const result = await this.handleTrackMyBus(parent, activeTrip);
+    return result.data as ParentTrackBusResponse;
   }
 
   /**

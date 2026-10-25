@@ -151,4 +151,33 @@ export class ParentWhatsappController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/parent/whatsapp/track-bus
+   * Retrieves comprehensive live tracking details for parent's bus (Micro-phase 22.2)
+   */
+  public static async trackBus(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const phone = req.query.phone as string | undefined;
+      const schoolId = req.query.schoolId as string | undefined;
+
+      if (!phone) {
+        throw new BadRequestError('Parent phone number query parameter is required');
+      }
+
+      const result = await ParentWhatsappService.getTrackBusDetails(phone, schoolId);
+      if (!result) {
+        throw new NotFoundError(`Parent not found for phone number: ${phone}`);
+      }
+
+      sendSuccess(res, result, 'Track My Bus details retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
 }
+

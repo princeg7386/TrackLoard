@@ -3877,4 +3877,93 @@ export const ParentWhatsAppInboundResponseSchema = z.object({
 });
 export type ParentWhatsAppInboundResponse = z.infer<typeof ParentWhatsAppInboundResponseSchema>;
 
+/**
+ * Phase 22.2: Parent WhatsApp Track My Bus Schema
+ */
+export const ParentTrackBusResponseSchema = z.object({
+  student: z.object({
+    id: z.string(),
+    fullName: z.string(),
+    admissionNumber: z.string().optional().nullable(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+  }),
+  school: z.object({
+    id: z.string(),
+    name: z.string(),
+  }),
+  bus: z
+    .object({
+      id: z.string(),
+      busNumber: z.string(),
+      registrationNumber: z.string(),
+      driverName: z.string().optional().nullable(),
+      driverPhone: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  location: z
+    .object({
+      latitude: z.number(),
+      longitude: z.number(),
+      speedKmh: z.number(),
+      bearingDegrees: z.number().optional().nullable(),
+      recordedAt: z.string(),
+      recencySeconds: z.number().optional().nullable(),
+      recencyText: z.string().optional().nullable(),
+      isMoving: z.boolean().optional(),
+    })
+    .nullable()
+    .optional(),
+  route: z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      code: z.string().optional().nullable(),
+      routeType: z.string().optional().nullable(),
+      currentStopSequence: z.number().int().optional().nullable(),
+      totalStops: z.number().int().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  pickup: z
+    .object({
+      id: z.string(),
+      stopName: z.string(),
+      sequenceOrder: z.number().int().optional().nullable(),
+      scheduledTime: z.string().optional().nullable(),
+      geofenceRadiusMeters: z.number().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  eta: z
+    .object({
+      isAvailable: z.boolean(),
+      etaMinutes: z.number().int().optional().nullable(),
+      distanceMeters: z.number().optional().nullable(),
+      estimatedArrivalAt: z.string().optional().nullable(),
+      isApproaching: z.boolean().optional(),
+      statusText: z.string().optional().nullable(),
+    })
+    .nullable()
+    .optional(),
+  trip: z
+    .object({
+      id: z.string(),
+      status: z.nativeEnum(TripStatus),
+      delayMinutes: z.number().int().default(0),
+      statusLabel: z.string(),
+    })
+    .nullable()
+    .optional(),
+  secureLink: z.object({
+    trackingUrl: z.string(),
+    expiresAt: z.string().optional().nullable(),
+    isExpired: z.boolean().default(false),
+  }),
+  formattedMessage: z.string(),
+});
+export type ParentTrackBusResponse = z.infer<typeof ParentTrackBusResponseSchema>;
+
+
 
