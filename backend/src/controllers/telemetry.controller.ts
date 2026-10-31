@@ -3,6 +3,7 @@ import { TelemetryService } from '../services/telemetry.service.js';
 import { GpsHealthService } from '../services/gps-health.service.js';
 import { GpsOfflineDetectionService } from '../services/gps-offline-detection.service.js';
 import { RouteDeviationService } from '../services/route-deviation.service.js';
+import { OverspeedRuleService } from '../services/overspeed-rule.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { EtaService } from '../services/eta.service.js';
 import { GeofenceService } from '../services/geofence.service.js';
@@ -618,6 +619,44 @@ export class TelemetryController {
         success: true,
         message: result.message,
         data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/overspeed-events
+   * Phase 29.2 — List all active overspeed events for a school
+   */
+  static async getSchoolActiveOverspeedEvents(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const events = await OverspeedRuleService.getActiveEventsForSchool(schoolId!);
+
+      res.status(200).json({
+        success: true,
+        message: `${events.length} active overspeed event(s)`,
+        data: events,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/trips/:tripId/overspeed
+   * Phase 29.2 — Get active overspeed event for a trip
+   */
+  static async getTripActiveOverspeedEvent(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId, schoolId } = req.params;
+      const event = await OverspeedRuleService._getActiveEventForTrip(tripId!, schoolId!);
+
+      res.status(200).json({
+        success: true,
+        message: event ? 'Active overspeed event found' : 'No active overspeed event',
+        data: event,
       });
     } catch (error) {
       next(error);

@@ -263,4 +263,22 @@ telemetryRouter.post(
   TelemetryController.manualNotifyDeviation
 );
 
+// 27. Phase 29.2 — List active overspeed events for a school
+telemetryRouter.get(
+  '/schools/:schoolId/overspeed-events',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getSchoolActiveOverspeedEvents
+);
+
+// 28. Phase 29.2 — Get active overspeed event for a trip
+telemetryRouter.get(
+  '/schools/:schoolId/trips/:tripId/overspeed',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getTripActiveOverspeedEvent
+);
+
 export default telemetryRouter;

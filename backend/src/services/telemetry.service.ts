@@ -18,6 +18,8 @@ import { GeofenceService } from './geofence.service.js';
 import { OperationalNotificationService } from './operational-notification.service.js';
 import { LongStopDetectionService } from './long-stop-detection.service.js';
 import { RouteDeviationService } from './route-deviation.service.js';
+import { OverspeedRuleService } from './overspeed-rule.service.js';
+import { OVERSPEED_CONFIG } from '@school-bus/shared';
 import { logger } from './logger.service.js';
 
 
@@ -360,6 +362,25 @@ export class TelemetryService {
       timestamp: payload.recordedAt,
     }).catch((err: unknown) => {
       logger.warn('RouteDeviationService.evaluateTripDeviationOnPing error (suppressed)', {
+        tripId: payload.tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // 9. Phase 29.2 — Overspeed Detection (fire-and-forget, non-blocking)
+    OverspeedRuleService.evaluateSpeed({
+      tripId: payload.tripId,
+      schoolId: trip.school_id,
+      busId: payload.busId,
+      driverId: payload.driverId ?? null,
+      routeId: trip.route_id ?? null,
+      speedKmh: payload.speedKmh ?? 0,
+      latitude: payload.latitude,
+      longitude: payload.longitude,
+      timestamp: payload.recordedAt,
+      pingIntervalSeconds: OVERSPEED_CONFIG.ASSUMED_PING_INTERVAL_SECONDS,
+    }).catch((err: unknown) => {
+      logger.warn('OverspeedRuleService.evaluateSpeed error (suppressed)', {
         tripId: payload.tripId,
         error: err instanceof Error ? err.message : String(err),
       });
