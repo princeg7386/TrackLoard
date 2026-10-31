@@ -281,4 +281,13 @@ telemetryRouter.get(
   TelemetryController.getTripActiveOverspeedEvent
 );
 
+// 29. Phase 29.3 — Manually re-trigger school + driver notifications for an overspeed event
+telemetryRouter.post(
+  '/schools/:schoolId/overspeed-events/:eventId/notify',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.manualNotifyOverspeed
+);
+
 export default telemetryRouter;

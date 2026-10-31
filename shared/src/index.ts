@@ -1494,6 +1494,9 @@ export const NotificationEventTypeSchema = z.enum([
   'GPS_UNAVAILABLE',
   'UNUSUAL_STOP',
   'GENERAL_ALERT',
+
+  // Safety - Overspeed
+  'OVERSPEED_ALERT',
 ]);
 export type NotificationEventType = z.infer<typeof NotificationEventTypeSchema>;
 
@@ -4545,6 +4548,14 @@ export const NOTIFICATION_EVENT_CONFIGS: Record<NotificationEventType, Notificat
     allowOptOut: true,
     description: 'General administrative or transport announcement',
   },
+  OVERSPEED_ALERT: {
+    eventType: 'OVERSPEED_ALERT',
+    defaultPriority: 'HIGH',
+    defaultRecipients: ['SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR'],
+    requiresImmediateDispatch: true,
+    allowOptOut: false,
+    description: 'Bus is travelling above the configured speed limit for the route or school',
+  },
 };
 
 export function getNotificationEventDefaultPriority(type: NotificationEventType): NotificationPriority {
@@ -5450,3 +5461,16 @@ export const OverspeedEvaluationResultSchema = z.object({
   message: z.string(),
 });
 export type OverspeedEvaluationResult = z.infer<typeof OverspeedEvaluationResultSchema>;
+
+
+// Phase 29.3 - Overspeed notification result
+export const OverspeedNotificationResultSchema = z.object({
+  eventId: z.string().uuid(),
+  schoolNotified: z.boolean(),
+  driverNotified: z.boolean(),
+  schoolCooldownSkipped: z.boolean(),
+  driverCooldownSkipped: z.boolean(),
+  schoolRecipientsCount: z.number().int().min(0),
+  message: z.string(),
+});
+export type OverspeedNotificationResult = z.infer<typeof OverspeedNotificationResultSchema>;

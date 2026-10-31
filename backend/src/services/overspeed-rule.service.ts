@@ -17,7 +17,9 @@ import {
   OverspeedRule,
   OverspeedEventRecord,
   OverspeedEvaluationResult,
+  OverspeedNotificationResult,
 } from '@school-bus/shared';
+import { MessagingService } from './messaging/messaging.service.js';
 import { logger } from './logger.service.js';
 
 export class OverspeedRuleService {
@@ -297,6 +299,14 @@ export class OverspeedRuleService {
       limitKmh: rule.speedLimitKmh, ruleSource: rule.source,
     });
 
+    // 29.3 — Dispatch WhatsApp notifications fire-and-forget (non-blocking)
+    OverspeedRuleService.dispatchOverspeedNotifications(newEventId, schoolId).catch((err: unknown) => {
+      logger.warn('[Overspeed] dispatchOverspeedNotifications error (suppressed)', {
+        eventId: newEventId, tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
     return {
       tripId, schoolId,
       speedKmh, speedLimitKmh: rule.speedLimitKmh,
@@ -456,5 +466,301 @@ export class OverspeedRuleService {
   /** Reset in-process state for a trip (call on trip end). */
   static clearTripState(tripId: string): void {
     OverspeedRuleService._durationAccumulator.delete(tripId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notification dispatch (Phase 29.3)
+  // ---------------------------------------------------------------------------
+
+  /** Cooldown window: 5 minutes between repeated overspeed alerts for same event */
+  private static readonly NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000;
+
+  /**
+   * Dispatch WhatsApp alerts to school coordinators and the trip driver.
+   * Includes: speed, time, location, duration (the four 29.3 event fields).
+   * Respects a 5-minute cooldown per event unless `forceNotify` is true.
+   * Never throws — logs errors and returns a structured result.
+   */
+  static async dispatchOverspeedNotifications(
+    eventId: string,
+    schoolId: string,
+    forceNotify = false
+  ): Promise<OverspeedNotificationResult> {
+    try {
+      // Load overspeed event with context from buses / routes / schools
+      const rows = await query<{
+        school_id: string;
+        trip_id: string;
+        bus_id: string;
+        driver_id: string | null;
+        route_id: string | null;
+        started_at: string;
+        duration_seconds: number;
+        speed_limit_kmh: number;
+        max_speed_kmh: string;
+        peak_latitude: number;
+        peak_longitude: number;
+        school_notified_at: string | null;
+        driver_notified_at: string | null;
+        bus_number: string;
+        route_name: string | null;
+      }>(
+        `SELECT oe.school_id, oe.trip_id, oe.bus_id, oe.driver_id, oe.route_id,
+                oe.started_at, oe.duration_seconds, oe.speed_limit_kmh,
+                oe.max_speed_kmh,
+                oe.peak_latitude, oe.peak_longitude,
+                oe.school_notified_at, oe.driver_notified_at,
+                COALESCE(b.registration_number, oe.bus_id) AS bus_number,
+                r.name AS route_name
+         FROM overspeed_events oe
+         LEFT JOIN buses b ON b.id = oe.bus_id
+         LEFT JOIN routes r ON r.id = oe.route_id
+         WHERE oe.id = $1 AND oe.school_id = $2`,
+        [eventId, schoolId]
+      );
+
+      if (rows.length === 0) {
+        logger.warn('[Overspeed] dispatchOverspeedNotifications: event not found', { eventId, schoolId });
+        return {
+          eventId,
+          schoolNotified: false,
+          driverNotified: false,
+          schoolCooldownSkipped: false,
+          driverCooldownSkipped: false,
+          schoolRecipientsCount: 0,
+          message: 'Overspeed event not found',
+        };
+      }
+
+      const ev = rows[0]!;
+
+      // Dispatch school notification
+      const schoolResult = await OverspeedRuleService._notifySchoolOverspeed({
+        eventId,
+        schoolId: ev.school_id,
+        tripId: ev.trip_id,
+        speedKmh: Number(ev.max_speed_kmh),
+        speedLimitKmh: Number(ev.speed_limit_kmh),
+        startedAt: ev.started_at,
+        durationSeconds: Number(ev.duration_seconds),
+        peakLat: Number(ev.peak_latitude),
+        peakLng: Number(ev.peak_longitude),
+        busNumber: ev.bus_number,
+        routeName: ev.route_name ?? null,
+        schoolNotifiedAt: ev.school_notified_at,
+        forceNotify,
+      });
+
+      // Dispatch driver notification (only if driver is known)
+      let driverResult: { sent: boolean; cooldownSkipped: boolean } = { sent: false, cooldownSkipped: false };
+      if (ev.driver_id) {
+        driverResult = await OverspeedRuleService._notifyDriverOverspeed({
+          eventId,
+          schoolId: ev.school_id,
+          driverId: ev.driver_id,
+          speedKmh: Number(ev.max_speed_kmh),
+          speedLimitKmh: Number(ev.speed_limit_kmh),
+          driverNotifiedAt: ev.driver_notified_at,
+          forceNotify,
+        });
+      } else {
+        logger.info('[Overspeed] No driver on trip — skipping driver notification', {
+          eventId, tripId: ev.trip_id,
+        });
+      }
+
+      return {
+        eventId,
+        schoolNotified: schoolResult.sent,
+        driverNotified: driverResult.sent,
+        schoolCooldownSkipped: schoolResult.cooldownSkipped,
+        driverCooldownSkipped: driverResult.cooldownSkipped,
+        schoolRecipientsCount: schoolResult.recipientsCount,
+        message: `Notifications dispatched — school: ${schoolResult.sent}, driver: ${driverResult.sent}`,
+      };
+    } catch (err) {
+      logger.warn('[Overspeed] dispatchOverspeedNotifications error', {
+        eventId, err: String(err),
+      });
+      return {
+        eventId,
+        schoolNotified: false,
+        driverNotified: false,
+        schoolCooldownSkipped: false,
+        driverCooldownSkipped: false,
+        schoolRecipientsCount: 0,
+        message: `Notification dispatch failed: ${String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Send WhatsApp alert to all school admin / transport coordinators.
+   * Message includes: speed, limit, time, location (lat/lng), duration.
+   */
+  private static async _notifySchoolOverspeed(params: {
+    eventId: string;
+    schoolId: string;
+    tripId: string;
+    speedKmh: number;
+    speedLimitKmh: number;
+    startedAt: string;
+    durationSeconds: number;
+    peakLat: number;
+    peakLng: number;
+    busNumber: string;
+    routeName: string | null;
+    schoolNotifiedAt: string | null;
+    forceNotify?: boolean;
+  }): Promise<{ sent: boolean; cooldownSkipped: boolean; recipientsCount: number }> {
+    const {
+      eventId, schoolId, tripId,
+      speedKmh, speedLimitKmh, startedAt, durationSeconds,
+      peakLat, peakLng, busNumber, routeName,
+      schoolNotifiedAt, forceNotify,
+    } = params;
+
+    // Cooldown check
+    if (!forceNotify && schoolNotifiedAt) {
+      const elapsed = Date.now() - new Date(schoolNotifiedAt).getTime();
+      if (elapsed < OverspeedRuleService.NOTIFICATION_COOLDOWN_MS) {
+        logger.info('[Overspeed] School notification skipped — within cooldown', {
+          eventId, elapsed, cooldownMs: OverspeedRuleService.NOTIFICATION_COOLDOWN_MS,
+        });
+        return { sent: false, cooldownSkipped: true, recipientsCount: 0 };
+      }
+    }
+
+    // Fetch recipients
+    const recipients = await query<{ phone: string; name: string }>(
+      `SELECT phone_number AS phone, COALESCE(full_name, 'Coordinator') AS name
+       FROM users
+       WHERE school_id = $1 AND role IN ('SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR')
+         AND phone_number IS NOT NULL AND phone_number != ''`,
+      [schoolId]
+    );
+
+    if (recipients.length === 0) {
+      logger.warn('[Overspeed] No school admin/coordinator phones found', { schoolId, eventId });
+      return { sent: false, cooldownSkipped: false, recipientsCount: 0 };
+    }
+
+    const durationMin = Math.ceil(durationSeconds / 60);
+    const timeStr = new Date(startedAt).toLocaleTimeString('en-IN', {
+      hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+    });
+    const routeLabel = routeName ? ` (${routeName})` : '';
+
+    const messageText =
+      `🚨 *Overspeed Alert*\n` +
+      `Bus *${busNumber}*${routeLabel} exceeded the speed limit.\n` +
+      `Speed: *${speedKmh} km/h* | Limit: *${speedLimitKmh} km/h*\n` +
+      `Time: ${timeStr} | Duration: ~${durationMin} min\n` +
+      `Location: ${peakLat.toFixed(5)}, ${peakLng.toFixed(5)}\n` +
+      `Trip ID: \`${tripId}\``;
+
+    let sentCount = 0;
+    for (const recipient of recipients) {
+      try {
+        await MessagingService.sendMessage({
+          recipientPhone: recipient.phone,
+          recipientRole: 'SCHOOL_ADMIN',
+          schoolId,
+          directText: messageText,
+          eventType: 'OVERSPEED_ALERT',
+          priority: 'HIGH',
+        });
+        sentCount++;
+      } catch (err) {
+        logger.warn('[Overspeed] Failed to send school notification', {
+          recipientPhone: recipient.phone, err: String(err),
+        });
+      }
+    }
+
+    // Update school_notified_at
+    await query(
+      `UPDATE overspeed_events SET school_notified_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND school_id = $2`,
+      [eventId, schoolId]
+    );
+
+    logger.info('[Overspeed] School notification dispatched', {
+      eventId, schoolId, sentCount, speedKmh, speedLimitKmh,
+    });
+
+    return { sent: sentCount > 0, cooldownSkipped: false, recipientsCount: sentCount };
+  }
+
+  /**
+   * Send WhatsApp alert to the trip driver about their overspeed.
+   * Message: their speed, limit, instruction to slow down.
+   */
+  private static async _notifyDriverOverspeed(params: {
+    eventId: string;
+    schoolId: string;
+    driverId: string;
+    speedKmh: number;
+    speedLimitKmh: number;
+    driverNotifiedAt: string | null;
+    forceNotify?: boolean;
+  }): Promise<{ sent: boolean; cooldownSkipped: boolean }> {
+    const { eventId, schoolId, driverId, speedKmh, speedLimitKmh, driverNotifiedAt, forceNotify } = params;
+
+    // Cooldown check
+    if (!forceNotify && driverNotifiedAt) {
+      const elapsed = Date.now() - new Date(driverNotifiedAt).getTime();
+      if (elapsed < OverspeedRuleService.NOTIFICATION_COOLDOWN_MS) {
+        logger.info('[Overspeed] Driver notification skipped — within cooldown', { eventId, elapsed });
+        return { sent: false, cooldownSkipped: true };
+      }
+    }
+
+    // Fetch driver phone
+    const driverRows = await query<{ phone: string }>(
+      `SELECT phone_number AS phone FROM drivers
+       WHERE id = $1 AND school_id = $2
+         AND phone_number IS NOT NULL AND phone_number != ''`,
+      [driverId, schoolId]
+    );
+
+    if (driverRows.length === 0) {
+      logger.warn('[Overspeed] Driver phone not found', { driverId, schoolId, eventId });
+      return { sent: false, cooldownSkipped: false };
+    }
+
+    const messageText =
+      `⚠️ *Speed Alert*\n` +
+      `Your bus speed is *${speedKmh} km/h*, which exceeds the limit of *${speedLimitKmh} km/h*.\n` +
+      `Please reduce your speed immediately for student safety.`;
+
+    try {
+      await MessagingService.sendMessage({
+        recipientPhone: driverRows[0]!.phone,
+        recipientRole: 'DRIVER',
+        schoolId,
+        directText: messageText,
+        eventType: 'OVERSPEED_ALERT',
+        priority: 'HIGH',
+      });
+    } catch (err) {
+      logger.warn('[Overspeed] Failed to send driver notification', {
+        driverId, err: String(err),
+      });
+      return { sent: false, cooldownSkipped: false };
+    }
+
+    // Update driver_notified_at
+    await query(
+      `UPDATE overspeed_events SET driver_notified_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND school_id = $2`,
+      [eventId, schoolId]
+    );
+
+    logger.info('[Overspeed] Driver notification dispatched', {
+      eventId, driverId, speedKmh, speedLimitKmh,
+    });
+
+    return { sent: true, cooldownSkipped: false };
   }
 }

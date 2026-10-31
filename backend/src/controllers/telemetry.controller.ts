@@ -662,4 +662,24 @@ export class TelemetryController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/telemetry/schools/:schoolId/overspeed-events/:eventId/notify
+   * Phase 29.3 — Manually re-trigger school + driver notifications for an overspeed event
+   */
+  static async manualNotifyOverspeed(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { eventId, schoolId } = req.params;
+      // Force bypass cooldown for manual coordinator action
+      const result = await OverspeedRuleService.dispatchOverspeedNotifications(eventId!, schoolId!, true);
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
