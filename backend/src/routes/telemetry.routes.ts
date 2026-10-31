@@ -254,4 +254,13 @@ telemetryRouter.get(
   TelemetryController.getSchoolActiveDeviations
 );
 
+// 26. Phase 28.3 — Manually re-trigger school + driver notifications for a deviation
+telemetryRouter.post(
+  '/schools/:schoolId/deviations/:deviationId/notify',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.manualNotifyDeviation
+);
+
 export default telemetryRouter;

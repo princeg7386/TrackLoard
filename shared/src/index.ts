@@ -5365,3 +5365,17 @@ export const RouteDeviationEvaluationResultSchema = z.object({
 });
 export type RouteDeviationEvaluationResult = z.infer<typeof RouteDeviationEvaluationResultSchema>;
 
+// ---------------------------------------------------------------------------
+// Phase 28.3 — Route Deviation Notification Result
+// ---------------------------------------------------------------------------
+export const RouteDeviationNotificationResultSchema = z.object({
+  deviationId: z.string().uuid(),
+  schoolNotified: z.boolean(),
+  driverNotified: z.boolean(),
+  schoolCooldownSkipped: z.boolean(),
+  driverCooldownSkipped: z.boolean(),
+  schoolRecipientsCount: z.number(),
+  message: z.string(),
+});
+export type RouteDeviationNotificationResult = z.infer<typeof RouteDeviationNotificationResultSchema>;
+

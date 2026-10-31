@@ -12,9 +12,11 @@ import {
   RouteDeviationSeverity,
   ActiveRouteDeviationRecord,
   RouteDeviationEvaluationResult,
+  RouteDeviationNotificationResult,
 } from '@school-bus/shared';
 import { NotFoundError, BadRequestError } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
+import { MessagingService } from './messaging/messaging.service.js';
 
 async function executeQuery<T = any>(
   sql: string,
@@ -775,6 +777,13 @@ export class RouteDeviationService {
           lat: busCoords.latitude, lng: busCoords.longitude,
         });
 
+        // Fire-and-forget notifications (OPENED)
+        RouteDeviationService.dispatchDeviationNotifications(newId).catch((err) => {
+          logger.warn('[RouteDeviation] Notification dispatch failed on OPENED', {
+            eventId: newId, err: String(err),
+          });
+        });
+
         return {
           tripId, schoolId, busId, routeId,
           evaluated: true,
@@ -826,6 +835,15 @@ export class RouteDeviationService {
         tripId, eventId: activeEvent.id, severity: upgradedSeverity,
         distanceToRouteMeters, durationSeconds: nowSec,
       });
+
+      // Fire-and-forget notifications on severity upgrade
+      if (upgradedSeverity !== activeEvent.severity) {
+        RouteDeviationService.dispatchDeviationNotifications(activeEvent.id).catch((err) => {
+          logger.warn('[RouteDeviation] Notification dispatch failed on severity UPDATED', {
+            eventId: activeEvent.id, err: String(err),
+          });
+        });
+      }
 
       return {
         tripId, schoolId, busId, routeId,
@@ -915,5 +933,311 @@ export class RouteDeviationService {
       activeDeviationId: activeEvent.id,
       message: `Deviation auto-resolved after ${finalDuration}s (max distance: ${activeEvent.maxDeviationDistanceMeters}m)`,
     };
+  }
+
+  // ===========================================================================
+  // Phase 28.3 — Notification Methods
+  // ===========================================================================
+
+  /** Cooldown window: 5 minutes between repeated deviation alerts for same event */
+  private static readonly NOTIFICATION_COOLDOWN_MS = 5 * 60 * 1000;
+
+  /**
+   * Notify all school admin / transport coordinator users about a route deviation.
+   * Respects a 5-minute per-deviation cooldown tracked in `school_notified_at`.
+   */
+  static async notifySchoolRouteDeviation(params: {
+    deviationId: string;
+    schoolId: string;
+    tripId: string;
+    busId: string;
+    severity: RouteDeviationSeverity;
+    distanceMeters: number;
+    durationSeconds: number;
+    deviationLat: number;
+    deviationLng: number;
+    forceNotify?: boolean;
+  }): Promise<{ sent: boolean; cooldownSkipped: boolean; recipientsCount: number }> {
+    const {
+      deviationId, schoolId, tripId, busId,
+      severity, distanceMeters, durationSeconds,
+      deviationLat, deviationLng, forceNotify,
+    } = params;
+
+    // Check cooldown (unless forced by manual re-notify endpoint)
+    if (!forceNotify) {
+      const rows = await query<{ school_notified_at: string | null }>(
+        `SELECT school_notified_at FROM route_deviations WHERE id = $1 AND school_id = $2`,
+        [deviationId, schoolId]
+      );
+      const notifiedAt = rows[0]?.school_notified_at ?? null;
+      if (notifiedAt) {
+        const elapsed = Date.now() - new Date(notifiedAt).getTime();
+        if (elapsed < RouteDeviationService.NOTIFICATION_COOLDOWN_MS) {
+          logger.info('[RouteDeviation] School notification skipped — within cooldown', {
+            deviationId, elapsed, cooldownMs: RouteDeviationService.NOTIFICATION_COOLDOWN_MS,
+          });
+          return { sent: false, cooldownSkipped: true, recipientsCount: 0 };
+        }
+      }
+    }
+
+    // Fetch school name and bus number for message context
+    const contextRows = await query<{ bus_number: string; route_name: string; school_name: string }>(
+      `SELECT b.bus_number, COALESCE(r.route_name, 'Unknown Route') AS route_name,
+              COALESCE(s.school_name, 'School') AS school_name
+       FROM trips t
+       JOIN buses b ON b.id = t.bus_id
+       JOIN schools s ON s.id = t.school_id
+       LEFT JOIN routes r ON r.id = t.route_id
+       WHERE t.id = $1 AND t.school_id = $2`,
+      [tripId, schoolId]
+    );
+    const ctx: { bus_number: string; route_name: string; school_name: string } = (contextRows[0] as { bus_number: string; route_name: string; school_name: string } | undefined) ?? { bus_number: busId, route_name: 'Unknown Route', school_name: 'School' };
+
+    // Fetch coordinator/admin phone numbers
+    const recipients = await query<{ phone: string; name: string }>(
+      `SELECT phone_number AS phone, COALESCE(full_name, 'Coordinator') AS name
+       FROM users
+       WHERE school_id = $1 AND role IN ('SCHOOL_ADMIN', 'TRANSPORT_COORDINATOR')
+         AND phone_number IS NOT NULL AND phone_number != ''`,
+      [schoolId]
+    );
+
+    if (recipients.length === 0) {
+      logger.warn('[RouteDeviation] No school admin/coordinator phones found', { schoolId, deviationId });
+      return { sent: false, cooldownSkipped: false, recipientsCount: 0 };
+    }
+
+    const severityEmoji: Record<RouteDeviationSeverity, string> = {
+      LOW: '🟡', MEDIUM: '🟠', HIGH: '🔴', CRITICAL: '🚨',
+    };
+    const emoji = severityEmoji[severity] ?? '⚠️';
+    const distKm = (distanceMeters / 1000).toFixed(2);
+    const durationMin = Math.ceil(durationSeconds / 60);
+
+    const messageText =
+      `${emoji} *Bus Off Route Alert*\n` +
+      `Bus *${ctx.bus_number}* (${ctx.route_name}) has deviated *${distanceMeters}m (${distKm} km)* from planned route.\n` +
+      `Severity: *${severity}* | Duration: ~${durationMin} min\n` +
+      `Location: ${deviationLat.toFixed(5)}, ${deviationLng.toFixed(5)}\n` +
+      `Trip ID: \`${tripId}\``;
+
+    let sentCount = 0;
+    for (const recipient of recipients) {
+      try {
+        await MessagingService.sendMessage({
+          recipientPhone: recipient.phone,
+          recipientRole: 'SCHOOL_ADMIN',
+          schoolId,
+          directText: messageText,
+          eventType: 'ROUTE_DEVIATION',
+          priority: severity === 'CRITICAL' || severity === 'HIGH' ? 'CRITICAL' : 'HIGH',
+        });
+        sentCount++;
+      } catch (err) {
+        logger.warn('[RouteDeviation] Failed to send school notification', {
+          recipientPhone: recipient.phone, err: String(err),
+        });
+      }
+    }
+
+    // Update school_notified_at
+    await query(
+      `UPDATE route_deviations SET school_notified_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND school_id = $2`,
+      [deviationId, schoolId]
+    );
+
+    logger.info('[RouteDeviation] School notification dispatched', {
+      deviationId, schoolId, sentCount, severity,
+    });
+
+    return { sent: sentCount > 0, cooldownSkipped: false, recipientsCount: sentCount };
+  }
+
+  /**
+   * Notify the trip driver about a route deviation via WhatsApp.
+   * Respects a 5-minute per-deviation cooldown tracked in `driver_notified_at`.
+   */
+  static async notifyDriverRouteDeviation(params: {
+    deviationId: string;
+    schoolId: string;
+    tripId: string;
+    driverId: string;
+    severity: RouteDeviationSeverity;
+    distanceMeters: number;
+    forceNotify?: boolean;
+  }): Promise<{ sent: boolean; cooldownSkipped: boolean }> {
+    const { deviationId, schoolId, tripId, driverId, severity, distanceMeters, forceNotify } = params;
+
+    // Check cooldown
+    if (!forceNotify) {
+      const rows = await query<{ driver_notified_at: string | null }>(
+        `SELECT driver_notified_at FROM route_deviations WHERE id = $1 AND school_id = $2`,
+        [deviationId, schoolId]
+      );
+      const driverNotifiedAt = rows[0]?.driver_notified_at ?? null;
+      if (driverNotifiedAt) {
+        const elapsed = Date.now() - new Date(driverNotifiedAt).getTime();
+        if (elapsed < RouteDeviationService.NOTIFICATION_COOLDOWN_MS) {
+          logger.info('[RouteDeviation] Driver notification skipped — within cooldown', {
+            deviationId, elapsed,
+          });
+          return { sent: false, cooldownSkipped: true };
+        }
+      }
+    }
+
+    // Fetch driver phone
+    const driverRows = await query<{ phone: string }>(
+      `SELECT phone_number AS phone FROM drivers WHERE id = $1 AND school_id = $2
+         AND phone_number IS NOT NULL AND phone_number != ''`,
+      [driverId, schoolId]
+    );
+
+    if (driverRows.length === 0) {
+      logger.warn('[RouteDeviation] Driver phone not found', { driverId, schoolId, deviationId });
+      return { sent: false, cooldownSkipped: false };
+    }
+
+    const messageText =
+      `⚠️ *Route Alert*\n` +
+      `Your bus appears to be *${distanceMeters}m off* the planned route.\n` +
+      `Severity: *${severity}*\n` +
+      `Please check your GPS and return to the assigned route immediately.`;
+
+    try {
+      await MessagingService.sendMessage({
+        recipientPhone: driverRows[0]!.phone,
+        recipientRole: 'DRIVER',
+        schoolId,
+        directText: messageText,
+        eventType: 'ROUTE_DEVIATION',
+        priority: 'HIGH',
+      });
+    } catch (err) {
+      logger.warn('[RouteDeviation] Failed to send driver notification', {
+        driverId, err: String(err),
+      });
+      return { sent: false, cooldownSkipped: false };
+    }
+
+    // Update driver_notified_at
+    await query(
+      `UPDATE route_deviations SET driver_notified_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND school_id = $2`,
+      [deviationId, schoolId]
+    );
+
+    logger.info('[RouteDeviation] Driver notification dispatched', {
+      deviationId, driverId, severity, distanceMeters,
+    });
+
+    return { sent: true, cooldownSkipped: false };
+  }
+
+  /**
+   * Orchestrate both school and driver notifications for a deviation event.
+   * Fetches all required context from DB; never throws — errors are logged.
+   */
+  static async dispatchDeviationNotifications(
+    deviationId: string,
+    forceNotify = false
+  ): Promise<RouteDeviationNotificationResult> {
+    try {
+      // Load deviation context
+      const rows = await query<{
+        school_id: string;
+        trip_id: string;
+        bus_id: string;
+        driver_id: string | null;
+        severity: RouteDeviationSeverity;
+        current_deviation_distance_meters: number;
+        duration_seconds: number;
+        deviation_latitude: number;
+        deviation_longitude: number;
+      }>(
+        `SELECT rd.school_id, rd.trip_id, rd.bus_id, ta.driver_id,
+                rd.severity, rd.current_deviation_distance_meters,
+                COALESCE(rd.duration_seconds, 0) AS duration_seconds,
+                rd.deviation_latitude, rd.deviation_longitude
+         FROM route_deviations rd
+         LEFT JOIN trip_assignments ta ON ta.trip_id = rd.trip_id
+           AND ta.is_active = TRUE
+         WHERE rd.id = $1`,
+        [deviationId]
+      );
+
+      if (rows.length === 0) {
+        logger.warn('[RouteDeviation] dispatchDeviationNotifications: deviation not found', { deviationId });
+        return {
+          deviationId,
+          schoolNotified: false,
+          driverNotified: false,
+          schoolCooldownSkipped: false,
+          driverCooldownSkipped: false,
+          schoolRecipientsCount: 0,
+          message: 'Deviation record not found',
+        };
+      }
+
+      const dev = rows[0]!;
+
+      // Dispatch school notification
+      const schoolResult = await RouteDeviationService.notifySchoolRouteDeviation({
+        deviationId,
+        schoolId: dev.school_id,
+        tripId: dev.trip_id,
+        busId: dev.bus_id,
+        severity: dev.severity,
+        distanceMeters: dev.current_deviation_distance_meters,
+        durationSeconds: dev.duration_seconds,
+        deviationLat: dev.deviation_latitude,
+        deviationLng: dev.deviation_longitude,
+        forceNotify,
+      });
+
+      // Dispatch driver notification (only if driver is known)
+      let driverResult: { sent: boolean; cooldownSkipped: boolean } = { sent: false, cooldownSkipped: false };
+      if (dev.driver_id) {
+        driverResult = await RouteDeviationService.notifyDriverRouteDeviation({
+          deviationId,
+          schoolId: dev.school_id,
+          tripId: dev.trip_id,
+          driverId: dev.driver_id,
+          severity: dev.severity,
+          distanceMeters: dev.current_deviation_distance_meters,
+          forceNotify,
+        });
+      } else {
+        logger.info('[RouteDeviation] No active driver assignment — skipping driver notification', {
+          deviationId, tripId: dev.trip_id,
+        });
+      }
+
+      return {
+        deviationId,
+        schoolNotified: schoolResult.sent,
+        driverNotified: driverResult.sent,
+        schoolCooldownSkipped: schoolResult.cooldownSkipped,
+        driverCooldownSkipped: driverResult.cooldownSkipped,
+        schoolRecipientsCount: schoolResult.recipientsCount,
+        message: `Notifications dispatched — school: ${schoolResult.sent}, driver: ${driverResult.sent}`,
+      };
+    } catch (err) {
+      logger.warn('[RouteDeviation] dispatchDeviationNotifications error', {
+        deviationId, err: String(err),
+      });
+      return {
+        deviationId,
+        schoolNotified: false,
+        driverNotified: false,
+        schoolCooldownSkipped: false,
+        driverCooldownSkipped: false,
+        schoolRecipientsCount: 0,
+        message: `Notification dispatch failed: ${String(err)}`,
+      };
+    }
   }
 }

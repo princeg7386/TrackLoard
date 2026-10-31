@@ -603,4 +603,24 @@ export class TelemetryController {
       next(error);
     }
   }
+
+  /**
+   * POST /api/v1/telemetry/schools/:schoolId/deviations/:deviationId/notify
+   * Phase 28.3 — Manually re-trigger school + driver notifications for a deviation
+   */
+  static async manualNotifyDeviation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { deviationId } = req.params;
+      // Force bypass cooldown for manual coordinator action
+      const result = await RouteDeviationService.dispatchDeviationNotifications(deviationId!, true);
+
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
