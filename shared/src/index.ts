@@ -5344,6 +5344,7 @@ export const ActiveRouteDeviationRecordSchema = z.object({
   nearestStopId: z.string().uuid().nullable().optional(),
   schoolNotifiedAt: z.string().datetime().nullable().optional(),
   driverNotifiedAt: z.string().datetime().nullable().optional(),
+  incidentRecordId: z.string().uuid().nullable().optional(),
   notes: z.string().nullable().optional(),
 });
 export type ActiveRouteDeviationRecord = z.infer<typeof ActiveRouteDeviationRecordSchema>;

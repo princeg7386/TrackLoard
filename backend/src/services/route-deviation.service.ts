@@ -531,6 +531,7 @@ export class RouteDeviationService {
       nearest_stop_id: string | null;
       school_notified_at: string | Date | null;
       driver_notified_at: string | Date | null;
+      incident_record_id: string | null;
       notes: string | null;
     }>(
       `SELECT id, school_id, trip_id, bus_id, driver_id, route_id, status, severity,
@@ -538,7 +539,7 @@ export class RouteDeviationService {
               current_deviation_distance_meters, threshold_distance_meters, debounce_count,
               deviation_latitude, deviation_longitude, nearest_route_latitude,
               nearest_route_longitude, nearest_stop_id, school_notified_at,
-              driver_notified_at, notes
+              driver_notified_at, incident_record_id, notes
        FROM route_deviations
        WHERE trip_id = $1 AND status = 'ACTIVE'
        ORDER BY started_at DESC
@@ -572,6 +573,7 @@ export class RouteDeviationService {
       nearestStopId: row.nearest_stop_id ?? null,
       schoolNotifiedAt: row.school_notified_at ? new Date(row.school_notified_at).toISOString() : null,
       driverNotifiedAt: row.driver_notified_at ? new Date(row.driver_notified_at).toISOString() : null,
+      incidentRecordId: row.incident_record_id ?? null,
       notes: row.notes ?? null,
     };
   }
@@ -603,6 +605,7 @@ export class RouteDeviationService {
       nearest_stop_id: string | null;
       school_notified_at: string | Date | null;
       driver_notified_at: string | Date | null;
+      incident_record_id: string | null;
       notes: string | null;
     }>(
       `SELECT id, school_id, trip_id, bus_id, driver_id, route_id, status, severity,
@@ -610,7 +613,7 @@ export class RouteDeviationService {
               current_deviation_distance_meters, threshold_distance_meters, debounce_count,
               deviation_latitude, deviation_longitude, nearest_route_latitude,
               nearest_route_longitude, nearest_stop_id, school_notified_at,
-              driver_notified_at, notes
+              driver_notified_at, incident_record_id, notes
        FROM route_deviations
        WHERE school_id = $1 AND status = 'ACTIVE'
        ORDER BY started_at DESC`,
@@ -640,6 +643,7 @@ export class RouteDeviationService {
       nearestStopId: row.nearest_stop_id ?? null,
       schoolNotifiedAt: row.school_notified_at ? new Date(row.school_notified_at).toISOString() : null,
       driverNotifiedAt: row.driver_notified_at ? new Date(row.driver_notified_at).toISOString() : null,
+      incidentRecordId: row.incident_record_id ?? null,
       notes: row.notes ?? null,
     }));
   }
@@ -775,6 +779,24 @@ export class RouteDeviationService {
         logger.warn('[RouteDeviation] New deviation event opened', {
           tripId, eventId: newId, severity, distanceToRouteMeters,
           lat: busCoords.latitude, lng: busCoords.longitude,
+        });
+
+        // Fire-and-forget: create incident record (Response — 28.3)
+        RouteDeviationService.createDeviationIncidentRecord({
+          deviationId: newId,
+          schoolId,
+          tripId,
+          busId,
+          driverId: driverId ?? null,
+          severity: severity!,
+          distanceMeters: distanceToRouteMeters,
+          deviationLat: busCoords.latitude,
+          deviationLng: busCoords.longitude,
+          startedAt: timestamp,
+        }).catch((err) => {
+          logger.warn('[RouteDeviation] Incident record creation failed on OPENED', {
+            eventId: newId, err: String(err),
+          });
         });
 
         // Fire-and-forget notifications (OPENED)
@@ -933,6 +955,90 @@ export class RouteDeviationService {
       activeDeviationId: activeEvent.id,
       message: `Deviation auto-resolved after ${finalDuration}s (max distance: ${activeEvent.maxDeviationDistanceMeters}m)`,
     };
+  }
+
+  // ===========================================================================
+  // Phase 28.3 — Response: Incident Record
+  // ===========================================================================
+
+  /**
+   * Auto-create an `incidents` row when a route deviation opens.
+   * Links back the incident ID to `route_deviations.incident_record_id`.
+   * Returns the new incident UUID, or null on error.
+   *
+   * Severity mapping: LOW→LOW, MEDIUM→MEDIUM, HIGH→HIGH, CRITICAL→HIGH
+   * (incidents table uses LOW/MEDIUM/HIGH; CRITICAL maps to HIGH)
+   */
+  static async createDeviationIncidentRecord(params: {
+    deviationId: string;
+    schoolId: string;
+    tripId: string;
+    busId: string;
+    driverId: string | null;
+    severity: RouteDeviationSeverity;
+    distanceMeters: number;
+    deviationLat: number;
+    deviationLng: number;
+    startedAt: string;
+  }): Promise<string | null> {
+    const {
+      deviationId, schoolId, tripId, busId, driverId,
+      severity, distanceMeters, deviationLat, deviationLng, startedAt,
+    } = params;
+
+    // Map CRITICAL → HIGH for the incidents table severity enum
+    const incidentSeverity = severity === 'CRITICAL' ? 'HIGH' : severity;
+
+    const description =
+      `Bus deviated ${distanceMeters}m from planned route (severity: ${severity}). ` +
+      `Auto-generated from route deviation event ${deviationId}.`;
+
+    try {
+      // 1. Insert incident record
+      const incidentRows = await query<{ id: string }>(
+        `INSERT INTO incidents (
+           school_id, trip_id, bus_id, driver_id, incident_type,
+           severity, status, description,
+           latitude, longitude, location,
+           reported_by, created_at, updated_at
+         ) VALUES (
+           $1, $2, $3, $4, 'ROUTE_DEVIATION',
+           $5, 'OPEN', $6,
+           $7, $8, ST_SetSRID(ST_MakePoint($8, $7), 4326),
+           'ADMIN', $9, $9
+         ) RETURNING id`,
+        [
+          schoolId, tripId, busId, driverId ?? null,
+          incidentSeverity, description,
+          deviationLat, deviationLng,
+          startedAt,
+        ]
+      );
+
+      const incidentId = incidentRows[0]?.id;
+      if (!incidentId) {
+        logger.warn('[RouteDeviation] Incident insert returned no id', { deviationId });
+        return null;
+      }
+
+      // 2. Write incident_record_id back to route_deviations
+      await query(
+        `UPDATE route_deviations SET incident_record_id = $1, updated_at = NOW()
+         WHERE id = $2 AND school_id = $3`,
+        [incidentId, deviationId, schoolId]
+      );
+
+      logger.info('[RouteDeviation] Incident record created for deviation', {
+        deviationId, incidentId, severity: incidentSeverity, distanceMeters,
+      });
+
+      return incidentId;
+    } catch (err) {
+      logger.warn('[RouteDeviation] Failed to create incident record', {
+        deviationId, err: String(err),
+      });
+      return null;
+    }
   }
 
   // ===========================================================================
