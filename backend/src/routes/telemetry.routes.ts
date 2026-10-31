@@ -236,4 +236,22 @@ telemetryRouter.get(
   TelemetryController.getTripRoutePosition
 );
 
+// 24. Phase 28.2 — Get active deviation event for a trip
+telemetryRouter.get(
+  '/schools/:schoolId/trips/:tripId/deviation',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getTripActiveDeviation
+);
+
+// 25. Phase 28.2 — List all active deviation events for a school
+telemetryRouter.get(
+  '/schools/:schoolId/deviations',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getSchoolActiveDeviations
+);
+
 export default telemetryRouter;

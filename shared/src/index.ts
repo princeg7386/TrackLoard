@@ -5317,3 +5317,51 @@ export const TripRoutePositionResponseSchema = z.object({
 });
 export type TripRoutePositionResponse = z.infer<typeof TripRoutePositionResponseSchema>;
 
+// ============================================================================
+// Phase 28.2: Route Deviation — Detection Evaluation Contracts
+// ============================================================================
+
+export const ActiveRouteDeviationRecordSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  routeId: z.string().uuid(),
+  status: RouteDeviationStatusSchema,
+  severity: RouteDeviationSeveritySchema,
+  startedAt: z.string().datetime(),
+  resolvedAt: z.string().datetime().nullable().optional(),
+  durationSeconds: z.number(),
+  maxDeviationDistanceMeters: z.number(),
+  currentDeviationDistanceMeters: z.number(),
+  thresholdDistanceMeters: z.number(),
+  debounceCount: z.number(),
+  deviationLatitude: z.number(),
+  deviationLongitude: z.number(),
+  nearestRouteLatitude: z.number().nullable().optional(),
+  nearestRouteLongitude: z.number().nullable().optional(),
+  nearestStopId: z.string().uuid().nullable().optional(),
+  schoolNotifiedAt: z.string().datetime().nullable().optional(),
+  driverNotifiedAt: z.string().datetime().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+export type ActiveRouteDeviationRecord = z.infer<typeof ActiveRouteDeviationRecordSchema>;
+
+export const RouteDeviationEvaluationResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  busId: z.string().uuid(),
+  routeId: z.string().uuid(),
+  evaluated: z.boolean(),
+  isDeviated: z.boolean(),
+  distanceToRouteMeters: z.number(),
+  deviationThresholdMeters: z.number(),
+  severity: RouteDeviationSeveritySchema.nullable(),
+  debounceCount: z.number(),
+  action: z.enum(['NONE', 'DEBOUNCING', 'OPENED', 'UPDATED', 'RESOLVED']),
+  activeDeviationId: z.string().uuid().nullable().optional(),
+  message: z.string(),
+});
+export type RouteDeviationEvaluationResult = z.infer<typeof RouteDeviationEvaluationResultSchema>;
+

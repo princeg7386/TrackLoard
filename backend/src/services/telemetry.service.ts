@@ -17,6 +17,7 @@ import { GeofenceNotificationService } from './geofence-notification.service.js'
 import { GeofenceService } from './geofence.service.js';
 import { OperationalNotificationService } from './operational-notification.service.js';
 import { LongStopDetectionService } from './long-stop-detection.service.js';
+import { RouteDeviationService } from './route-deviation.service.js';
 import { logger } from './logger.service.js';
 
 
@@ -100,10 +101,11 @@ export class TelemetryService {
       school_id: string;
       bus_id: string;
       driver_id: string;
+      route_id: string;
       status: string;
     }>(
-      `SELECT id, school_id, bus_id, driver_id, status 
-       FROM trips 
+      `SELECT id, school_id, bus_id, driver_id, route_id, status
+       FROM trips
        WHERE id = $1 LIMIT 1;`,
       [payload.tripId]
     );
@@ -342,6 +344,22 @@ export class TelemetryService {
       autoPersist: true,
     }).catch((err: unknown) => {
       logger.warn('LongStopDetectionService.detectStationaryBus error (suppressed)', {
+        tripId: payload.tripId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    // 8. Phase 28.2 — Route Deviation Detection (fire-and-forget, non-blocking)
+    RouteDeviationService.evaluateTripDeviationOnPing({
+      tripId: payload.tripId,
+      schoolId: trip.school_id,
+      busId: payload.busId,
+      driverId: payload.driverId,
+      routeId: trip.route_id,
+      busCoords: { latitude: payload.latitude, longitude: payload.longitude },
+      timestamp: payload.recordedAt,
+    }).catch((err: unknown) => {
+      logger.warn('RouteDeviationService.evaluateTripDeviationOnPing error (suppressed)', {
         tripId: payload.tripId,
         error: err instanceof Error ? err.message : String(err),
       });

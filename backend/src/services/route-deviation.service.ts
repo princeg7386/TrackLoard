@@ -10,6 +10,8 @@ import {
   BusRoutePositionResult,
   TripRoutePositionResponse,
   RouteDeviationSeverity,
+  ActiveRouteDeviationRecord,
+  RouteDeviationEvaluationResult,
 } from '@school-bus/shared';
 import { NotFoundError, BadRequestError } from '../middlewares/error.middleware.js';
 import { logger } from './logger.service.js';
@@ -475,6 +477,443 @@ export class RouteDeviationService {
       },
       position,
       activeDeviation,
+    };
+  }
+
+  // ===========================================================================
+  // Phase 28.2 — Deviation Detection Engine
+  // ===========================================================================
+
+  /**
+   * Per-process debounce counters: tripId → consecutive out-of-corridor pings.
+   * Resets cleanly on server restart (3 pings ≈ 15–30 sec, safe to lose on restart).
+   */
+  private static readonly _deviationDebounce = new Map<string, number>();
+
+  /**
+   * Per-process return-to-corridor counters: tripId → consecutive in-corridor pings
+   * required before auto-resolving an active deviation event.
+   */
+  private static readonly _resolveDebounce = new Map<string, number>();
+
+  /** Required consecutive pings outside threshold before opening an event. */
+  private static readonly OPEN_DEBOUNCE_POINTS = ROUTE_DEVIATION_CONFIG.DEFAULT_DEBOUNCE_POINTS;
+
+  /** Required consecutive pings inside threshold before auto-resolving. */
+  private static readonly RESOLVE_DEBOUNCE_POINTS = 2;
+
+  /**
+   * Query the active deviation record for a trip, if one exists.
+   */
+  static async getActiveDeviationForTrip(tripId: string): Promise<ActiveRouteDeviationRecord | null> {
+    const rows = await query<{
+      id: string;
+      school_id: string;
+      trip_id: string;
+      bus_id: string;
+      driver_id: string | null;
+      route_id: string;
+      status: string;
+      severity: string;
+      started_at: string | Date;
+      resolved_at: string | Date | null;
+      duration_seconds: number;
+      max_deviation_distance_meters: number;
+      current_deviation_distance_meters: number;
+      threshold_distance_meters: number;
+      debounce_count: number;
+      deviation_latitude: number;
+      deviation_longitude: number;
+      nearest_route_latitude: number | null;
+      nearest_route_longitude: number | null;
+      nearest_stop_id: string | null;
+      school_notified_at: string | Date | null;
+      driver_notified_at: string | Date | null;
+      notes: string | null;
+    }>(
+      `SELECT id, school_id, trip_id, bus_id, driver_id, route_id, status, severity,
+              started_at, resolved_at, duration_seconds, max_deviation_distance_meters,
+              current_deviation_distance_meters, threshold_distance_meters, debounce_count,
+              deviation_latitude, deviation_longitude, nearest_route_latitude,
+              nearest_route_longitude, nearest_stop_id, school_notified_at,
+              driver_notified_at, notes
+       FROM route_deviations
+       WHERE trip_id = $1 AND status = 'ACTIVE'
+       ORDER BY started_at DESC
+       LIMIT 1`,
+      [tripId]
+    );
+
+    const row = rows[0];
+    if (!row) return null;
+
+    return {
+      id: row.id,
+      schoolId: row.school_id,
+      tripId: row.trip_id,
+      busId: row.bus_id,
+      driverId: row.driver_id ?? null,
+      routeId: row.route_id,
+      status: row.status as any,
+      severity: row.severity as any,
+      startedAt: new Date(row.started_at).toISOString(),
+      resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+      durationSeconds: Number(row.duration_seconds),
+      maxDeviationDistanceMeters: Number(row.max_deviation_distance_meters),
+      currentDeviationDistanceMeters: Number(row.current_deviation_distance_meters),
+      thresholdDistanceMeters: Number(row.threshold_distance_meters),
+      debounceCount: Number(row.debounce_count),
+      deviationLatitude: Number(row.deviation_latitude),
+      deviationLongitude: Number(row.deviation_longitude),
+      nearestRouteLatitude: row.nearest_route_latitude != null ? Number(row.nearest_route_latitude) : null,
+      nearestRouteLongitude: row.nearest_route_longitude != null ? Number(row.nearest_route_longitude) : null,
+      nearestStopId: row.nearest_stop_id ?? null,
+      schoolNotifiedAt: row.school_notified_at ? new Date(row.school_notified_at).toISOString() : null,
+      driverNotifiedAt: row.driver_notified_at ? new Date(row.driver_notified_at).toISOString() : null,
+      notes: row.notes ?? null,
+    };
+  }
+
+  /**
+   * List all currently ACTIVE deviation events for a school.
+   */
+  static async getActiveDeviationsForSchool(schoolId: string): Promise<ActiveRouteDeviationRecord[]> {
+    const rows = await query<{
+      id: string;
+      school_id: string;
+      trip_id: string;
+      bus_id: string;
+      driver_id: string | null;
+      route_id: string;
+      status: string;
+      severity: string;
+      started_at: string | Date;
+      resolved_at: string | Date | null;
+      duration_seconds: number;
+      max_deviation_distance_meters: number;
+      current_deviation_distance_meters: number;
+      threshold_distance_meters: number;
+      debounce_count: number;
+      deviation_latitude: number;
+      deviation_longitude: number;
+      nearest_route_latitude: number | null;
+      nearest_route_longitude: number | null;
+      nearest_stop_id: string | null;
+      school_notified_at: string | Date | null;
+      driver_notified_at: string | Date | null;
+      notes: string | null;
+    }>(
+      `SELECT id, school_id, trip_id, bus_id, driver_id, route_id, status, severity,
+              started_at, resolved_at, duration_seconds, max_deviation_distance_meters,
+              current_deviation_distance_meters, threshold_distance_meters, debounce_count,
+              deviation_latitude, deviation_longitude, nearest_route_latitude,
+              nearest_route_longitude, nearest_stop_id, school_notified_at,
+              driver_notified_at, notes
+       FROM route_deviations
+       WHERE school_id = $1 AND status = 'ACTIVE'
+       ORDER BY started_at DESC`,
+      [schoolId]
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      schoolId: row.school_id,
+      tripId: row.trip_id,
+      busId: row.bus_id,
+      driverId: row.driver_id ?? null,
+      routeId: row.route_id,
+      status: row.status as any,
+      severity: row.severity as any,
+      startedAt: new Date(row.started_at).toISOString(),
+      resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+      durationSeconds: Number(row.duration_seconds),
+      maxDeviationDistanceMeters: Number(row.max_deviation_distance_meters),
+      currentDeviationDistanceMeters: Number(row.current_deviation_distance_meters),
+      thresholdDistanceMeters: Number(row.threshold_distance_meters),
+      debounceCount: Number(row.debounce_count),
+      deviationLatitude: Number(row.deviation_latitude),
+      deviationLongitude: Number(row.deviation_longitude),
+      nearestRouteLatitude: row.nearest_route_latitude != null ? Number(row.nearest_route_latitude) : null,
+      nearestRouteLongitude: row.nearest_route_longitude != null ? Number(row.nearest_route_longitude) : null,
+      nearestStopId: row.nearest_stop_id ?? null,
+      schoolNotifiedAt: row.school_notified_at ? new Date(row.school_notified_at).toISOString() : null,
+      driverNotifiedAt: row.driver_notified_at ? new Date(row.driver_notified_at).toISOString() : null,
+      notes: row.notes ?? null,
+    }));
+  }
+
+  /**
+   * Evaluate the current bus position relative to its expected route on every
+   * telemetry ping. Manages debounce counters, opens/updates/resolves
+   * route_deviations records, and returns an evaluation summary.
+   *
+   * Called fire-and-forget from TelemetryService.ingestLocation.
+   */
+  static async evaluateTripDeviationOnPing(params: {
+    tripId: string;
+    schoolId: string;
+    busId: string;
+    driverId: string | null;
+    routeId: string;
+    busCoords: GeoCoordinates;
+    timestamp: string;
+  }): Promise<RouteDeviationEvaluationResult> {
+    const { tripId, schoolId, busId, driverId, routeId, busCoords, timestamp } = params;
+
+    // 1. Load route geometry
+    let geometry: RouteGeometry;
+    try {
+      geometry = await this.loadRouteGeometry(routeId);
+    } catch (err) {
+      logger.warn('[RouteDeviation] Could not load route geometry for deviation evaluation', {
+        tripId,
+        routeId,
+        error: String(err),
+      });
+      return {
+        tripId, schoolId, busId, routeId,
+        evaluated: false,
+        isDeviated: false,
+        distanceToRouteMeters: 0,
+        deviationThresholdMeters: ROUTE_DEVIATION_CONFIG.DEFAULT_DEVIATION_THRESHOLD_METERS,
+        severity: null,
+        debounceCount: 0,
+        action: 'NONE',
+        activeDeviationId: null,
+        message: 'Route geometry unavailable; deviation evaluation skipped',
+      };
+    }
+
+    // 2. Skip if route has no usable coordinates (prevents false positives)
+    if (geometry.coordinates.length === 0) {
+      return {
+        tripId, schoolId, busId, routeId,
+        evaluated: false,
+        isDeviated: false,
+        distanceToRouteMeters: 0,
+        deviationThresholdMeters: geometry.deviationThresholdMeters,
+        severity: null,
+        debounceCount: 0,
+        action: 'NONE',
+        message: 'Route has no coordinates; deviation evaluation skipped',
+      };
+    }
+
+    // 3. Geometric position evaluation
+    const position = this.determineBusPositionRelativeToRoute(busCoords, geometry);
+    const { isDeviated, distanceToRouteMeters } = position;
+    const severity = isDeviated ? this.calculateDeviationSeverity(distanceToRouteMeters) : null;
+
+    // 4. Fetch active deviation record for this trip
+    const activeEvent = await this.getActiveDeviationForTrip(tripId);
+
+    // =========================================================================
+    // Case A: Bus is deviated
+    // =========================================================================
+    if (isDeviated) {
+      this._resolveDebounce.delete(tripId); // reset resolve counter
+
+      if (!activeEvent) {
+        // Accumulate debounce counter
+        const count = (this._deviationDebounce.get(tripId) ?? 0) + 1;
+        this._deviationDebounce.set(tripId, count);
+
+        if (count < this.OPEN_DEBOUNCE_POINTS) {
+          logger.info('[RouteDeviation] Deviation debouncing', {
+            tripId, count, distanceToRouteMeters, threshold: geometry.deviationThresholdMeters,
+          });
+          return {
+            tripId, schoolId, busId, routeId,
+            evaluated: true,
+            isDeviated: true,
+            distanceToRouteMeters,
+            deviationThresholdMeters: geometry.deviationThresholdMeters,
+            severity,
+            debounceCount: count,
+            action: 'DEBOUNCING',
+            activeDeviationId: null,
+            message: `Debouncing (${count}/${this.OPEN_DEBOUNCE_POINTS}) — waiting for consecutive confirmations`,
+          };
+        }
+
+        // Debounce threshold reached → open new deviation record
+        this._deviationDebounce.delete(tripId);
+
+        const insertRows = await query<{ id: string }>(
+          `INSERT INTO route_deviations (
+             school_id, trip_id, bus_id, driver_id, route_id,
+             status, severity, started_at,
+             duration_seconds, max_deviation_distance_meters, current_deviation_distance_meters,
+             threshold_distance_meters, debounce_count,
+             deviation_latitude, deviation_longitude,
+             deviation_location,
+             nearest_route_latitude, nearest_route_longitude, nearest_stop_id
+           ) VALUES (
+             $1, $2, $3, $4, $5,
+             'ACTIVE', $6, $7,
+             0, $8, $8,
+             $9, $10,
+             $11, $12,
+             ST_SetSRID(ST_MakePoint($12, $11), 4326),
+             $13, $14, $15
+           ) RETURNING id`,
+          [
+            schoolId, tripId, busId, driverId ?? null, routeId,
+            severity!, timestamp,
+            distanceToRouteMeters,
+            geometry.deviationThresholdMeters, this.OPEN_DEBOUNCE_POINTS,
+            busCoords.latitude, busCoords.longitude,
+            position.nearestPointOnRoute.latitude,
+            position.nearestPointOnRoute.longitude,
+            position.nearestStop?.id ?? null,
+          ]
+        );
+
+        const newId = insertRows[0]!.id;
+        logger.warn('[RouteDeviation] New deviation event opened', {
+          tripId, eventId: newId, severity, distanceToRouteMeters,
+          lat: busCoords.latitude, lng: busCoords.longitude,
+        });
+
+        return {
+          tripId, schoolId, busId, routeId,
+          evaluated: true,
+          isDeviated: true,
+          distanceToRouteMeters,
+          deviationThresholdMeters: geometry.deviationThresholdMeters,
+          severity,
+          debounceCount: this.OPEN_DEBOUNCE_POINTS,
+          action: 'OPENED',
+          activeDeviationId: newId,
+          message: `Route deviation event opened (severity: ${severity}, distance: ${distanceToRouteMeters}m)`,
+        };
+      }
+
+      // Active event already exists → update it
+      const nowSec = Math.floor((Date.now() - new Date(activeEvent.startedAt).getTime()) / 1000);
+      const newMax = Math.max(activeEvent.maxDeviationDistanceMeters, distanceToRouteMeters);
+      const upgradedSeverity = this.calculateDeviationSeverity(newMax);
+
+      await query(
+        `UPDATE route_deviations SET
+           current_deviation_distance_meters = $1,
+           max_deviation_distance_meters = $2,
+           duration_seconds = $3,
+           severity = $4,
+           deviation_latitude = $5,
+           deviation_longitude = $6,
+           deviation_location = ST_SetSRID(ST_MakePoint($6, $5), 4326),
+           nearest_route_latitude = $7,
+           nearest_route_longitude = $8,
+           nearest_stop_id = $9,
+           updated_at = NOW()
+         WHERE id = $10`,
+        [
+          distanceToRouteMeters,
+          newMax,
+          nowSec,
+          upgradedSeverity,
+          busCoords.latitude,
+          busCoords.longitude,
+          position.nearestPointOnRoute.latitude,
+          position.nearestPointOnRoute.longitude,
+          position.nearestStop?.id ?? null,
+          activeEvent.id,
+        ]
+      );
+
+      logger.info('[RouteDeviation] Active deviation event updated', {
+        tripId, eventId: activeEvent.id, severity: upgradedSeverity,
+        distanceToRouteMeters, durationSeconds: nowSec,
+      });
+
+      return {
+        tripId, schoolId, busId, routeId,
+        evaluated: true,
+        isDeviated: true,
+        distanceToRouteMeters,
+        deviationThresholdMeters: geometry.deviationThresholdMeters,
+        severity: upgradedSeverity,
+        debounceCount: 0,
+        action: 'UPDATED',
+        activeDeviationId: activeEvent.id,
+        message: `Active deviation updated (severity: ${upgradedSeverity}, max: ${newMax}m, duration: ${nowSec}s)`,
+      };
+    }
+
+    // =========================================================================
+    // Case B: Bus is back on route
+    // =========================================================================
+    this._deviationDebounce.delete(tripId);
+
+    if (!activeEvent) {
+      // Healthy — nothing to do
+      return {
+        tripId, schoolId, busId, routeId,
+        evaluated: true,
+        isDeviated: false,
+        distanceToRouteMeters,
+        deviationThresholdMeters: geometry.deviationThresholdMeters,
+        severity: null,
+        debounceCount: 0,
+        action: 'NONE',
+        message: 'Bus is on route; no active deviation event',
+      };
+    }
+
+    // Active event exists but bus is back in corridor — apply resolve debounce
+    const resolveCount = (this._resolveDebounce.get(tripId) ?? 0) + 1;
+    this._resolveDebounce.set(tripId, resolveCount);
+
+    if (resolveCount < this.RESOLVE_DEBOUNCE_POINTS) {
+      logger.info('[RouteDeviation] On-route return debouncing before resolve', {
+        tripId, resolveCount,
+      });
+      return {
+        tripId, schoolId, busId, routeId,
+        evaluated: true,
+        isDeviated: false,
+        distanceToRouteMeters,
+        deviationThresholdMeters: geometry.deviationThresholdMeters,
+        severity: null,
+        debounceCount: resolveCount,
+        action: 'DEBOUNCING',
+        activeDeviationId: activeEvent.id,
+        message: `Return debouncing (${resolveCount}/${this.RESOLVE_DEBOUNCE_POINTS}) before resolving deviation`,
+      };
+    }
+
+    // Resolve the deviation event
+    this._resolveDebounce.delete(tripId);
+    const finalDuration = Math.floor((Date.now() - new Date(activeEvent.startedAt).getTime()) / 1000);
+
+    await query(
+      `UPDATE route_deviations SET
+         status = 'RESOLVED',
+         resolved_at = NOW(),
+         duration_seconds = $1,
+         current_deviation_distance_meters = $2,
+         updated_at = NOW()
+       WHERE id = $3`,
+      [finalDuration, distanceToRouteMeters, activeEvent.id]
+    );
+
+    logger.info('[RouteDeviation] Deviation event auto-resolved', {
+      tripId, eventId: activeEvent.id, durationSeconds: finalDuration,
+      maxDeviationDistanceMeters: activeEvent.maxDeviationDistanceMeters,
+    });
+
+    return {
+      tripId, schoolId, busId, routeId,
+      evaluated: true,
+      isDeviated: false,
+      distanceToRouteMeters,
+      deviationThresholdMeters: geometry.deviationThresholdMeters,
+      severity: null,
+      debounceCount: 0,
+      action: 'RESOLVED',
+      activeDeviationId: activeEvent.id,
+      message: `Deviation auto-resolved after ${finalDuration}s (max distance: ${activeEvent.maxDeviationDistanceMeters}m)`,
     };
   }
 }

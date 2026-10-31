@@ -565,4 +565,42 @@ export class TelemetryController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/trips/:tripId/deviation
+   * Phase 28.2 — Get active deviation event for a trip
+   */
+  static async getTripActiveDeviation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tripId } = req.params;
+      const deviation = await RouteDeviationService.getActiveDeviationForTrip(tripId!);
+
+      res.status(200).json({
+        success: true,
+        message: deviation ? 'Active deviation event found' : 'No active deviation event',
+        data: deviation,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/deviations
+   * Phase 28.2 — List all active deviation events for a school
+   */
+  static async getSchoolActiveDeviations(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const deviations = await RouteDeviationService.getActiveDeviationsForSchool(schoolId!);
+
+      res.status(200).json({
+        success: true,
+        message: `${deviations.length} active deviation event(s) found`,
+        data: deviations,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
