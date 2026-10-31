@@ -5380,3 +5380,73 @@ export const RouteDeviationNotificationResultSchema = z.object({
 });
 export type RouteDeviationNotificationResult = z.infer<typeof RouteDeviationNotificationResultSchema>;
 
+
+// =============================================================================
+// Phase 29: Overspeed — Rule, Detection, and Event Contracts
+// =============================================================================
+
+// Default constants
+export const OVERSPEED_CONFIG = {
+  /** Default school-wide speed limit in km/h (urban India school zone) */
+  DEFAULT_SPEED_LIMIT_KMH: 40,
+  /** Default duration a bus must continuously exceed the limit before triggering (seconds) */
+  DEFAULT_DURATION_THRESHOLD_SECONDS: 10,
+  /** Ping interval assumed for duration accumulation when not known exactly (seconds) */
+  ASSUMED_PING_INTERVAL_SECONDS: 5,
+  /** Minimum speed considered for overspeed check — avoids GPS noise near stops */
+  MIN_EVALUATION_SPEED_KMH: 5,
+  /** Hard safety ceiling — rejects telemetry above this (already validated upstream) */
+  ABSOLUTE_MAX_SPEED_KMH: 160,
+} as const;
+
+// Overspeed event lifecycle status
+export const OverspeedStatusSchema = z.enum(['ACTIVE', 'RESOLVED']);
+export type OverspeedStatus = z.infer<typeof OverspeedStatusSchema>;
+
+// Resolved rule for a specific trip (route override → school default → config default)
+export const OverspeedRuleSchema = z.object({
+  schoolId: z.string().uuid(),
+  routeId: z.string().uuid().nullable().optional(),
+  speedLimitKmh: z.number().int().positive().max(160),
+  durationThresholdSeconds: z.number().int().nonnegative(),
+  source: z.enum(['ROUTE_OVERRIDE', 'SCHOOL_DEFAULT', 'CONFIG_DEFAULT']),
+});
+export type OverspeedRule = z.infer<typeof OverspeedRuleSchema>;
+
+// A persisted overspeed event record
+export const OverspeedEventRecordSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  tripId: z.string().uuid(),
+  busId: z.string().uuid(),
+  driverId: z.string().uuid().nullable().optional(),
+  routeId: z.string().uuid().nullable().optional(),
+  status: OverspeedStatusSchema,
+  startedAt: z.string().datetime(),
+  endedAt: z.string().datetime().nullable().optional(),
+  durationSeconds: z.number(),
+  speedLimitKmh: z.number(),
+  maxSpeedKmh: z.number(),
+  currentSpeedKmh: z.number(),
+  peakLatitude: z.number(),
+  peakLongitude: z.number(),
+  schoolNotifiedAt: z.string().datetime().nullable().optional(),
+  driverNotifiedAt: z.string().datetime().nullable().optional(),
+  createdAt: z.string().datetime().optional(),
+});
+export type OverspeedEventRecord = z.infer<typeof OverspeedEventRecordSchema>;
+
+// Result returned by OverspeedRuleService.evaluateSpeed()
+export const OverspeedEvaluationResultSchema = z.object({
+  tripId: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  speedKmh: z.number(),
+  speedLimitKmh: z.number(),
+  isOverspeed: z.boolean(),
+  accumulatedSeconds: z.number(),
+  durationThresholdSeconds: z.number(),
+  action: z.enum(['SAFE', 'DEBOUNCING', 'TRIGGERED', 'RESOLVED', 'SKIPPED']),
+  activeEventId: z.string().uuid().nullable().optional(),
+  message: z.string(),
+});
+export type OverspeedEvaluationResult = z.infer<typeof OverspeedEvaluationResultSchema>;
