@@ -272,6 +272,15 @@ telemetryRouter.get(
   TelemetryController.getSchoolActiveOverspeedEvents
 );
 
+// 30. Phase 29.4 — Paginated history of overspeed events (ACTIVE + RESOLVED) — MUST be before /:eventId routes
+telemetryRouter.get(
+  '/schools/:schoolId/overspeed-events/history',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  TelemetryController.getSchoolOverspeedHistory
+);
+
 // 28. Phase 29.2 — Get active overspeed event for a trip
 telemetryRouter.get(
   '/schools/:schoolId/trips/:tripId/overspeed',

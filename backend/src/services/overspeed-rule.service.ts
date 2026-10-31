@@ -448,6 +448,139 @@ export class OverspeedRuleService {
     }));
   }
 
+  /**
+   * Paginated history of overspeed events for a school.
+   * Supports filtering by status, tripId, and date range.
+   * Always tenant-scoped to schoolId.
+   *
+   * Phase 29.4 — Reporting: History
+   */
+  static async getOverspeedHistory(params: {
+    schoolId: string;
+    status?: 'ACTIVE' | 'RESOLVED';
+    tripId?: string;
+    dateFrom?: string;  // ISO date string (inclusive)
+    dateTo?: string;    // ISO date string (inclusive)
+    page?: number;
+    pageSize?: number;
+  }): Promise<{
+    data: OverspeedEventRecord[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const {
+      schoolId,
+      status,
+      tripId,
+      dateFrom,
+      dateTo,
+    } = params;
+
+    const page = Math.max(1, params.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, params.pageSize ?? 20));
+    const offset = (page - 1) * pageSize;
+
+    // Build dynamic WHERE clauses
+    const whereClauses: string[] = ['oe.school_id = $1'];
+    const queryParams: unknown[] = [schoolId];
+    let paramIdx = 2;
+
+    if (status) {
+      whereClauses.push(`oe.status = $${paramIdx}`);
+      queryParams.push(status);
+      paramIdx++;
+    }
+    if (tripId) {
+      whereClauses.push(`oe.trip_id = $${paramIdx}`);
+      queryParams.push(tripId);
+      paramIdx++;
+    }
+    if (dateFrom) {
+      whereClauses.push(`oe.started_at >= $${paramIdx}::date`);
+      queryParams.push(dateFrom);
+      paramIdx++;
+    }
+    if (dateTo) {
+      whereClauses.push(`oe.started_at < ($${paramIdx}::date + INTERVAL '1 day')`);
+      queryParams.push(dateTo);
+      paramIdx++;
+    }
+
+    const whereStr = whereClauses.join(' AND ');
+
+    // Count query
+    const countRows = await query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total FROM overspeed_events oe WHERE ${whereStr}`,
+      queryParams
+    );
+    const total = parseInt(countRows[0]?.total ?? '0', 10);
+
+    if (total === 0) {
+      return { data: [], total: 0, page, pageSize };
+    }
+
+    // Data query with pagination
+    const dataRows = await query<{
+      id: string;
+      school_id: string;
+      trip_id: string;
+      bus_id: string;
+      driver_id: string | null;
+      route_id: string | null;
+      status: string;
+      started_at: string;
+      ended_at: string | null;
+      duration_seconds: number;
+      speed_limit_kmh: number;
+      max_speed_kmh: string;
+      current_speed_kmh: string;
+      peak_latitude: number;
+      peak_longitude: number;
+      school_notified_at: string | null;
+      driver_notified_at: string | null;
+      created_at: string;
+    }>(
+      `SELECT oe.id, oe.school_id, oe.trip_id, oe.bus_id, oe.driver_id, oe.route_id, oe.status,
+              oe.started_at, oe.ended_at, oe.duration_seconds, oe.speed_limit_kmh,
+              oe.max_speed_kmh, oe.current_speed_kmh,
+              oe.peak_latitude, oe.peak_longitude,
+              oe.school_notified_at, oe.driver_notified_at, oe.created_at
+       FROM overspeed_events oe
+       WHERE ${whereStr}
+       ORDER BY oe.started_at DESC
+       LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+      [...queryParams, pageSize, offset]
+    );
+
+    const data: OverspeedEventRecord[] = dataRows.map((row) => ({
+      id: row.id,
+      schoolId: row.school_id,
+      tripId: row.trip_id,
+      busId: row.bus_id,
+      driverId: row.driver_id ?? null,
+      routeId: row.route_id ?? null,
+      status: row.status as 'ACTIVE' | 'RESOLVED',
+      startedAt: new Date(row.started_at).toISOString(),
+      endedAt: row.ended_at ? new Date(row.ended_at).toISOString() : null,
+      durationSeconds: Number(row.duration_seconds),
+      speedLimitKmh: Number(row.speed_limit_kmh),
+      maxSpeedKmh: Number(row.max_speed_kmh),
+      currentSpeedKmh: Number(row.current_speed_kmh),
+      peakLatitude: Number(row.peak_latitude),
+      peakLongitude: Number(row.peak_longitude),
+      schoolNotifiedAt: row.school_notified_at
+        ? new Date(row.school_notified_at).toISOString()
+        : null,
+      driverNotifiedAt: row.driver_notified_at
+        ? new Date(row.driver_notified_at).toISOString()
+        : null,
+      createdAt: new Date(row.created_at).toISOString(),
+    }));
+
+    return { data, total, page, pageSize };
+  }
+
   // ---------------------------------------------------------------------------
   // Internal helpers
   // ---------------------------------------------------------------------------

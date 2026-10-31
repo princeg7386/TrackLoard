@@ -35,6 +35,10 @@ export interface AlertSummary {
   activeSos: number;
   delaysToday: number;
   notificationsSentToday: number;
+  /** Phase 29.4 — Overspeed events that started today */
+  overspeedEventsToday: number;
+  /** Phase 29.4 — Currently ACTIVE (unresolved) overspeed events */
+  activeOverspeedCount: number;
   criticalAlertsList: AlertSummaryItem[];
 }
 
@@ -74,7 +78,9 @@ export class DashboardService {
           (SELECT COUNT(*)::int FROM incidents WHERE school_id = $1 AND status = 'OPEN' AND deleted_at IS NULL) AS "activeIncidentsCount",
           (SELECT COUNT(*)::int FROM delays WHERE school_id = $1 AND resolved_at IS NULL AND deleted_at IS NULL) AS "activeDelaysCount",
           (SELECT COUNT(*)::int FROM sos_events WHERE school_id = $1 AND status = 'TRIGGERED' AND deleted_at IS NULL) AS "activeSosCount",
-          (SELECT COUNT(*)::int FROM notifications WHERE school_id = $1 AND DATE(created_at) = CURRENT_DATE) AS "notificationsTodayCount"
+          (SELECT COUNT(*)::int FROM notifications WHERE school_id = $1 AND DATE(created_at) = CURRENT_DATE) AS "notificationsTodayCount",
+          (SELECT COUNT(*)::int FROM overspeed_events WHERE school_id = $1 AND DATE(started_at) = CURRENT_DATE) AS "overspeedEventsToday",
+          (SELECT COUNT(*)::int FROM overspeed_events WHERE school_id = $1 AND status = 'ACTIVE') AS "activeOverspeedCount"
       `;
 
       const countsRes = await query<{
@@ -87,6 +93,8 @@ export class DashboardService {
         activeDelaysCount: number;
         activeSosCount: number;
         notificationsTodayCount: number;
+        overspeedEventsToday: number;
+        activeOverspeedCount: number;
       }>(countsSql, [schoolId]);
 
       const counts = countsRes[0] || {
@@ -99,6 +107,8 @@ export class DashboardService {
         activeDelaysCount: 0,
         activeSosCount: 0,
         notificationsTodayCount: 0,
+        overspeedEventsToday: 0,
+        activeOverspeedCount: 0,
       };
 
       // 2. Transport Trips Breakdown for Today
@@ -228,6 +238,8 @@ export class DashboardService {
           activeSos: Number(counts.activeSosCount) || 0,
           delaysToday: Number(counts.activeDelaysCount) || 0,
           notificationsSentToday: Number(counts.notificationsTodayCount) || 0,
+          overspeedEventsToday: Number(counts.overspeedEventsToday) || 0,
+          activeOverspeedCount: Number(counts.activeOverspeedCount) || 0,
           criticalAlertsList: criticalAlerts,
         },
         recentActivity,

@@ -682,4 +682,47 @@ export class TelemetryController {
       next(error);
     }
   }
+
+  /**
+   * GET /api/v1/telemetry/schools/:schoolId/overspeed-events/history
+   * Phase 29.4 — Paginated history of overspeed events for a school (ACTIVE + RESOLVED)
+   * Query params: status, tripId, dateFrom, dateTo, page, pageSize
+   */
+  static async getSchoolOverspeedHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      const {
+        status,
+        tripId,
+        dateFrom,
+        dateTo,
+        page,
+        pageSize,
+      } = req.query as Record<string, string | undefined>;
+
+      const result = await OverspeedRuleService.getOverspeedHistory({
+        schoolId: schoolId!,
+        status: status as 'ACTIVE' | 'RESOLVED' | undefined,
+        tripId,
+        dateFrom,
+        dateTo,
+        page: page ? parseInt(page, 10) : undefined,
+        pageSize: pageSize ? parseInt(pageSize, 10) : undefined,
+      });
+
+      res.status(200).json({
+        success: true,
+        message: `${result.total} overspeed event(s) found`,
+        data: result.data,
+        pagination: {
+          total: result.total,
+          page: result.page,
+          pageSize: result.pageSize,
+          totalPages: Math.ceil(result.total / result.pageSize),
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
