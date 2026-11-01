@@ -8,6 +8,7 @@ import {
 import { ParentIdentityService } from '../services/parent-identity.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { EtaService } from '../services/eta.service.js';
+import { StudentJourneyService } from '../services/student-journey.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 
 
@@ -366,6 +367,34 @@ export class ParentIdentityController {
       });
 
       sendSuccess(res, parentEta, 'Parent ETA retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Phase 32.1 — GET /api/v1/parent/journey (or /journey/:token)
+   * Return 6-stage student journey timeline for the authenticated parent tracking session.
+   */
+  public static async getParentJourney(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession || (req as any).parentSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      const timeline = await StudentJourneyService.getStudentJourneyTimeline(
+        session.school.id,
+        session.student.id,
+        session.activeTrip?.id
+      );
+
+      sendSuccess(res, timeline, 'Student journey timeline retrieved successfully');
     } catch (error) {
       next(error);
     }

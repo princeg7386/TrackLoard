@@ -116,6 +116,19 @@ parentRouter.get(
   ParentIdentityController.getParentEta
 );
 
+// 5c. Phase 32.1 — Parent Student Journey Timeline Endpoint
+parentRouter.get(
+  '/journey/:token',
+  authenticateParentTrackingToken,
+  ParentIdentityController.getParentJourney
+);
+
+parentRouter.get(
+  '/journey',
+  authenticateParentTrackingToken,
+  ParentIdentityController.getParentJourney
+);
+
 // 6. Public Onboarding Verification & Activation (handles valid/expired/revoked/invalid tokens)
 parentRouter.get(
   '/onboard/verify',

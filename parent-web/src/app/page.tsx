@@ -37,11 +37,14 @@ import {
   TripStatus,
   RouteType,
   ParentPickupEta,
+  StudentJourneyStage,
+  JourneyStageKey,
 } from '@school-bus/shared';
 import {
   ParentLiveMapCanvas,
   FeedConnectionStatus,
 } from '../components/ParentLiveMapCanvas';
+import { StudentJourneyTimeline } from '../components/StudentJourneyTimeline';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -277,6 +280,9 @@ function ParentTrackContent() {
   const [liveParentEta, setLiveParentEta] = useState<ParentPickupEta | null>(null);
   const [lastEtaUpdate, setLastEtaUpdate] = useState<string | null>(null);
   const [isRefreshingEta, setIsRefreshingEta] = useState<boolean>(false);
+  const [journeyStages, setJourneyStages] = useState<StudentJourneyStage[]>([]);
+  const [journeyCurrentStage, setJourneyCurrentStage] = useState<JourneyStageKey | undefined>(undefined);
+  const [isLoadingJourney, setIsLoadingJourney] = useState<boolean>(false);
   const [feedStatus, setFeedStatus] = useState<FeedConnectionStatus>('CONNECTING');
   const [lastHeard, setLastHeard] = useState<string | null>(null);
   const [, setClockTick] = useState<number>(Date.now());
@@ -514,6 +520,34 @@ function ParentTrackContent() {
       setIsRefreshingEta(false);
     }
   };
+
+  // Student Journey Timeline pull (Phase 32.1)
+  const refreshJourney = useCallback(async () => {
+    if (!token) return;
+    setIsLoadingJourney(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/parent/journey/${encodeURIComponent(token)}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data?.stages) {
+          setJourneyStages(json.data.stages);
+          setJourneyCurrentStage(json.data.currentStage);
+        }
+      }
+    } catch {
+      // Ignore transient network errors
+    } finally {
+      setIsLoadingJourney(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (pageState.phase === 'ready') {
+      refreshJourney();
+    }
+  }, [pageState.phase, refreshJourney]);
 
   useEffect(() => {
     if (pageState.phase !== 'ready') return;
@@ -1201,6 +1235,68 @@ function ParentTrackContent() {
                 )}
               </div>
             )}
+
+            {/* Student Journey Timeline (Phase 32.1) */}
+            <StudentJourneyTimeline
+              stages={
+                journeyStages.length > 0
+                  ? journeyStages
+                  : [
+                      {
+                        stage: 'PICKUP',
+                        title: 'Pickup Assigned',
+                        description: pickupStop
+                          ? `Assigned stop: ${pickupStop.stopName}`
+                          : 'Pickup stop scheduled',
+                        status: isTripActive || isTripEnded ? 'COMPLETED' : 'PENDING',
+                        stopName: pickupStop?.stopName,
+                        stopSequence: pickupStop?.sequenceOrder,
+                      },
+                      {
+                        stage: 'BUS_ARRIVAL',
+                        title: 'Bus Arrival at Stop',
+                        description: effectiveEta?.isApproaching
+                          ? `Bus approaching ${pickupStop?.stopName || 'stop'}`
+                          : 'Bus reaching assigned pickup stop',
+                        status:
+                          effectiveEta?.status === 'PASSED' || isTripEnded
+                            ? 'COMPLETED'
+                            : effectiveEta?.isApproaching
+                            ? 'IN_PROGRESS'
+                            : 'PENDING',
+                        stopName: pickupStop?.stopName,
+                      },
+                      {
+                        stage: 'BOARDING',
+                        title: 'Boarding Attendance',
+                        description: 'Student boarding verification by conductor/driver',
+                        status: isTripEnded ? 'COMPLETED' : 'PENDING',
+                      },
+                      {
+                        stage: 'ON_ROUTE',
+                        title: 'On Route to School',
+                        description: 'Vehicle en route with telemetry tracking active',
+                        status: isTripActive ? 'IN_PROGRESS' : isTripEnded ? 'COMPLETED' : 'PENDING',
+                      },
+                      {
+                        stage: 'SCHOOL_ARRIVAL',
+                        title: 'School Campus Arrival',
+                        description: `Arrival at ${school.name} campus`,
+                        status: isTripEnded ? 'COMPLETED' : 'PENDING',
+                      },
+                      {
+                        stage: 'DROPPED',
+                        title: 'Safe Drop / Handover',
+                        description: 'Safe deboarding and verified school handover',
+                        status: isTripEnded ? 'COMPLETED' : 'PENDING',
+                      },
+                    ]
+              }
+              currentStage={journeyCurrentStage}
+              timezone={tz}
+              isLoading={isLoadingJourney}
+              onRefresh={refreshJourney}
+            />
 
             {/* Bus & Crew Card */}
             <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 space-y-3">

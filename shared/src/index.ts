@@ -1,4 +1,4 @@
-import { z } from 'zod';
+﻿import { z } from 'zod';
 
 /**
  * User Roles in School Transport
@@ -3587,10 +3587,51 @@ export const CorrectAttendanceResponseSchema = z.object({
 });
 export type CorrectAttendanceResponse = z.infer<typeof CorrectAttendanceResponseSchema>;
 
-// 3. Student Journey History Schemas
+// 3. Student Journey History Schemas (Phase 18.4 & 32.1)
+export const JourneyStageStatusSchema = z.enum([
+  'COMPLETED',
+  'IN_PROGRESS',
+  'PENDING',
+  'SKIPPED',
+]);
+export type JourneyStageStatus = z.infer<typeof JourneyStageStatusSchema>;
+
+export const JourneyStageKeySchema = z.enum([
+  'PICKUP',
+  'BUS_ARRIVAL',
+  'BOARDING',
+  'ON_ROUTE',
+  'SCHOOL_ARRIVAL',
+  'DROPPED',
+]);
+export type JourneyStageKey = z.infer<typeof JourneyStageKeySchema>;
+
+export const StudentJourneyStageSchema = z.object({
+  stage: JourneyStageKeySchema,
+  title: z.string(),
+  status: JourneyStageStatusSchema,
+  timestamp: z.string().optional().nullable(),
+  description: z.string(),
+  stopName: z.string().optional().nullable(),
+  stopSequence: z.number().optional().nullable(),
+  markedBy: z.string().optional().nullable(),
+  latitude: z.number().optional().nullable(),
+  longitude: z.number().optional().nullable(),
+});
+export type StudentJourneyStage = z.infer<typeof StudentJourneyStageSchema>;
+
 export const JourneyTimelineEventSchema = z.object({
   id: z.string(),
-  type: z.enum(['SCHEDULED', 'BOARDING', 'DROP', 'CORRECTION']),
+  type: z.enum([
+    'SCHEDULED',
+    'PICKUP',
+    'BUS_ARRIVAL',
+    'BOARDING',
+    'ON_ROUTE',
+    'SCHOOL_ARRIVAL',
+    'DROP',
+    'CORRECTION',
+  ]),
   status: z.string(),
   timestamp: z.string(),
   stopName: z.string().optional().nullable(),
@@ -3622,6 +3663,8 @@ export const StudentJourneyHistoryResponseSchema = z.object({
     driverName: z.string().optional().nullable(),
   }),
   currentStatus: z.string(),
+  currentStage: JourneyStageKeySchema.optional(),
+  stages: z.array(StudentJourneyStageSchema).optional(),
   timeline: z.array(JourneyTimelineEventSchema),
   corrections: z.array(AttendanceCorrectionRecordSchema),
 });

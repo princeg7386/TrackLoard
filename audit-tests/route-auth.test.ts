@@ -14,6 +14,7 @@ const mounts: Record<string, string> = {
 
   'sos.routes.ts': '/api/v1',
   'pickup-arrival.routes.ts': '/api/v1/schools',
+  'student-journey.routes.ts': '/api/v1/schools',
 };
 // Routes that are intentionally public (login / reset / tokenised parent links)
 const PUBLIC = new Set([
