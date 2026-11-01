@@ -3361,6 +3361,9 @@ export const DriverStudentAttendanceItemSchema = z.object({
   boardedAt: z.string().optional(),
   droppedAt: z.string().optional(),
   markedBy: z.string().optional(),
+  isAbsentToday: z.boolean().optional(),
+  absenceReason: z.string().optional(),
+  absenceScope: z.string().optional(),
 });
 export type DriverStudentAttendanceItem = z.infer<typeof DriverStudentAttendanceItemSchema>;
 

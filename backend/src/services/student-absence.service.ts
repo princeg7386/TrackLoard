@@ -104,18 +104,18 @@ export class StudentAbsenceService {
     }
 
     // 5. Outbound WhatsApp Confirmation Dispatch (safely caught so network issues don't fail the request)
+    const scopeLabel =
+      tripType === 'MORNING'
+        ? 'Morning Pickup Only'
+        : tripType === 'AFTERNOON'
+          ? 'Afternoon Drop Only'
+          : 'Full Day (Pickup & Drop)';
+
+    const classLabel = student.class_grade
+      ? `Class ${student.class_grade}${student.section ? `-${student.section}` : ''}`
+      : '';
+
     try {
-      const scopeLabel =
-        tripType === 'MORNING'
-          ? 'Morning Pickup Only'
-          : tripType === 'AFTERNOON'
-            ? 'Afternoon Drop Only'
-            : 'Full Day (Pickup & Drop)';
-
-      const classLabel = student.class_grade
-        ? `Class ${student.class_grade}${student.section ? `-${student.section}` : ''}`
-        : '';
-
       const confirmText =
         `*School Bus Transport Notice*\n\n` +
         `Absence confirmed for *${student.full_name}*${classLabel ? ` (${classLabel})` : ''}.\n` +
@@ -133,6 +133,132 @@ export class StudentAbsenceService {
       });
     } catch (err: any) {
       logger.warn(`Could not send WhatsApp absence confirmation to parent: ${err.message}`);
+    }
+
+    // 6. System Response: Synchronize with active trips, notify assigned driver, and log audit trail
+    try {
+      const assignmentRows = await query<{
+        stop_id: string;
+        stop_name: string;
+        route_id: string;
+      }>(
+        `SELECT pl.id AS stop_id, pl.stop_name, pl.route_id
+         FROM student_stop_assignments ssa
+         JOIN pickup_locations pl ON pl.id = ssa.pickup_stop_id
+         WHERE ssa.student_id = $1 AND ssa.school_id = $2 AND ssa.deleted_at IS NULL
+         LIMIT 1`,
+        [studentId, schoolId]
+      );
+
+      if (assignmentRows.length > 0 && assignmentRows[0]) {
+        const assignedStopName = assignmentRows[0].stop_name;
+        const assignedRouteId = assignmentRows[0].route_id;
+
+        // Find active or scheduled trip for today on this route
+        const tripRows = await query<{
+          trip_id: string;
+          driver_id: string | null;
+          driver_phone: string | null;
+          driver_name: string | null;
+        }>(
+          `SELECT t.id AS trip_id, t.driver_id, d.phone_number AS driver_phone, d.full_name AS driver_name
+           FROM trips t
+           LEFT JOIN drivers d ON d.id = t.driver_id
+           WHERE t.route_id = $1 AND t.school_id = $2
+             AND t.status IN ('IN_TRANSIT', 'DELAYED', 'SCHEDULED')
+             AND t.deleted_at IS NULL
+           ORDER BY CASE WHEN t.status = 'IN_TRANSIT' THEN 1 WHEN t.status = 'DELAYED' THEN 2 ELSE 3 END
+           LIMIT 1`,
+          [assignedRouteId, schoolId]
+        );
+
+        let driverPhone: string | null = null;
+        let driverTripId: string | null = null;
+
+        if (tripRows.length > 0 && tripRows[0]) {
+          driverTripId = tripRows[0].trip_id;
+          driverPhone = tripRows[0].driver_phone;
+
+          // 6a. Synchronize boarding_events with ABSENT state
+          await query(
+            `INSERT INTO boarding_events (
+               school_id, trip_id, student_id, stop_id, status, scan_method, marked_by
+             ) VALUES (
+               $1, $2, $3, $4, 'ABSENT', 'PARENT_ABSENCE', 'PARENT'
+             )
+             ON CONFLICT (trip_id, student_id)
+             DO UPDATE SET
+               status = 'ABSENT',
+               scan_method = 'PARENT_ABSENCE',
+               marked_by = 'PARENT'`,
+            [schoolId, driverTripId, studentId, assignmentRows[0].stop_id]
+          );
+        }
+
+        // If driver phone not found on active trip, resolve default driver for route
+        if (!driverPhone) {
+          const defaultDriverRows = await query<{
+            driver_phone: string | null;
+            driver_name: string | null;
+          }>(
+            `SELECT d.phone_number AS driver_phone, d.full_name AS driver_name
+             FROM routes r
+             JOIN drivers d ON d.id = r.default_driver_id
+             WHERE r.id = $1 AND r.school_id = $2 AND d.deleted_at IS NULL
+             LIMIT 1`,
+            [assignedRouteId, schoolId]
+          );
+          if (defaultDriverRows.length > 0 && defaultDriverRows[0]) {
+            driverPhone = defaultDriverRows[0].driver_phone;
+          }
+        }
+
+        // 6b. Notify assigned driver via WhatsApp
+        if (driverPhone) {
+          const driverText =
+            `🚏 *Bus Transport Alert — Student Absent*\n\n` +
+            `Student *${student.full_name}*${classLabel ? ` (${classLabel})` : ''} will *NOT* be taking the bus on *${absenceDate}*.\n` +
+            `• *Stop:* ${assignedStopName}\n` +
+            `• *Scope:* ${scopeLabel}\n` +
+            (reason ? `• *Reason:* ${reason}\n` : '') +
+            `\nPlease do not wait for this student at the pickup stop.`;
+
+          await MessagingService.sendMessage({
+            recipientPhone: driverPhone,
+            directText: driverText,
+            recipientRole: 'DRIVER',
+            schoolId,
+          });
+
+          await query(
+            `UPDATE absence_records SET driver_notified = true WHERE id = $1`,
+            [record.id]
+          );
+          record.driver_notified = true;
+        }
+      }
+
+      // 6c. Operational audit log for school desk
+      await query(
+        `INSERT INTO audit_logs (
+           school_id, user_role, action, entity_type, entity_id, diff_json
+         ) VALUES (
+           $1, 'PARENT', 'STUDENT_ABSENCE_RECORDED', 'STUDENT', $2, $3::jsonb
+         )`,
+        [
+          schoolId,
+          studentId,
+          JSON.stringify({
+            absenceDate,
+            tripType,
+            reason: reason || null,
+            reportedVia,
+            driverNotified: record.driver_notified,
+          }),
+        ]
+      );
+    } catch (err: any) {
+      logger.warn(`Could not complete driver/school absence synchronization: ${err.message}`);
     }
 
     return {
@@ -243,6 +369,34 @@ export class StudentAbsenceService {
 
     if (deleteRes.length === 0 || !deleteRes[0]) {
       throw new NotFoundError(`Absence record ${absenceId} not found or unauthorized`);
+    }
+
+    // Clean up synced boarding_events and record operational withdrawal audit log
+    try {
+      await query(
+        `DELETE FROM boarding_events
+         WHERE student_id = $1 AND school_id = $2 AND scan_method = 'PARENT_ABSENCE'`,
+        [studentId, schoolId]
+      );
+
+      await query(
+        `INSERT INTO audit_logs (
+           school_id, user_role, action, entity_type, entity_id, diff_json
+         ) VALUES (
+           $1, 'PARENT', 'STUDENT_ABSENCE_WITHDRAWN', 'STUDENT', $2, $3::jsonb
+         )`,
+        [
+          schoolId,
+          studentId,
+          JSON.stringify({
+            absenceId,
+            absenceDate: deleteRes[0].absence_date,
+            tripType: deleteRes[0].trip_type,
+          }),
+        ]
+      );
+    } catch (err: any) {
+      logger.warn(`Could not complete absence withdrawal cleanup: ${err.message}`);
     }
 
     return {

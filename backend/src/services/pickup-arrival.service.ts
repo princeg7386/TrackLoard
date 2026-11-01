@@ -31,6 +31,9 @@ export interface UpcomingStudentItem {
   attendanceStatus: UpcomingStudentAttendanceStatus;
   /** ISO timestamp of boarding, null if not yet boarded */
   boardedAt: string | null;
+  /** Phase 33.2: True when student has an active absence recorded for today */
+  isAbsentToday?: boolean;
+  absenceReason?: string | null;
 }
 
 export interface UpcomingPickupStop {
@@ -115,6 +118,8 @@ interface StudentAtStopRow {
   parent_phone: string | null;
   boarding_status: string | null;
   boarded_at: string | null;
+  absence_id?: string | null;
+  absence_reason?: string | null;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -191,7 +196,9 @@ export class PickupArrivalService {
             s.section,
             p.phone_number    AS parent_phone,
             be.status         AS boarding_status,
-            be.recorded_at    AS boarded_at
+            be.recorded_at    AS boarded_at,
+            ar.id             AS absence_id,
+            ar.reason         AS absence_reason
            FROM student_stop_assignments ssa
            JOIN students s
              ON ssa.student_id = s.id
@@ -202,6 +209,10 @@ export class PickupArrivalService {
            LEFT JOIN boarding_events be
              ON be.student_id = s.id
             AND be.trip_id    = $3
+           LEFT JOIN absence_records ar
+             ON ar.student_id = s.id
+            AND ar.school_id  = $2
+            AND ar.absence_date = CURRENT_DATE
            WHERE ssa.pickup_stop_id = $1
              AND ssa.school_id      = $2
            ORDER BY s.full_name ASC`,
@@ -219,16 +230,29 @@ export class PickupArrivalService {
         continue;
       }
 
-      const students: UpcomingStudentItem[] = studentRows.map((r) => ({
-        studentId: r.student_id,
-        fullName: r.full_name,
-        admissionNumber: r.admission_number,
-        classGrade: r.grade,
-        section: r.section,
-        parentPhone: r.parent_phone,
-        attendanceStatus: mapBoardingStatus(r.boarding_status),
-        boardedAt: r.boarded_at,
-      }));
+      const students: UpcomingStudentItem[] = studentRows.map((r) => {
+        let attendanceStatus: UpcomingStudentAttendanceStatus;
+        if (r.boarding_status) {
+          attendanceStatus = mapBoardingStatus(r.boarding_status);
+        } else if (r.absence_id) {
+          attendanceStatus = 'ABSENT';
+        } else {
+          attendanceStatus = 'PENDING';
+        }
+
+        return {
+          studentId: r.student_id,
+          fullName: r.full_name,
+          admissionNumber: r.admission_number,
+          classGrade: r.grade,
+          section: r.section,
+          parentPhone: r.parent_phone,
+          attendanceStatus,
+          boardedAt: r.boarded_at,
+          isAbsentToday: !!r.absence_id || r.boarding_status === 'ABSENT',
+          absenceReason: r.absence_reason || (r.boarding_status === 'ABSENT' ? 'Reported absent' : null),
+        };
+      });
 
       const totalPending = students.filter((s) => s.attendanceStatus === 'PENDING').length;
 

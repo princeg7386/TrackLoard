@@ -56,6 +56,8 @@ class UpcomingStudentItem {
   /// One of: PENDING, BOARDED, ABSENT, SKIPPED
   final String attendanceStatus;
   final String? boardedAt;
+  final bool isAbsentToday;
+  final String? absenceReason;
 
   const UpcomingStudentItem({
     required this.studentId,
@@ -66,6 +68,8 @@ class UpcomingStudentItem {
     this.parentPhone,
     required this.attendanceStatus,
     this.boardedAt,
+    this.isAbsentToday = false,
+    this.absenceReason,
   });
 
   factory UpcomingStudentItem.fromJson(Map<String, dynamic> json) {
@@ -78,6 +82,8 @@ class UpcomingStudentItem {
       parentPhone: json['parentPhone'] as String?,
       attendanceStatus: json['attendanceStatus'] as String,
       boardedAt: json['boardedAt'] as String?,
+      isAbsentToday: json['isAbsentToday'] as bool? ?? false,
+      absenceReason: json['absenceReason'] as String?,
     );
   }
 }

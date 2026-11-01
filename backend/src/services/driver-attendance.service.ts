@@ -261,6 +261,9 @@ export class DriverAttendanceService {
       drop_status: string | null;
       dropped_at: string | null;
       drop_marked_by: string | null;
+      absence_id: string | null;
+      absence_reason: string | null;
+      absence_trip_type: string | null;
     }>(
       `SELECT
          s.id AS student_id,
@@ -291,7 +294,10 @@ export class DriverAttendanceService {
          be.marked_by AS boarding_marked_by,
          de.status AS drop_status,
          de.recorded_at::text AS dropped_at,
-         de.marked_by AS drop_marked_by
+         de.marked_by AS drop_marked_by,
+         ar.id AS absence_id,
+         ar.reason AS absence_reason,
+         ar.trip_type AS absence_trip_type
        FROM students s
        JOIN student_stop_assignments ssa ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
        JOIN pickup_locations pl_pickup ON ssa.pickup_stop_id = pl_pickup.id AND pl_pickup.deleted_at IS NULL
@@ -305,6 +311,7 @@ export class DriverAttendanceService {
        ) p ON true
        LEFT JOIN boarding_events be ON be.student_id = s.id AND ($3::uuid IS NOT NULL AND be.trip_id = $3::uuid)
        LEFT JOIN drop_events de ON de.student_id = s.id AND ($3::uuid IS NOT NULL AND de.trip_id = $3::uuid)
+       LEFT JOIN absence_records ar ON ar.student_id = s.id AND ar.school_id = $1 AND ar.absence_date = CURRENT_DATE
        WHERE s.school_id = $1
          AND (pl_pickup.route_id = $2 OR pl_drop.route_id = $2)
          AND s.deleted_at IS NULL
@@ -339,9 +346,9 @@ export class DriverAttendanceService {
         attendanceStatus = AttendanceStatus.BOARDED;
         markedBy = row.boarding_marked_by || undefined;
         boardedCount++;
-      } else if (row.boarding_status === 'ABSENT') {
+      } else if (row.boarding_status === 'ABSENT' || row.absence_id) {
         attendanceStatus = AttendanceStatus.ABSENT;
-        markedBy = row.boarding_marked_by || undefined;
+        markedBy = row.boarding_marked_by || (row.absence_id ? 'PARENT' : undefined);
         absentCount++;
       } else if (row.boarding_status === 'SKIPPED') {
         attendanceStatus = AttendanceStatus.SKIPPED;
@@ -388,6 +395,9 @@ export class DriverAttendanceService {
         boardedAt: row.boarded_at || undefined,
         droppedAt: row.dropped_at || undefined,
         markedBy,
+        isAbsentToday: !!row.absence_id || row.boarding_status === 'ABSENT',
+        absenceReason: row.absence_reason || (row.boarding_status === 'ABSENT' ? 'Reported absent' : undefined),
+        absenceScope: row.absence_trip_type || undefined,
       };
     });
 
@@ -449,14 +459,20 @@ export class DriverAttendanceService {
       text += `🚏 *Stop #${stop.seq}: ${stop.stopName}* (${stop.students.length})\n`;
       for (const st of stop.students) {
         let statusIcon = '⏳';
-        if (st.attendanceStatus === AttendanceStatus.BOARDED) statusIcon = '✅';
-        else if (st.attendanceStatus === AttendanceStatus.ABSENT) statusIcon = '❌';
-        else if (st.attendanceStatus === AttendanceStatus.DEBOARDED) statusIcon = '🏫';
+        let statusNote = '';
+        if (st.isAbsentToday || st.attendanceStatus === AttendanceStatus.ABSENT) {
+          statusIcon = '❌';
+          statusNote = ` [NOT GOING TODAY${st.absenceReason ? ` - ${st.absenceReason}` : ''}]`;
+        } else if (st.attendanceStatus === AttendanceStatus.BOARDED) {
+          statusIcon = '✅';
+        } else if (st.attendanceStatus === AttendanceStatus.DEBOARDED) {
+          statusIcon = '🏫';
+        }
 
         const gradeSection = st.grade ? ` (${st.grade}${st.section ? '-' + st.section : ''})` : '';
         const phone = st.parent?.phone || st.emergencyPhone || '';
         const phoneStr = phone ? ` • 📞 ${phone}` : '';
-        text += `  ${statusIcon} ${st.fullName}${gradeSection}${phoneStr}\n`;
+        text += `  ${statusIcon} ${st.fullName}${gradeSection}${statusNote}${phoneStr}\n`;
       }
       text += '\n';
     }

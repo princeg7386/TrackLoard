@@ -475,11 +475,22 @@ class _UpcomingStudentsCardState extends State<UpcomingStudentsCard> {
                     color: AppTheme.textMuted,
                   ),
                 ),
+                if (student.isAbsentToday)
+                  Text(
+                    student.absenceReason?.isNotEmpty == true
+                        ? 'Not going today (${student.absenceReason})'
+                        : 'Not going today (parent reported)',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.statusEmergency,
+                    ),
+                  ),
               ],
             ),
           ),
-          // Quick action: Board button if boarding is active and student is pending
-          if (isPending && boardingAvailable) ...[
+          // Quick action: Board button if boarding is active and student is pending (not absent)
+          if (isPending && boardingAvailable && !student.isAbsentToday) ...[
             ElevatedButton(
               onPressed: isSingleBoarding ? null : () => _handleBoardSingle(student.studentId, stopId),
               style: ElevatedButton.styleFrom(
@@ -497,6 +508,24 @@ class _UpcomingStudentsCardState extends State<UpcomingStudentsCard> {
                       child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                     )
                   : const Text('Board'),
+            ),
+          ] else if (student.isAbsentToday) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.statusEmergencyLight,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.statusEmergency.withOpacity(0.3)),
+              ),
+              child: const Text(
+                'NOT GOING',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.statusEmergency,
+                  letterSpacing: 0.4,
+                ),
+              ),
             ),
           ] else ...[
             // Status chip badge
