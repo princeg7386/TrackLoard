@@ -304,6 +304,13 @@ export class SosService {
       latitude,
       longitude,
       notes: params.notes,
+      // Phase 30.3: pass Phase 30.2 snapshot to avoid duplicate DB JOIN
+      sosEventId,
+      busNumber: trip.busNumber,
+      driverName: trip.driverName,
+      driverPhone: trip.driverPhone,
+      routeName: trip.routeName,
+      speedKmh,
     }).catch((err: unknown) => {
       logger.warn('[SosService] notifyEmergencySos fire-and-forget error (suppressed)', {
         sosEventId,

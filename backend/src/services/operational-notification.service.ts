@@ -450,6 +450,24 @@ export class OperationalNotificationService {
   // ===========================================================================
   // 4. Emergency (EMERGENCY_SOS)
   // ===========================================================================
+  /**
+   * Phase 30.3 — School Alert
+   *
+   * Sends an immediate, enriched SOS alert to all school staff (admin + coordinator)
+   * with:
+   *  - Live bus location as a Google Maps link (one-tap navigation)
+   *  - Driver details: name + direct phone number
+   *  - Incident record reference (sosEventId) for dashboard correlation
+   *  - Speed at time of alert (if available)
+   *  - Route name for operational context
+   *
+   * Snapshot fields (busNumber, driverName, driverPhone, routeName, speedKmh, sosEventId)
+   * are passed from SosService which already has them from Phase 30.2 capture.
+   * When omitted (e.g. legacy callers), the method falls back to fetchTripContext().
+   *
+   * The stale INSERT INTO sos_events that existed here before Phase 30.1 has been
+   * removed — SosService.triggerSos() is the single source of truth for SOS records.
+   */
   public static async notifyEmergencySos(params: {
     schoolId: string;
     tripId: string;
@@ -457,6 +475,13 @@ export class OperationalNotificationService {
     latitude: number;
     longitude: number;
     notes?: string;
+    // ── Phase 30.3 snapshot fields (passed from SosService) ──────────────────
+    sosEventId?: string;
+    busNumber?: string;
+    driverName?: string;
+    driverPhone?: string;
+    routeName?: string;
+    speedKmh?: number;
   }): Promise<OperationalNotificationResult> {
     const result: OperationalNotificationResult = {
       tripId: params.tripId,
@@ -468,45 +493,87 @@ export class OperationalNotificationService {
         latitude: params.latitude,
         longitude: params.longitude,
         triggerSource: params.triggerSource || 'APP_SOS_BUTTON',
+        sosEventId: params.sosEventId,
       },
     };
 
     try {
-      const trip = await this.fetchTripContext(params.schoolId, params.tripId);
-      if (!trip) return result;
+      // ── Resolve trip context ─────────────────────────────────────────────
+      // When Phase 30.2 snapshot fields are supplied, skip the extra DB JOIN.
+      // Fall back to fetchTripContext for legacy / non-snapshot callers.
+      let busNumber = params.busNumber;
+      let driverName = params.driverName;
+      let driverPhone = params.driverPhone;
+      let routeName = params.routeName;
+      let routeId: string | null = null;
+      let schoolPhone: string | null = null;
+      let schoolEmergencyPhone: string | null = null;
 
-      // Log into sos_events table
-      try {
-        await query(
-          `INSERT INTO sos_events (
-             school_id, trip_id, bus_id, driver_id, trigger_source,
-             latitude, longitude, location, status, resolution_notes
-           ) VALUES (
-             $1, $2, $3, $4, $5,
-             $6, $7, ST_SetSRID(ST_MakePoint($7, $6), 4326)::geography, 'TRIGGERED', $8
-           )`,
-          [
-            params.schoolId,
-            params.tripId,
-            trip.busId,
-            trip.driverId,
-            params.triggerSource || 'APP_SOS_BUTTON',
-            params.latitude,
-            params.longitude,
-            params.notes || 'Emergency triggered',
-          ]
+      const hasSnapshot = !!(busNumber && driverName && driverPhone && routeName);
+
+      if (!hasSnapshot) {
+        const trip = await this.fetchTripContext(params.schoolId, params.tripId);
+        if (!trip) return result;
+        busNumber = trip.busNumber;
+        driverName = trip.driverName;
+        driverPhone = trip.driverPhone;
+        routeName = trip.routeName;
+        routeId = trip.routeId;
+        schoolPhone = trip.schoolPhone;
+        schoolEmergencyPhone = trip.schoolEmergencyPhone;
+      } else {
+        // Fetch school phones + routeId only (lightweight — needed for parent alert)
+        const schoolRows = await query<{
+          schoolPhone: string | null;
+          schoolEmergencyPhone: string | null;
+          routeId: string | null;
+        }>(
+          `SELECT s.phone AS "schoolPhone", s.emergency_phone AS "schoolEmergencyPhone",
+                  t.route_id AS "routeId"
+             FROM schools s
+             JOIN trips t ON t.school_id = s.id AND t.id = $2 AND t.deleted_at IS NULL
+            WHERE s.id = $1 AND s.deleted_at IS NULL
+            LIMIT 1`,
+          [params.schoolId, params.tripId]
         );
-      } catch (err) {
-        logger.warn('[OperationalNotificationService] Failed to record in sos_events', {
-          tripId: params.tripId,
-          error: (err as Error).message,
-        });
+        if (schoolRows.length > 0) {
+          schoolPhone = schoolRows[0]!.schoolPhone;
+          schoolEmergencyPhone = schoolRows[0]!.schoolEmergencyPhone;
+          routeId = schoolRows[0]!.routeId;
+        }
       }
 
-      // 1. Critical broadcast to Staff & Coordinators
+      // ── Build live location link ──────────────────────────────────────────
+      const mapsUrl = `https://maps.google.com/?q=${params.latitude.toFixed(5)},${params.longitude.toFixed(5)}`;
+
+      // ── Build incident reference line ─────────────────────────────────────
+      const incidentRef = params.sosEventId
+        ? `Incident ref: SOS-${params.sosEventId.slice(0, 8).toUpperCase()}`
+        : '';
+
+      // ── Build speed line ──────────────────────────────────────────────────
+      const speedLine =
+        params.speedKmh !== undefined && params.speedKmh > 0
+          ? `Speed at alert: ${params.speedKmh.toFixed(0)} km/h`
+          : '';
+
+      // ── 1. Critical broadcast to Staff & Coordinators ─────────────────────
       const staffList = await this.fetchStaffContacts(params.schoolId);
       for (const staff of staffList) {
-        const staffMsg = `🚨 CRITICAL SOS EMERGENCY: Bus ${trip.busNumber} on route '${trip.routeName}' has triggered an emergency SOS at coordinates (${params.latitude.toFixed(5)}, ${params.longitude.toFixed(5)}). Driver: ${trip.driverName} (${trip.driverPhone}). Immediate response required!`;
+        const lines = [
+          `🚨 SOS EMERGENCY — Bus ${busNumber}`,
+          ``,
+          `Route: ${routeName}`,
+          `Driver: ${driverName} (${driverPhone})`,
+          speedLine,
+          `Location: ${mapsUrl}`,
+          ``,
+          incidentRef,
+          `Respond immediately. Check dashboard for live updates.`,
+        ].filter((l) => l !== undefined && !(l === speedLine && !speedLine) && !(l === incidentRef && !incidentRef));
+
+        const staffMsg = lines.join('\n');
+
         await MessagingService.sendMessage({
           recipientPhone: staff.phone,
           recipientRole: staff.role,
@@ -520,24 +587,26 @@ export class OperationalNotificationService {
         result.recipientsCount++;
       }
 
-      // 2. Reassurance message to Parents on this trip
-      const parents = await this.fetchTripParents(params.schoolId, trip.routeId);
-      const helplineText = trip.schoolPhone || trip.schoolEmergencyPhone || 'School Transport Office';
+      // ── 2. Reassurance message to Parents on this trip ────────────────────
+      if (routeId) {
+        const parents = await this.fetchTripParents(params.schoolId, routeId);
+        const helplineText = schoolPhone || schoolEmergencyPhone || 'School Transport Office';
 
-      for (const parent of parents) {
-        const parentMsg = `Safety Alert: An emergency notification was triggered for Bus ${trip.busNumber}. Transport management and school authorities have been alerted and are attending immediately. Helpline: ${helplineText}.`;
-        await MessagingService.sendMessage({
-          recipientPhone: parent.parentPhone,
-          recipientRole: 'PARENT',
-          schoolId: params.schoolId,
-          studentId: parent.studentId,
-          directText: parentMsg,
-          templateId: 'PARENT_EMERGENCY_SOS',
-          eventType: 'EMERGENCY_SOS',
-          priority: 'CRITICAL',
-        });
-        result.notificationsSent++;
-        result.recipientsCount++;
+        for (const parent of parents) {
+          const parentMsg = `Safety Alert: An emergency notification was triggered for Bus ${busNumber}. Transport management and school authorities have been alerted and are attending immediately. Helpline: ${helplineText}.`;
+          await MessagingService.sendMessage({
+            recipientPhone: parent.parentPhone,
+            recipientRole: 'PARENT',
+            schoolId: params.schoolId,
+            studentId: parent.studentId,
+            directText: parentMsg,
+            templateId: 'PARENT_EMERGENCY_SOS',
+            eventType: 'EMERGENCY_SOS',
+            priority: 'CRITICAL',
+          });
+          result.notificationsSent++;
+          result.recipientsCount++;
+        }
       }
     } catch (err) {
       logger.error('[OperationalNotificationService] notifyEmergencySos error (suppressed)', {
