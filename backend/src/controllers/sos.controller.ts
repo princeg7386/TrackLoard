@@ -1,5 +1,5 @@
 /**
- * SosController — Phase 30.1: Emergency / SOS Trigger
+ * SosController — Phase 30.1 / 30.4: Emergency / SOS Trigger & Resolution
  *
  * Thin HTTP layer. Business logic lives in SosService.
  * All handlers follow the existing pattern: extract, validate, call service, respond.
@@ -164,6 +164,35 @@ export class SosController {
       } else {
         next(err);
       }
+    }
+  }
+
+  /**
+   * GET /schools/:schoolId/sos-events/history
+   * Admin — paginated list of RESOLVED SOS events (incident history).
+   * Query: ?limit=50&offset=0
+   * Phase 30.4
+   */
+  static async getSosHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      if (!schoolId) {
+        throw new ValidationError('schoolId param is required');
+      }
+
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 100);
+      const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+      const events = await SosService.getSosHistory(schoolId, limit, offset);
+
+      res.json({
+        success: true,
+        message: events.length === 0 ? 'No resolved SOS events' : `${events.length} resolved SOS event(s)`,
+        data: events,
+        pagination: { limit, offset, count: events.length },
+      });
+    } catch (err) {
+      next(err);
     }
   }
 }

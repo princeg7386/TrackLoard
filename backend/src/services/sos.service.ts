@@ -1,5 +1,5 @@
 /**
- * SosService — Phase 30.1 / 30.2: Emergency / SOS Trigger & Capture
+ * SosService — Phase 30.1 / 30.2 / 30.4: Emergency / SOS Trigger, Capture & Resolution
  *
  * Responsible for:
  *  - triggerSos()           — enrich + validate trip, capture snapshot, insert sos_events, dispatch notifications
@@ -7,6 +7,7 @@
  *  - getSosEventById()      — single event (tenant-scoped, with snapshot fields)
  *  - acknowledgeSos()       — admin acknowledges an active SOS
  *  - resolveSos()           — admin marks SOS resolved
+ *  - getSosHistory()        — paginated list of RESOLVED events (incident history, Phase 30.4)
  *
  * Phase 30.2 adds:
  *  - Active trip guard: rejects SOS on SCHEDULED / COMPLETED / CANCELLED trips
@@ -415,6 +416,34 @@ export class SosService {
 
     const updated = await this.getSosEventById(id, schoolId);
     return updated!;
+  }
+
+  /**
+   * Paginated list of RESOLVED SOS events for a school (incident history).
+   * Returns events ordered by resolved_at DESC so most-recent resolved first.
+   * Phase 30.4: incident history endpoint.
+   */
+  static async getSosHistory(
+    schoolId: string,
+    limit = 50,
+    offset = 0
+  ): Promise<SosEventRecord[]> {
+    const rows = await query<SosEventDbRow>(
+      `SELECT id, school_id, trip_id, bus_id, driver_id,
+              trigger_source, latitude, longitude, speed_kmh, status,
+              acknowledged_by, acknowledged_at, resolved_at,
+              resolution_notes, created_at,
+              bus_number, driver_name, driver_phone, route_name,
+              gps_accuracy_m, gps_recorded_at
+         FROM sos_events
+        WHERE school_id = $1
+          AND status = 'RESOLVED'
+        ORDER BY resolved_at DESC
+        LIMIT $2 OFFSET $3`,
+      [schoolId, limit, offset]
+    );
+
+    return rows.map(mapRow);
   }
 
   /**

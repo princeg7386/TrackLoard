@@ -1,11 +1,12 @@
 /**
- * SOS Routes — Phase 30.1: Emergency / SOS Trigger
+ * SOS Routes — Phase 30.1 / 30.4: Emergency / SOS Trigger & Resolution
  *
  * Mounted at /api/v1 (full paths written here for audit scanner compatibility)
  *
  * Route Plan:
  *  POST   /telemetry/trips/:tripId/sos                          — authenticateDriver (Flutter app button)
  *  GET    /schools/:schoolId/sos-events                          — admin: list active SOS events
+ *  GET    /schools/:schoolId/sos-events/history                  — admin: paginated resolved events (incident history)
  *  POST   /schools/:schoolId/sos-events/:sosId/acknowledge       — admin: acknowledge SOS
  *  POST   /schools/:schoolId/sos-events/:sosId/resolve           — admin: resolve SOS
  */
@@ -41,6 +42,22 @@ sosRouter.get(
   requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
   requireTenantScope('params', 'schoolId'),
   SosController.getActiveSosEvents
+);
+
+/**
+ * Route 35 — SOS incident history (resolved events)
+ * GET /schools/:schoolId/sos-events/history
+ * Auth: school admin or transport coordinator
+ * Query: ?limit=50&offset=0
+ * IMPORTANT: Must be declared BEFORE /:sosId routes to prevent Express matching 'history' as :sosId
+ * Phase 30.4
+ */
+sosRouter.get(
+  '/schools/:schoolId/sos-events/history',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR),
+  requireTenantScope('params', 'schoolId'),
+  SosController.getSosHistory
 );
 
 /**
