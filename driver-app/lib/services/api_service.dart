@@ -322,10 +322,22 @@ class ApiService {
     } catch (e) {
       return ApiResponse<UpcomingPickupResult>(
         success: false,
-        message: 'Failed to parse upcoming students: ',
+        message: 'Failed to parse upcoming students: ${e.toString()}',
         statusCode: 500,
       );
     }
+  }
+
+  /// Phase 31.3: Records arrival at a stop, triggers geofence event and parent arrival alert,
+  /// and enables boarding actions.
+  /// Calls Route 118: POST /schools/:schoolId/trips/:tripId/stops/:stopId/arrival
+  Future<ApiResponse<Map<String, dynamic>>> recordStopArrival({
+    required String schoolId,
+    required String tripId,
+    required String stopId,
+  }) async {
+    final endpoint = ApiConstants.stopArrivalEndpoint(schoolId, tripId, stopId);
+    return post(endpoint);
   }
   ApiResponse<Map<String, dynamic>> _processResponse(http.Response response) {
     try {

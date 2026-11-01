@@ -45,6 +45,7 @@ vi.mock('../src/middlewares/driver-auth.middleware.js', () => ({
 vi.mock('../src/services/pickup-arrival.service.js', () => ({
   PickupArrivalService: {
     getUpcomingStudents: vi.fn(),
+    recordStopArrival: vi.fn(),
   },
 }));
 
@@ -113,8 +114,14 @@ function makeResult(allPickupsComplete = false) {
 const mockGetUpcomingStudents = PickupArrivalService.getUpcomingStudents as ReturnType<
   typeof vi.fn
 >;
+const mockRecordStopArrival = PickupArrivalService.recordStopArrival as ReturnType<
+  typeof vi.fn
+>;
 
-beforeEach(() => mockGetUpcomingStudents.mockReset());
+beforeEach(() => {
+  mockGetUpcomingStudents.mockReset();
+  mockRecordStopArrival.mockReset();
+});
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -183,3 +190,60 @@ describe('GET /api/v1/schools/:schoolId/trips/:tripId/upcoming-students', () => 
     expect(mockGetUpcomingStudents).toHaveBeenCalledWith(TRIP_ID, SCHOOL_ID);
   });
 });
+
+describe('POST /api/v1/schools/:schoolId/trips/:tripId/stops/:stopId/arrival', () => {
+  const STOP_ID = 'stop-0001';
+
+  it('200 — records arrival, returns boardingAvailable: true and parentNotificationsSent', async () => {
+    mockRecordStopArrival.mockResolvedValueOnce({
+      tripId: TRIP_ID,
+      schoolId: SCHOOL_ID,
+      stopId: STOP_ID,
+      stopName: 'Gate No. 3 - Sector 7',
+      sequenceOrder: 1,
+      status: 'INSIDE',
+      arrivedAt: '2026-11-01T08:20:00.000Z',
+      boardingAvailable: true,
+      parentNotificationsSent: 3,
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/schools/${SCHOOL_ID}/trips/${TRIP_ID}/stops/${STOP_ID}/arrival`)
+      .set('Authorization', makeAdminToken());
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.status).toBe('INSIDE');
+    expect(res.body.data.boardingAvailable).toBe(true);
+    expect(res.body.data.parentNotificationsSent).toBe(3);
+    expect(res.body.message).toMatch(/boarding is now active/i);
+    expect(mockRecordStopArrival).toHaveBeenCalledWith(SCHOOL_ID, TRIP_ID, STOP_ID);
+  });
+
+  it('404 — when trip or stop not found', async () => {
+    const { NotFoundError } = await import('../src/middlewares/error.middleware.js');
+    mockRecordStopArrival.mockRejectedValueOnce(
+      new NotFoundError(`Stop ${STOP_ID} not found on this trip route`)
+    );
+
+    const res = await request(app)
+      .post(`/api/v1/schools/${SCHOOL_ID}/trips/${TRIP_ID}/stops/${STOP_ID}/arrival`)
+      .set('Authorization', makeAdminToken());
+
+    expect(res.status).toBe(404);
+  });
+
+  it('400 — when trip is not active', async () => {
+    const { BadRequestError } = await import('../src/middlewares/error.middleware.js');
+    mockRecordStopArrival.mockRejectedValueOnce(
+      new BadRequestError(`Cannot record stop arrival: trip is not active (status: SCHEDULED)`)
+    );
+
+    const res = await request(app)
+      .post(`/api/v1/schools/${SCHOOL_ID}/trips/${TRIP_ID}/stops/${STOP_ID}/arrival`)
+      .set('Authorization', makeAdminToken());
+
+    expect(res.status).toBe(400);
+  });
+});
+

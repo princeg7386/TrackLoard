@@ -1,7 +1,8 @@
-/// Models for the Pickup Arrival — Upcoming Students response (Phase 31.2)
+/// Models for the Pickup Arrival — Upcoming Students response (Phase 31.1 & 31.3)
 ///
-/// Maps to the JSON shape returned by Route 117:
-/// GET /api/v1/schools/:schoolId/trips/:tripId/upcoming-students
+/// Maps to the JSON shape returned by Route 117 & Route 118:
+/// GET  /api/v1/schools/:schoolId/trips/:tripId/upcoming-students
+/// POST /api/v1/schools/:schoolId/trips/:tripId/stops/:stopId/arrival
 library upcoming_students_model;
 
 /// Represents the next stop on the route that still has pending pickups.
@@ -13,6 +14,8 @@ class UpcomingStop {
   final double longitude;
   final String? scheduledTime;
   final int geofenceRadiusMeters;
+  final bool isAtStop;
+  final String? arrivedAt;
 
   const UpcomingStop({
     required this.id,
@@ -22,6 +25,8 @@ class UpcomingStop {
     required this.longitude,
     this.scheduledTime,
     required this.geofenceRadiusMeters,
+    this.isAtStop = false,
+    this.arrivedAt,
   });
 
   factory UpcomingStop.fromJson(Map<String, dynamic> json) {
@@ -33,6 +38,8 @@ class UpcomingStop {
       longitude: (json['longitude'] as num).toDouble(),
       scheduledTime: json['scheduledTime'] as String?,
       geofenceRadiusMeters: json['geofenceRadiusMeters'] as int,
+      isAtStop: json['isAtStop'] as bool? ?? false,
+      arrivedAt: json['arrivedAt'] as String?,
     );
   }
 }
@@ -46,7 +53,7 @@ class UpcomingStudentItem {
   final String section;
   final String? parentPhone;
 
-  /// One of: PENDING, BOARDED, ABSENT
+  /// One of: PENDING, BOARDED, ABSENT, SKIPPED
   final String attendanceStatus;
   final String? boardedAt;
 
@@ -86,6 +93,9 @@ class UpcomingPickupResult {
   final int totalPending;
   final int totalAtStop;
   final bool allPickupsComplete;
+  final bool isAtStop;
+  final bool boardingAvailable;
+  final String? arrivedAt;
 
   const UpcomingPickupResult({
     required this.tripId,
@@ -97,6 +107,9 @@ class UpcomingPickupResult {
     required this.totalPending,
     required this.totalAtStop,
     required this.allPickupsComplete,
+    this.isAtStop = false,
+    this.boardingAvailable = false,
+    this.arrivedAt,
   });
 
   factory UpcomingPickupResult.fromJson(Map<String, dynamic> json) {
@@ -115,6 +128,9 @@ class UpcomingPickupResult {
       totalPending: json['totalPending'] as int,
       totalAtStop: json['totalAtStop'] as int,
       allPickupsComplete: json['allPickupsComplete'] as bool,
+      isAtStop: json['isAtStop'] as bool? ?? false,
+      boardingAvailable: json['boardingAvailable'] as bool? ?? false,
+      arrivedAt: json['arrivedAt'] as String?,
     );
   }
 }

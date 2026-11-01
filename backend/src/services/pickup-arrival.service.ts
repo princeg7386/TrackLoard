@@ -1,19 +1,8 @@
 /**
- * PickupArrivalService — Phase 31.1: Upcoming Student Pickup
+ * PickupArrivalService — Phase 31.1 & 31.3: Pickup Arrival Workflow
  *
- * Determines the next pickup stop for an active trip and identifies
- * all students assigned to that stop with their current attendance state.
- *
- * Logic:
- *  1. Validate trip is active (IN_TRANSIT | DELAYED | ARRIVED_SCHOOL) and school-scoped.
- *  2. Load all remaining stops in sequence order (> current_stop_sequence).
- *  3. For each stop, check student_stop_assignments + boarding_events for this trip.
- *  4. The first stop with at least one PENDING student is the "next pickup".
- *  5. Return all students for that stop (any attendance state) for driver context.
- *  6. If no pending stop exists, return allPickupsComplete = true.
- *
- * No DB migration needed — uses existing: trips, pickup_locations,
- * student_stop_assignments, boarding_events, students, parents tables.
+ * Micro-phase 31.1: Upcoming Student Pickup (determine next stop + student list)
+ * Micro-phase 31.3: Stop Arrival (geofence event, parent arrival WhatsApp notification, boarding available)
  *
  * All queries enforce school_id tenant isolation.
  */
@@ -21,11 +10,13 @@
 import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
 import { BadRequestError, NotFoundError } from '../middlewares/error.middleware.js';
+import { ParentNotificationService } from './parent-notification.service.js';
+import { RealtimeFeedService } from './realtime-feed.service.js';
 
-// ── Active trip statuses (canonical vocabulary — must match consistency.test.ts) ──
+// ─── Active trip statuses (canonical vocabulary — must match consistency.test.ts) ───
 const ACTIVE_TRIP_STATUSES = ['IN_TRANSIT', 'DELAYED', 'ARRIVED_SCHOOL'] as const;
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export type UpcomingStudentAttendanceStatus = 'PENDING' | 'BOARDED' | 'ABSENT' | 'SKIPPED';
 
@@ -51,6 +42,10 @@ export interface UpcomingPickupStop {
   /** Scheduled time string from pickup_locations.scheduled_time (HH:MM:SS) */
   scheduledTime: string;
   geofenceRadiusMeters: number;
+  /** True when bus is currently inside the stop geofence or arrived */
+  isAtStop: boolean;
+  /** ISO timestamp when stop was entered/arrived, or null if outside */
+  arrivedAt: string | null;
 }
 
 export interface UpcomingPickupResult {
@@ -68,14 +63,33 @@ export interface UpcomingPickupResult {
   totalAtStop: number;
   /** True when no remaining stops have pending students */
   allPickupsComplete: boolean;
+  /** Phase 31.3: True when bus is at the next pickup stop */
+  isAtStop: boolean;
+  /** Phase 31.3: True when boarding can be recorded for the stop */
+  boardingAvailable: boolean;
+  /** Phase 31.3: ISO timestamp of arrival at stop, or null */
+  arrivedAt: string | null;
 }
 
-// ── Internal DB row types ─────────────────────────────────────────────────────
+export interface StopArrivalResult {
+  tripId: string;
+  schoolId: string;
+  stopId: string;
+  stopName: string;
+  sequenceOrder: number;
+  status: 'INSIDE';
+  arrivedAt: string;
+  boardingAvailable: boolean;
+  parentNotificationsSent: number;
+}
+
+// ─── Internal DB row types ───────────────────────────────────────────────────
 
 interface TripRow {
   id: string;
   school_id: string;
   route_id: string;
+  bus_id: string;
   status: string;
   current_stop_sequence: number;
 }
@@ -88,6 +102,8 @@ interface StopRow {
   longitude: number;
   scheduled_time: string;
   geofence_radius_meters: number;
+  geofence_status?: string | null;
+  stop_entered_at?: string | null;
 }
 
 interface StudentAtStopRow {
@@ -101,15 +117,12 @@ interface StudentAtStopRow {
   boarded_at: string | null;
 }
 
-// ── Service ───────────────────────────────────────────────────────────────────
+// ─── Service ─────────────────────────────────────────────────────────────────
 
 export class PickupArrivalService {
   /**
-   * Returns the next pickup stop and its students for an active trip.
-   *
-   * The "next" stop is the first stop in route sequence order (beyond
-   * current_stop_sequence) that has at least one student without a
-   * confirmed BOARDED, ABSENT, or SKIPPED status for this trip.
+   * Phase 31.1 & 31.3: Returns the next pickup stop and its students for an active trip.
+   * Also indicates whether the bus has reached the stop (isAtStop / boardingAvailable).
    *
    * @throws NotFoundError   if trip not found in the school
    * @throws BadRequestError if trip is not in an active state
@@ -118,43 +131,56 @@ export class PickupArrivalService {
     tripId: string,
     schoolId: string
   ): Promise<UpcomingPickupResult> {
-    // ── 1. Load and validate trip ────────────────────────────────────────────
+    // ─── 1. Validate trip exists, belongs to school, and is in active lifecycle state ───
     const tripRows = await query<TripRow>(
-      `SELECT id, school_id, route_id, status, current_stop_sequence
+      `SELECT id, school_id, route_id, bus_id, status, current_stop_sequence
          FROM trips
-        WHERE id        = $1
+        WHERE id = $1
           AND school_id = $2
-          AND deleted_at IS NULL
-        LIMIT 1`,
+          AND deleted_at IS NULL`,
       [tripId, schoolId]
     );
 
     if (tripRows.length === 0) {
-      throw new NotFoundError(`Trip ${tripId} not found in this school`);
+      throw new NotFoundError(`Trip ${tripId} not found for this school`);
     }
 
-    const trip = tripRows[0]!;
+    const trip = tripRows[0];
+    if (!trip) {
+      throw new NotFoundError(`Trip ${tripId} not found for this school`);
+    }
 
-    if (!(ACTIVE_TRIP_STATUSES as readonly string[]).includes(trip.status)) {
+    if (!ACTIVE_TRIP_STATUSES.includes(trip.status as (typeof ACTIVE_TRIP_STATUSES)[number])) {
       throw new BadRequestError(
-        `Trip ${tripId} is not active (status: ${trip.status}). ` +
-          `Only ${ACTIVE_TRIP_STATUSES.join(', ')} trips have upcoming students.`
+        `Cannot get upcoming students for trip ${tripId}: trip is not active (status: '${trip.status}', must be one of: ${ACTIVE_TRIP_STATUSES.join(', ')})`
       );
     }
 
-    // ── 2. Load remaining stops in sequence order ────────────────────────────
+    // ─── 2. Fetch remaining stops in route sequence order (> current_stop_sequence) ───
     const stopRows = await query<StopRow>(
-      `SELECT id, stop_name, sequence_order, latitude, longitude,
-              scheduled_time, geofence_radius_meters
-         FROM pickup_locations
-        WHERE route_id      = $1
-          AND school_id     = $2
-          AND sequence_order > $3
-        ORDER BY sequence_order ASC`,
-      [trip.route_id, schoolId, trip.current_stop_sequence]
+      `SELECT
+        pl.id,
+        pl.stop_name,
+        pl.sequence_order,
+        pl.latitude,
+        pl.longitude,
+        pl.scheduled_time,
+        pl.geofence_radius_meters,
+        gs.status AS geofence_status,
+        gs.entered_at::text AS stop_entered_at
+      FROM pickup_locations pl
+      LEFT JOIN trip_stop_geofence_states gs
+        ON gs.stop_id = pl.id
+       AND gs.trip_id = $4
+      WHERE pl.route_id       = $1
+        AND pl.school_id      = $2
+        AND pl.sequence_order > $3
+        AND pl.deleted_at IS NULL
+      ORDER BY pl.sequence_order ASC`,
+      [trip.route_id, schoolId, trip.current_stop_sequence, tripId]
     );
 
-    // ── 3. Walk stops in order to find first one with pending students ────────
+    // ─── 3. Walk stops in order to find first one with pending students ───────
     for (const stop of stopRows) {
       const studentRows = await query<StudentAtStopRow>(
         `SELECT
@@ -211,7 +237,11 @@ export class PickupArrivalService {
         continue;
       }
 
-      // ── Found the next pickup stop ──────────────────────────────────────────
+      // ─── Found the next pickup stop ─────────────────────────────────────────
+      const isAtStop = stop.geofence_status === 'INSIDE';
+      const arrivedAt = isAtStop ? (stop.stop_entered_at ?? null) : null;
+      const boardingAvailable = isAtStop;
+
       const nextStop: UpcomingPickupStop = {
         id: stop.id,
         name: stop.stop_name,
@@ -220,6 +250,8 @@ export class PickupArrivalService {
         longitude: Number(stop.longitude),
         scheduledTime: stop.scheduled_time,
         geofenceRadiusMeters: Number(stop.geofence_radius_meters),
+        isAtStop,
+        arrivedAt,
       };
 
       logger.info('[PickupArrivalService] Next pickup stop identified', {
@@ -229,6 +261,8 @@ export class PickupArrivalService {
         sequenceOrder: stop.sequence_order,
         totalPending,
         totalAtStop: students.length,
+        isAtStop,
+        boardingAvailable,
       });
 
       return {
@@ -241,10 +275,13 @@ export class PickupArrivalService {
         totalPending,
         totalAtStop: students.length,
         allPickupsComplete: false,
+        isAtStop,
+        boardingAvailable,
+        arrivedAt,
       };
     }
 
-    // ── 4. No pending stop found — all pickups complete ──────────────────────
+    // ─── 4. No pending stop found — all pickups complete ─────────────────────
     logger.info('[PickupArrivalService] All pickups complete for trip', { tripId });
 
     return {
@@ -257,11 +294,158 @@ export class PickupArrivalService {
       totalPending: 0,
       totalAtStop: 0,
       allPickupsComplete: true,
+      isAtStop: false,
+      boardingAvailable: false,
+      arrivedAt: null,
+    };
+  }
+
+  /**
+   * Phase 31.3: Record arrival at a pickup stop.
+   *
+   * 1. Validates trip is active and school-scoped.
+   * 2. Validates stop exists on this trip's route.
+   * 3. Upserts trip_stop_geofence_states ('INSIDE', entered_at = NOW()).
+   * 4. Inserts geofence_events ENTRY ledger record (idempotent for this stop entry).
+   * 5. Dispatches parent arrival WhatsApp notification via ParentNotificationService.notifyBusArrivedStop.
+   * 6. Broadcasts real-time feed event.
+   * 7. Returns status showing boarding is now available.
+   */
+  static async recordStopArrival(
+    schoolId: string,
+    tripId: string,
+    stopId: string
+  ): Promise<StopArrivalResult> {
+    // 1. Validate trip exists and is active
+    const tripRows = await query<TripRow>(
+      `SELECT id, school_id, route_id, bus_id, status, current_stop_sequence
+         FROM trips
+        WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [tripId, schoolId]
+    );
+
+    if (tripRows.length === 0) {
+      throw new NotFoundError(`Trip ${tripId} not found for this school`);
+    }
+
+    const trip = tripRows[0];
+    if (!trip) {
+      throw new NotFoundError(`Trip ${tripId} not found for this school`);
+    }
+
+    if (!ACTIVE_TRIP_STATUSES.includes(trip.status as (typeof ACTIVE_TRIP_STATUSES)[number])) {
+      throw new BadRequestError(
+        `Cannot record stop arrival for trip ${tripId}: trip is not active (status: '${trip.status}', must be one of: ${ACTIVE_TRIP_STATUSES.join(', ')})`
+      );
+    }
+
+    // 2. Validate stop belongs to route and school
+    const stopRows = await query<StopRow>(
+      `SELECT id, stop_name, sequence_order, latitude, longitude, scheduled_time, geofence_radius_meters
+         FROM pickup_locations
+        WHERE id = $1 AND route_id = $2 AND school_id = $3 AND deleted_at IS NULL`,
+      [stopId, trip.route_id, schoolId]
+    );
+
+    if (stopRows.length === 0) {
+      throw new NotFoundError(`Stop ${stopId} not found on this trip's route`);
+    }
+
+    const stop = stopRows[0];
+    if (!stop) {
+      throw new NotFoundError(`Stop ${stopId} not found on this trip's route`);
+    }
+
+    const nowIso = new Date().toISOString();
+
+    // 3. Upsert state in trip_stop_geofence_states
+    const stateUpsert = await query<{ entered_at: string }>(
+      `INSERT INTO trip_stop_geofence_states (
+         trip_id, stop_id, status, entered_at, exited_at, dwell_time_seconds, last_evaluated_at, updated_at
+       ) VALUES ($1, $2, 'INSIDE', NOW(), NULL, 0, NOW(), NOW())
+       ON CONFLICT (trip_id, stop_id)
+       DO UPDATE SET
+         status = 'INSIDE',
+         entered_at = COALESCE(trip_stop_geofence_states.entered_at, EXCLUDED.entered_at),
+         exited_at = NULL,
+         last_evaluated_at = NOW(),
+         updated_at = NOW()
+       RETURNING entered_at::text;`,
+      [tripId, stopId]
+    );
+
+    const arrivedAt = stateUpsert[0]?.entered_at || nowIso;
+
+    // 4. Record ENTRY in geofence_events ledger
+    await query(
+      `INSERT INTO geofence_events (
+         school_id, trip_id, bus_id, stop_id, target_type, event_type,
+         latitude, longitude, location, distance_to_center_meters, dwell_time_seconds, recorded_at
+       ) VALUES (
+         $1, $2, $3, $4, 'STOP', 'ENTRY',
+         $5, $6, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, 0, 0, NOW()
+       );`,
+      [schoolId, tripId, trip.bus_id, stopId, stop.latitude, stop.longitude]
+    );
+
+    // 5. Parent WhatsApp arrival notification (non-blocking / error-suppressed)
+    let notificationsSent = 0;
+    try {
+      const notifResult = await ParentNotificationService.notifyBusArrivedStop({
+        schoolId,
+        tripId,
+        stopId,
+        stopName: stop.stop_name,
+      });
+      notificationsSent = notifResult.notificationsSent;
+    } catch (err) {
+      logger.warn('[PickupArrivalService] Failed to notify parents of stop arrival (suppressed)', {
+        tripId,
+        stopId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // 6. Broadcast real-time feed event
+    try {
+      RealtimeFeedService.publish({
+        type: 'GEOFENCE_EVENT',
+        schoolId,
+        tripId,
+        busId: trip.bus_id,
+        stopId,
+        stopName: stop.stop_name,
+        sequenceOrder: stop.sequence_order,
+        eventType: 'ENTRY',
+        status: 'INSIDE',
+        distanceMeters: 0,
+        timestamp: arrivedAt,
+      });
+    } catch (_) {}
+
+    logger.info('[PickupArrivalService] Stop arrival recorded — boarding available', {
+      tripId,
+      stopId,
+      stopName: stop.stop_name,
+      sequenceOrder: stop.sequence_order,
+      notificationsSent,
+    });
+
+    return {
+      tripId,
+      schoolId,
+      stopId,
+      stopName: stop.stop_name,
+      sequenceOrder: Number(stop.sequence_order),
+      status: 'INSIDE',
+      arrivedAt,
+      boardingAvailable: true,
+      parentNotificationsSent: notificationsSent,
     };
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Maps raw boarding_events.status (nullable) to the UpcomingStudentAttendanceStatus enum.

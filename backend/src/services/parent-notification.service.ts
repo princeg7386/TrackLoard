@@ -110,7 +110,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           COALESCE(pl.name, 'Designated Stop') AS "stopName",
+           COALESCE(pl.stop_name, 'Designated Stop') AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t
@@ -199,7 +199,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           pl.name AS "stopName",
+           pl.stop_name AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t
@@ -290,7 +290,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           pl.name AS "stopName",
+           pl.stop_name AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t
@@ -381,7 +381,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           COALESCE($4, pl.name, 'Designated Stop') AS "stopName",
+           COALESCE($4, pl.stop_name, 'Designated Stop') AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t
@@ -463,7 +463,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           COALESCE(pl.name, 'designated stop') AS "stopName",
+           COALESCE(pl.stop_name, 'designated stop') AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t
@@ -542,7 +542,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           COALESCE(pl.name, 'designated stop') AS "stopName",
+           COALESCE(pl.stop_name, 'designated stop') AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t
@@ -626,7 +626,7 @@ export class ParentNotificationService {
            p.full_name AS "parentName",
            s.id AS "studentId",
            s.full_name AS "studentName",
-           COALESCE(pl.name, 'School / Destination') AS "stopName",
+           COALESCE(pl.stop_name, 'School / Destination') AS "stopName",
            ptt.token AS "trackingToken",
            p.notifications_enabled AS "notificationsEnabled"
          FROM trips t

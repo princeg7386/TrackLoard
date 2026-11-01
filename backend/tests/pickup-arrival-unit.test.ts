@@ -16,6 +16,23 @@ vi.mock('../src/config/database.js', () => ({ query: vi.fn() }));
 vi.mock('../src/services/logger.service.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock('../src/services/parent-notification.service.js', () => ({
+  ParentNotificationService: {
+    notifyBusArrivedStop: vi.fn().mockResolvedValue({
+      tripId: 'trip-aaaa-1111',
+      eventType: 'BUS_ARRIVED_STOP',
+      notificationsSent: 2,
+      parentsChecked: 2,
+      alreadyNotified: 0,
+      optedOut: 0,
+    }),
+  },
+}));
+vi.mock('../src/services/realtime-feed.service.js', () => ({
+  RealtimeFeedService: {
+    publish: vi.fn(),
+  },
+}));
 
 import { query } from '../src/config/database.js';
 import { PickupArrivalService } from '../src/services/pickup-arrival.service.js';
@@ -226,4 +243,87 @@ describe('PickupArrivalService.getUpcomingStudents', () => {
     expect(result.currentStopSequence).toBe(3);
     expect(result.nextStop!.sequenceOrder).toBe(4);
   });
+
+  it('marks isAtStop and boardingAvailable true when geofence_status is INSIDE', async () => {
+    mockQuery
+      .mockResolvedValueOnce([makeTripRow()])
+      .mockResolvedValueOnce([{
+        ...makeStopRow(1),
+        geofence_status: 'INSIDE',
+        stop_entered_at: '2026-11-01T08:15:00.000Z',
+      }])
+      .mockResolvedValueOnce([makeStudentRow()]);
+
+    const result = await PickupArrivalService.getUpcomingStudents(TRIP_ID, SCHOOL_ID);
+
+    expect(result.isAtStop).toBe(true);
+    expect(result.boardingAvailable).toBe(true);
+    expect(result.arrivedAt).toBe('2026-11-01T08:15:00.000Z');
+    expect(result.nextStop!.isAtStop).toBe(true);
+  });
 });
+
+describe('PickupArrivalService.recordStopArrival', () => {
+  it('successfully records arrival, sets INSIDE, triggers parent notifications and boarding', async () => {
+    mockQuery
+      .mockResolvedValueOnce([makeTripRow({ bus_id: 'bus-123' })]) // trip check
+      .mockResolvedValueOnce([makeStopRow(1, STOP_1_ID)])          // stop check
+      .mockResolvedValueOnce([{ entered_at: '2026-11-01T08:20:00.000Z' }]) // state upsert
+      .mockResolvedValueOnce([]);                                  // geofence_events insert
+
+    const result = await PickupArrivalService.recordStopArrival(SCHOOL_ID, TRIP_ID, STOP_1_ID);
+
+    expect(result.status).toBe('INSIDE');
+    expect(result.boardingAvailable).toBe(true);
+    expect(result.stopId).toBe(STOP_1_ID);
+    expect(result.stopName).toBe('Stop 1');
+    expect(result.sequenceOrder).toBe(1);
+    expect(result.arrivedAt).toBe('2026-11-01T08:20:00.000Z');
+    expect(result.parentNotificationsSent).toBe(2);
+  });
+
+  it('throws NotFoundError when trip does not exist in school', async () => {
+    mockQuery.mockResolvedValueOnce([]); // trip not found
+
+    await expect(
+      PickupArrivalService.recordStopArrival(SCHOOL_ID, TRIP_ID, STOP_1_ID)
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it('throws BadRequestError when trip is not in an active status', async () => {
+    mockQuery.mockResolvedValueOnce([makeTripRow({ status: 'SCHEDULED' })]);
+
+    await expect(
+      PickupArrivalService.recordStopArrival(SCHOOL_ID, TRIP_ID, STOP_1_ID)
+    ).rejects.toThrow(/not active/i);
+  });
+
+  it('throws NotFoundError when stop does not belong to trip route', async () => {
+    mockQuery
+      .mockResolvedValueOnce([makeTripRow()])
+      .mockResolvedValueOnce([]); // stop not found
+
+    await expect(
+      PickupArrivalService.recordStopArrival(SCHOOL_ID, TRIP_ID, 'non-existent-stop')
+    ).rejects.toThrow(/not found on this trip/i);
+  });
+
+  it('enforces school_id tenant isolation in all queries', async () => {
+    mockQuery
+      .mockResolvedValueOnce([makeTripRow({ bus_id: 'bus-123' })])
+      .mockResolvedValueOnce([makeStopRow(1, STOP_1_ID)])
+      .mockResolvedValueOnce([{ entered_at: '2026-11-01T08:20:00.000Z' }])
+      .mockResolvedValueOnce([]);
+
+    await PickupArrivalService.recordStopArrival(SCHOOL_ID, TRIP_ID, STOP_1_ID);
+
+    const [tripSql, tripParams] = mockQuery.mock.calls[0] as [string, unknown[]];
+    expect(tripSql).toContain('school_id = $2');
+    expect(tripParams[1]).toBe(SCHOOL_ID);
+
+    const [stopSql, stopParams] = mockQuery.mock.calls[1] as [string, unknown[]];
+    expect(stopSql).toContain('school_id = $3');
+    expect(stopParams[2]).toBe(SCHOOL_ID);
+  });
+});
+

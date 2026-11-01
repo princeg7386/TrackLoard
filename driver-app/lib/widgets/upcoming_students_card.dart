@@ -2,23 +2,30 @@ import 'package:flutter/material.dart';
 import '../core/theme/app_theme.dart';
 import '../models/upcoming_students_model.dart';
 
-/// Phase 31.2 — Driver upcoming-student view.
+/// Phase 31.1 & 31.3 — Driver upcoming-student & pickup arrival view.
 ///
-/// Shows the next pickup stop and the list of students at that stop,
-/// with attendance status badges (PENDING, BOARDED, ABSENT).
+/// Shows the next pickup stop, arrival status, and the list of students at that stop.
+/// When the bus arrives at the stop (or driver signals arrival), boarding becomes active:
+///   • Displays "● AT STOP · BOARDING ACTIVE" banner
+///   • Allows one-tap individual "Board" button for each pending student
+///   • Allows "Board All Pending" batch action for fast turnaround
 ///
 /// States handled:
 ///   • loading  — spinner while fetching
 ///   • all done — green tick when allPickupsComplete = true
-///   • empty    — no nextStop but trip is running (should not normally happen)
-///   • data     — stop details + student rows
+///   • empty    — no nextStop but trip is running
+///   • data     — stop details + student rows + boarding controls
 ///   • error    — retry button
-class UpcomingStudentsCard extends StatelessWidget {
+///   • offline  — warning banner
+class UpcomingStudentsCard extends StatefulWidget {
   final bool isLoading;
   final UpcomingPickupResult? result;
   final String? errorMessage;
   final bool isOffline;
   final VoidCallback onRefresh;
+  final Future<void> Function(String stopId)? onRecordArrival;
+  final Future<void> Function(String studentId, String stopId)? onBoardStudent;
+  final Future<void> Function(List<String> studentIds, String stopId)? onBoardAll;
 
   const UpcomingStudentsCard({
     super.key,
@@ -27,7 +34,49 @@ class UpcomingStudentsCard extends StatelessWidget {
     this.errorMessage,
     this.isOffline = false,
     required this.onRefresh,
+    this.onRecordArrival,
+    this.onBoardStudent,
+    this.onBoardAll,
   });
+
+  @override
+  State<UpcomingStudentsCard> createState() => _UpcomingStudentsCardState();
+}
+
+class _UpcomingStudentsCardState extends State<UpcomingStudentsCard> {
+  String? _actionInProgressId;
+
+  bool _isActionRunning(String id) => _actionInProgressId == id;
+
+  Future<void> _handleArrival(String stopId) async {
+    if (widget.onRecordArrival == null) return;
+    setState(() => _actionInProgressId = 'ARRIVAL');
+    try {
+      await widget.onRecordArrival!(stopId);
+    } finally {
+      if (mounted) setState(() => _actionInProgressId = null);
+    }
+  }
+
+  Future<void> _handleBoardSingle(String studentId, String stopId) async {
+    if (widget.onBoardStudent == null) return;
+    setState(() => _actionInProgressId = studentId);
+    try {
+      await widget.onBoardStudent!(studentId, stopId);
+    } finally {
+      if (mounted) setState(() => _actionInProgressId = null);
+    }
+  }
+
+  Future<void> _handleBoardAll(List<String> studentIds, String stopId) async {
+    if (widget.onBoardAll == null) return;
+    setState(() => _actionInProgressId = 'BOARD_ALL');
+    try {
+      await widget.onBoardAll!(studentIds, stopId);
+    } finally {
+      if (mounted) setState(() => _actionInProgressId = null);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +84,12 @@ class UpcomingStudentsCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.cardBg,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppTheme.borderSubtle),
+        border: Border.all(
+          color: widget.result?.boardingAvailable == true
+              ? AppTheme.statusSuccess.withOpacity(0.4)
+              : AppTheme.borderSubtle,
+          width: widget.result?.boardingAvailable == true ? 1.5 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -51,30 +105,55 @@ class UpcomingStudentsCard extends StatelessWidget {
   // ─── Header ───────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
+    final isBoardingActive = widget.result?.boardingAvailable == true;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          const Icon(
-            Icons.groups_2_rounded,
+          Icon(
+            isBoardingActive ? Icons.check_circle_rounded : Icons.groups_2_rounded,
             size: 18,
-            color: AppTheme.accentSky,
+            color: isBoardingActive ? AppTheme.statusSuccess : AppTheme.accentSky,
           ),
           const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'UPCOMING STOP',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.textSecondary,
-                letterSpacing: 0.8,
-              ),
+          Expanded(
+            child: Row(
+              children: [
+                const Text(
+                  'UPCOMING STOP',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textSecondary,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                if (isBoardingActive) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.statusSuccessLight,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      '● AT STOP · BOARDING ACTIVE',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.statusSuccess,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           // Refresh button
           GestureDetector(
-            onTap: onRefresh,
+            onTap: widget.onRefresh,
             child: const Icon(
               Icons.refresh_rounded,
               size: 18,
@@ -89,7 +168,7 @@ class UpcomingStudentsCard extends StatelessWidget {
   // ─── Body ─────────────────────────────────────────────────────────────────
 
   Widget _buildBody() {
-    if (isLoading) {
+    if (widget.isLoading) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 28),
         child: Center(
@@ -103,35 +182,35 @@ class UpcomingStudentsCard extends StatelessWidget {
     }
 
     // Offline notice
-    if (isOffline) {
+    if (widget.isOffline) {
       return _buildStatusMessage(
         icon: Icons.wifi_off_rounded,
         color: AppTheme.statusWarning,
         bgColor: AppTheme.statusWarningLight,
         message: 'No connection. Could not fetch upcoming stop.',
         actionLabel: 'Retry',
-        onAction: onRefresh,
+        onAction: widget.onRefresh,
       );
     }
 
     // Error state
-    if (errorMessage != null) {
+    if (widget.errorMessage != null) {
       return _buildStatusMessage(
         icon: Icons.error_outline_rounded,
         color: AppTheme.statusEmergency,
         bgColor: AppTheme.statusEmergencyLight,
-        message: errorMessage!,
+        message: widget.errorMessage!,
         actionLabel: 'Retry',
-        onAction: onRefresh,
+        onAction: widget.onRefresh,
       );
     }
 
-    if (result == null) {
+    if (widget.result == null) {
       return const SizedBox.shrink();
     }
 
     // All pickups done
-    if (result!.allPickupsComplete) {
+    if (widget.result!.allPickupsComplete) {
       return _buildStatusMessage(
         icon: Icons.check_circle_rounded,
         color: AppTheme.statusSuccess,
@@ -141,7 +220,7 @@ class UpcomingStudentsCard extends StatelessWidget {
     }
 
     // No next stop resolved (edge case)
-    if (result!.nextStop == null) {
+    if (widget.result!.nextStop == null) {
       return _buildStatusMessage(
         icon: Icons.info_outline_rounded,
         color: AppTheme.statusNeutral,
@@ -150,7 +229,12 @@ class UpcomingStudentsCard extends StatelessWidget {
       );
     }
 
-    return _buildStopContent(result!.nextStop!, result!.students, result!.totalPending);
+    return _buildStopContent(
+      widget.result!.nextStop!,
+      widget.result!.students,
+      widget.result!.totalPending,
+      widget.result!.boardingAvailable,
+    );
   }
 
   // ─── Stop + student content ────────────────────────────────────────────────
@@ -159,7 +243,10 @@ class UpcomingStudentsCard extends StatelessWidget {
     UpcomingStop stop,
     List<UpcomingStudentItem> students,
     int totalPending,
+    bool boardingAvailable,
   ) {
+    final pendingStudents = students.where((s) => s.attendanceStatus == 'PENDING').toList();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -170,16 +257,18 @@ class UpcomingStudentsCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
-                  color: AppTheme.accentSky.withOpacity(0.1),
+                  color: boardingAvailable
+                      ? AppTheme.statusSuccessLight
+                      : AppTheme.accentSky.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.location_on_rounded,
-                  size: 18,
-                  color: AppTheme.accentSky,
+                  size: 20,
+                  color: boardingAvailable ? AppTheme.statusSuccess : AppTheme.accentSky,
                 ),
               ),
               const SizedBox(width: 12),
@@ -247,6 +336,69 @@ class UpcomingStudentsCard extends StatelessWidget {
           ),
         ),
 
+        // Action banner: Arrival or Board-All
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          child: boardingAvailable
+              ? (totalPending > 0
+                  ? SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: _isActionRunning('BOARD_ALL')
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.done_all_rounded, size: 16),
+                        label: Text('Board All Pending ($totalPending)'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.statusSuccess,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                        onPressed: _isActionRunning('BOARD_ALL')
+                            ? null
+                            : () => _handleBoardAll(
+                                  pendingStudents.map((s) => s.studentId).toList(),
+                                  stop.id,
+                                ),
+                      ),
+                    )
+                  : const SizedBox.shrink())
+              : Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Approaching stop · Boarding unlocks on arrival',
+                        style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      icon: _isActionRunning('ARRIVAL')
+                          ? const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.pin_drop_rounded, size: 14),
+                      label: const Text('Arrived'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                      onPressed: _isActionRunning('ARRIVAL') ? null : () => _handleArrival(stop.id),
+                    ),
+                  ],
+                ),
+        ),
+
         // Divider before student list
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 16),
@@ -255,23 +407,29 @@ class UpcomingStudentsCard extends StatelessWidget {
 
         // Student rows
         if (students.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Text(
               'No students assigned to this stop.',
-              style: const TextStyle(fontSize: 13, color: AppTheme.textMuted),
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
             ),
           )
         else
-          ...students.map((s) => _buildStudentRow(s)),
+          ...students.map((s) => _buildStudentRow(s, stop.id, boardingAvailable)),
 
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
       ],
     );
   }
 
-  Widget _buildStudentRow(UpcomingStudentItem student) {
+  Widget _buildStudentRow(
+    UpcomingStudentItem student,
+    String stopId,
+    bool boardingAvailable,
+  ) {
+    final isPending = student.attendanceStatus == 'PENDING';
     final (color, bgColor, label) = _statusStyle(student.attendanceStatus);
+    final isSingleBoarding = _isActionRunning(student.studentId);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -320,23 +478,45 @@ class UpcomingStudentsCard extends StatelessWidget {
               ],
             ),
           ),
-          // Status badge
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(6),
+          // Quick action: Board button if boarding is active and student is pending
+          if (isPending && boardingAvailable) ...[
+            ElevatedButton(
+              onPressed: isSingleBoarding ? null : () => _handleBoardSingle(student.studentId, stopId),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.statusSuccess,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              ),
+              child: isSingleBoarding
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Board'),
             ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: color,
-                letterSpacing: 0.4,
+          ] else ...[
+            // Status chip badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                  letterSpacing: 0.4,
+                ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -407,6 +587,8 @@ class UpcomingStudentsCard extends StatelessWidget {
         return (AppTheme.statusSuccess, AppTheme.statusSuccessLight, 'BOARDED');
       case 'ABSENT':
         return (AppTheme.statusNeutral, AppTheme.statusNeutralLight, 'ABSENT');
+      case 'SKIPPED':
+        return (AppTheme.statusNeutral, AppTheme.statusNeutralLight, 'SKIPPED');
       default: // PENDING
         return (AppTheme.statusWarning, AppTheme.statusWarningLight, 'PENDING');
     }

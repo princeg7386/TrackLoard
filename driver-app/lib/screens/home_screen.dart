@@ -181,6 +181,97 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     });
   }
+
+  /// Phase 31.3: Manually records arrival at a stop (geofence entry, parent alert, unlocks boarding)
+  Future<void> _handleRecordStopArrival(String schoolId, String tripId, String stopId) async {
+    final res = await ApiService().recordStopArrival(
+      schoolId: schoolId,
+      tripId: tripId,
+      stopId: stopId,
+    );
+
+    if (mounted) {
+      if (res.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.message ?? 'Arrived at stop. Boarding is active.'),
+            backgroundColor: AppTheme.statusSuccess,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        await _fetchUpcomingStudents(schoolId: schoolId, tripId: tripId);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.message ?? 'Failed to record stop arrival.'),
+            backgroundColor: AppTheme.statusEmergency,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Phase 31.3: Records boarding attendance for a single student from upcoming stop card
+  Future<void> _handleBoardStudent(String schoolId, String tripId, String studentId, String stopId) async {
+    final res = await ApiService().recordBoarding(
+      tripId: tripId,
+      studentId: studentId,
+      stopId: stopId,
+      status: 'BOARDED',
+    );
+
+    if (mounted) {
+      if (res.success) {
+        await _fetchUpcomingStudents(schoolId: schoolId, tripId: tripId);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.message ?? 'Failed to record boarding.'),
+            backgroundColor: AppTheme.statusEmergency,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Phase 31.3: Records batch boarding attendance for all pending students at stop
+  Future<void> _handleBoardAll(String schoolId, String tripId, List<String> studentIds, String stopId) async {
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final records = studentIds
+        .map((id) => <String, dynamic>{
+              'studentId': id,
+              'status': 'BOARDED',
+              'recordedAt': nowIso,
+            })
+        .toList();
+
+    final res = await ApiService().recordBoardingBatch(
+      tripId: tripId,
+      stopId: stopId,
+      records: records,
+    );
+
+    if (mounted) {
+      if (res.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Boarded ${studentIds.length} student(s) successfully.'),
+            backgroundColor: AppTheme.statusSuccess,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        await _fetchUpcomingStudents(schoolId: schoolId, tripId: tripId);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res.message ?? 'Failed to record batch boarding.'),
+            backgroundColor: AppTheme.statusEmergency,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _handleRefresh() async {
     await Future.wait([
       _fetchProfile(),
@@ -494,6 +585,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   tripId: activeTrip.tripId,
                                 );
                               },
+                              onRecordArrival: (stopId) => _handleRecordStopArrival(
+                                activeTrip.schoolId,
+                                activeTrip.tripId,
+                                stopId,
+                              ),
+                              onBoardStudent: (studentId, stopId) => _handleBoardStudent(
+                                activeTrip.schoolId,
+                                activeTrip.tripId,
+                                studentId,
+                                stopId,
+                              ),
+                              onBoardAll: (studentIds, stopId) => _handleBoardAll(
+                                activeTrip.schoolId,
+                                activeTrip.tripId,
+                                studentIds,
+                                stopId,
+                              ),
                             ),
                           ],
                           const SizedBox(height: 20),

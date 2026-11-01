@@ -29,6 +29,10 @@ class ApiConstants {
   static String upcomingStudentsEndpoint(String schoolId, String tripId) =>
       '/schools/$schoolId/trips/$tripId/upcoming-students';
 
+  /// Returns the stop-arrival endpoint for recording geofence arrival and enabling boarding.
+  static String stopArrivalEndpoint(String schoolId, String tripId, String stopId) =>
+      '/schools/$schoolId/trips/$tripId/stops/$stopId/arrival';
+
   // Storage Keys
   static const String keyAuthToken = 'driver_auth_token';
   static const String keyDriverId = 'driver_id';
