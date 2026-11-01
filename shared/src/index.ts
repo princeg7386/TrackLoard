@@ -1621,6 +1621,33 @@ export const AbsenceRecordSchema = z.object({
 });
 export type AbsenceRecord = z.infer<typeof AbsenceRecordSchema>;
 
+// Phase 33.1: Parent Absence Request & Response
+export const CreateParentAbsenceRequestSchema = z.object({
+  studentId: z.string().uuid().optional(),
+  absenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  tripType: z.enum(['MORNING', 'AFTERNOON', 'FULL_DAY']).default('FULL_DAY'),
+  reason: z.string().max(255).optional(),
+});
+export type CreateParentAbsenceRequest = z.infer<typeof CreateParentAbsenceRequestSchema>;
+
+export const ParentAbsenceDetailsSchema = z.object({
+  id: z.string().uuid(),
+  schoolId: z.string().uuid(),
+  studentId: z.string().uuid(),
+  studentName: z.string(),
+  admissionNumber: z.string().nullable().optional(),
+  classGrade: z.string().nullable().optional(),
+  section: z.string().nullable().optional(),
+  absenceDate: z.string(),
+  tripType: z.enum(['MORNING', 'AFTERNOON', 'FULL_DAY']),
+  reportedVia: z.string(),
+  reportedByPhone: z.string(),
+  reason: z.string().nullable().optional(),
+  driverNotified: z.boolean(),
+  createdAt: z.string(),
+});
+export type ParentAbsenceDetails = z.infer<typeof ParentAbsenceDetailsSchema>;
+
 // 19. Operational Report
 export const OperationalReportSchema = z.object({
   id: z.string().uuid().optional(),
@@ -3965,6 +3992,7 @@ export enum ParentWhatsAppAction {
   MY_PICKUP = 'MY_PICKUP',
   NOTIFICATIONS = 'NOTIFICATIONS',
   HELP = 'HELP',
+  NOT_GOING_TODAY = 'NOT_GOING_TODAY',
 }
 
 export const ParentWhatsAppMenuItemSchema = z.object({

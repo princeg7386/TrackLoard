@@ -16,6 +16,7 @@ import { useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
   Bus,
+  CalendarOff,
   CheckCircle2,
   Clock,
   Compass,
@@ -39,12 +40,14 @@ import {
   ParentPickupEta,
   StudentJourneyStage,
   JourneyStageKey,
+  ParentAbsenceDetails,
 } from '@school-bus/shared';
 import {
   ParentLiveMapCanvas,
   FeedConnectionStatus,
 } from '../components/ParentLiveMapCanvas';
 import { StudentJourneyTimeline } from '../components/StudentJourneyTimeline';
+import { ParentAbsenceModal } from '../components/ParentAbsenceModal';
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -286,6 +289,11 @@ function ParentTrackContent() {
   const [feedStatus, setFeedStatus] = useState<FeedConnectionStatus>('CONNECTING');
   const [lastHeard, setLastHeard] = useState<string | null>(null);
   const [, setClockTick] = useState<number>(Date.now());
+
+  // Student Absence Management (Phase 33.1)
+  const [isAbsenceModalOpen, setIsAbsenceModalOpen] = useState<boolean>(false);
+  const [activeAbsences, setActiveAbsences] = useState<ParentAbsenceDetails[]>([]);
+  const [isWithdrawingAbsence, setIsWithdrawingAbsence] = useState<boolean>(false);
 
   // Connection management refs
   const sseRef = useRef<EventSource | null>(null);
@@ -543,11 +551,51 @@ function ParentTrackContent() {
     }
   }, [token]);
 
+  // Student Absence Management (Phase 33.1)
+  const fetchAbsences = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/parent/absence?token=${encodeURIComponent(token)}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data?.records)) {
+          setActiveAbsences(json.data.records);
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
+  }, [token]);
+
+  const handleWithdrawAbsence = async (absenceId: string) => {
+    if (!token) return;
+    setIsWithdrawingAbsence(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/v1/parent/absence/${encodeURIComponent(absenceId)}?token=${encodeURIComponent(token)}`,
+        {
+          method: 'DELETE',
+          headers: { 'X-Tracking-Token': token },
+        }
+      );
+      if (res.ok) {
+        setActiveAbsences((prev) => prev.filter((a) => a.id !== absenceId));
+      }
+    } catch {
+      // Non-blocking
+    } finally {
+      setIsWithdrawingAbsence(false);
+    }
+  };
+
   useEffect(() => {
     if (pageState.phase === 'ready') {
       refreshJourney();
+      fetchAbsences();
     }
-  }, [pageState.phase, refreshJourney]);
+  }, [pageState.phase, refreshJourney, fetchAbsences]);
 
   useEffect(() => {
     if (pageState.phase !== 'ready') return;
@@ -777,6 +825,9 @@ function ParentTrackContent() {
   const totalStops = activeTrip?.totalStops ?? (pickupStop ? Math.max(pickupStop.sequenceOrder, 1) : 1);
   const routePercent = Math.min(Math.round((currentSeq / Math.max(totalStops, 1)) * 100), 100);
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayAbsence = activeAbsences.find((a) => a.absenceDate === todayStr);
+
   return (
     <Shell feedStatus={feedStatus} hasActiveTrip={!!activeTrip}>
       <div className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-3.5">
@@ -802,11 +853,50 @@ function ParentTrackContent() {
               {student.admissionNumber ? ` · ID: ${student.admissionNumber}` : ''}
             </p>
           )}
-          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
-            <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-            <span className="truncate">{school.name}</span>
-          </p>
+          <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+            <p className="text-xs text-slate-400 flex items-center gap-1 min-w-0">
+              <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <span className="truncate">{school.name}</span>
+            </p>
+            {!todayAbsence && (
+              <button
+                type="button"
+                onClick={() => setIsAbsenceModalOpen(true)}
+                className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1 rounded-lg transition-colors shrink-0 shadow-2xs"
+              >
+                <CalendarOff className="w-3.5 h-3.5 text-rose-600" />
+                <span>Not Going Today</span>
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Active Absence Notice Banner (Phase 33.1) */}
+        {todayAbsence && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <CalendarOff className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-rose-950 truncate">
+                  {student.fullName} marked NOT traveling today
+                </p>
+                <p className="text-[10px] text-rose-700 mt-0.5 truncate">
+                  Scope: {todayAbsence.tripType === 'MORNING' ? 'Morning Pickup Only' : todayAbsence.tripType === 'AFTERNOON' ? 'Afternoon Drop Only' : 'Full Day'} · Driver will not stop for pickup.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleWithdrawAbsence(todayAbsence.id)}
+              disabled={isWithdrawingAbsence}
+              className="text-[10px] font-bold text-rose-700 hover:text-rose-900 bg-white hover:bg-rose-100/60 border border-rose-200 px-2.5 py-1 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+            >
+              {isWithdrawingAbsence ? 'Withdrawing...' : 'Withdraw'}
+            </button>
+          </div>
+        )}
 
         {/* No active trip notice */}
         {!activeTrip && (
@@ -1345,6 +1435,20 @@ function ParentTrackContent() {
             </p>
           )}
         </div>
+
+        {/* Absence Modal (Phase 33.1) */}
+        <ParentAbsenceModal
+          isOpen={isAbsenceModalOpen}
+          onClose={() => setIsAbsenceModalOpen(false)}
+          token={token}
+          apiBase={API_BASE}
+          student={student}
+          pickupStopName={pickupStop?.stopName}
+          schoolName={school.name}
+          onAbsenceReported={(absence) => {
+            setActiveAbsences((prev) => [absence, ...prev.filter((a) => a.id !== absence.id)]);
+          }}
+        />
       </div>
     </Shell>
   );

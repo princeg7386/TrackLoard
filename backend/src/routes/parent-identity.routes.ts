@@ -5,6 +5,7 @@ import {
   RevokeParentTokenRequestSchema,
   RevokeStudentTokensRequestSchema,
   ParentOnboardConfirmRequestSchema,
+  CreateParentAbsenceRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { validateBody } from '../middlewares/validate.middleware.js';
@@ -140,6 +141,45 @@ parentRouter.get(
   '/journey/history',
   authenticateParentTrackingToken,
   ParentIdentityController.getParentJourneyHistory
+);
+
+// 5e. Phase 33.1 — Parent Student Absence Endpoints (Report absence, check status, withdraw)
+parentRouter.post(
+  '/absence/:token',
+  authenticateParentTrackingToken,
+  validateBody(CreateParentAbsenceRequestSchema),
+  ParentIdentityController.reportAbsence
+);
+
+parentRouter.post(
+  '/absence',
+  authenticateParentTrackingToken,
+  validateBody(CreateParentAbsenceRequestSchema),
+  ParentIdentityController.reportAbsence
+);
+
+parentRouter.get(
+  '/absence/:token',
+  authenticateParentTrackingToken,
+  ParentIdentityController.getAbsenceStatus
+);
+
+parentRouter.get(
+  '/absence',
+  authenticateParentTrackingToken,
+  ParentIdentityController.getAbsenceStatus
+);
+
+parentRouter.delete(
+  '/absence/:absenceId/:token',
+  authenticateParentTrackingToken,
+  ParentIdentityController.cancelAbsence
+);
+
+parentRouter.delete(
+  '/absence/:absenceId',
+  authenticateParentTrackingToken,
+  ParentIdentityController.cancelAbsence
 );
 
 // 6. Public Onboarding Verification & Activation (handles valid/expired/revoked/invalid tokens)

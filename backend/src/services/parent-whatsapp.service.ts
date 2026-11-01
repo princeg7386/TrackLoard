@@ -25,6 +25,7 @@ import { ParentIdentityService } from './parent-identity.service.js';
 import { EtaService } from './eta.service.js';
 import { DynamicPickupService } from './dynamic-pickup/dynamic-pickup.service.js';
 import { NotFoundError } from '../middlewares/error.middleware.js';
+import { StudentAbsenceService } from './student-absence.service.js';
 import { env } from '../config/env.js';
 
 export interface ParentContextRecord {
@@ -440,6 +441,12 @@ export class ParentWhatsappService {
         description: 'School transport control room helpline & commands',
         commandCode: '6',
       },
+      {
+        action: ParentWhatsAppAction.NOT_GOING_TODAY,
+        title: 'Not Going Today',
+        description: 'Report student absence so bus does not wait at your stop',
+        commandCode: '7',
+      },
     ];
   }
 
@@ -494,8 +501,9 @@ export class ParentWhatsappService {
       `3️⃣ *My Child* — Student info & attendance status\n` +
       `4️⃣ *My Pickup* — Stop location & scheduled time\n` +
       `5️⃣ *Notifications* — Recent alerts & updates\n` +
-      `6️⃣ *Help* — Support & transport helpline\n\n` +
-      `_Type any number (1-6) or command keyword anytime._`
+      `6️⃣ *Help* — Support & transport helpline\n` +
+      `7️⃣ *Not Going Today* — Mark absent so bus skips your stop\n\n` +
+      `_Type any number (1-7) or command keyword anytime._`
     );
   }
 
@@ -2181,6 +2189,23 @@ export class ParentWhatsappService {
       return ParentWhatsAppAction.HELP;
     }
 
+    // 7. Not Going Today / Absence (Phase 33.1)
+    if (
+      clean === '7' ||
+      clean === 'absent' ||
+      clean === 'leave' ||
+      clean.includes('not going') ||
+      clean.includes('not coming') ||
+      clean.includes('leave today') ||
+      clean.includes('child absent') ||
+      clean.includes('student absent') ||
+      clean.includes('wont come') ||
+      clean.includes("won't come") ||
+      clean === 'parent_action_absent'
+    ) {
+      return ParentWhatsAppAction.NOT_GOING_TODAY;
+    }
+
     // Menu / Greeting keywords
     if (
       clean === '0' ||
@@ -2381,6 +2406,27 @@ export class ParentWhatsappService {
         const res = await this.handleHelp(parent, activeTrip);
         replyText = res.replyText;
         actionData = res.data;
+        break;
+      }
+      case ParentWhatsAppAction.NOT_GOING_TODAY: {
+        const today = new Date().toISOString().slice(0, 10);
+        const record = await StudentAbsenceService.recordAbsence({
+          schoolId: parent.schoolId,
+          studentId: parent.studentId,
+          absenceDate: today,
+          tripType: 'FULL_DAY',
+          reportedVia: 'WHATSAPP',
+          reportedByPhone: from,
+          reason: 'Reported via WhatsApp quick command',
+        });
+        replyText =
+          `*Absence Confirmed*\n\n` +
+          `*${parent.studentName}* is marked as *NOT traveling today* (${today}).\n\n` +
+          `• *Stop:* ${parent.pickupStop?.stopName || 'Assigned Stop'}\n` +
+          `• *Scope:* Full Day (Pickup & Drop)\n\n` +
+          `The bus driver and transport desk have been updated. The bus will not wait at your stop.\n\n` +
+          `_Have a safe day!_`;
+        actionData = record;
         break;
       }
       case 'MENU': {

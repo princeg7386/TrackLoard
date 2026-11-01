@@ -9,6 +9,7 @@ import { ParentIdentityService } from '../services/parent-identity.service.js';
 import { RealtimeFeedService } from '../services/realtime-feed.service.js';
 import { EtaService } from '../services/eta.service.js';
 import { StudentJourneyService } from '../services/student-journey.service.js';
+import { StudentAbsenceService } from '../services/student-absence.service.js';
 import { sendSuccess } from '../utils/response.util.js';
 
 
@@ -430,6 +431,107 @@ export class ParentIdentityController {
       );
 
       sendSuccess(res, history, 'Student journey history retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Phase 33.1 — POST /api/v1/parent/absence (or /absence/:token)
+   * Parent reports a student absence (not going today or future date).
+   */
+  public static async reportAbsence(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession || (req as any).parentSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      const { absenceDate, tripType, reason } = req.body;
+
+      const result = await StudentAbsenceService.recordAbsence({
+        schoolId: session.school.id,
+        studentId: session.student.id,
+        absenceDate,
+        tripType,
+        reportedVia: 'PARENT_WEB',
+        reportedByPhone: session.parent.phone,
+        reason,
+      });
+
+      sendSuccess(res, result, 'Student absence confirmed successfully', 201);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Phase 33.1 — GET /api/v1/parent/absence (or /absence/:token)
+   * Retrieve active/upcoming student absence records.
+   */
+  public static async getAbsenceStatus(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession || (req as any).parentSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      const { fromDate, limit } = req.query;
+
+      const records = await StudentAbsenceService.getStudentAbsences(
+        session.school.id,
+        session.student.id,
+        {
+          fromDate: typeof fromDate === 'string' ? fromDate : undefined,
+          limit: limit ? Number(limit) : undefined,
+        }
+      );
+
+      sendSuccess(res, { records, count: records.length }, 'Student absences retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Phase 33.1 — DELETE /api/v1/parent/absence/:absenceId (or /absence/:absenceId/:token)
+   * Withdraw / cancel a previously reported absence.
+   */
+  public static async cancelAbsence(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession || (req as any).parentSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      const { absenceId } = req.params;
+      if (!absenceId) {
+        res.status(400).json({ success: false, error: { message: 'Absence ID is required' } });
+        return;
+      }
+
+      const result = await StudentAbsenceService.cancelAbsence(
+        session.school.id,
+        session.student.id,
+        absenceId
+      );
+
+      sendSuccess(res, result, 'Absence notification withdrawn successfully');
     } catch (error) {
       next(error);
     }
