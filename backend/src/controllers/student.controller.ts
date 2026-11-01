@@ -1,5 +1,6 @@
 ﻿import { Request, Response, NextFunction } from 'express';
 import { StudentService } from '../services/student.service.js';
+import { StudentAbsenceService } from '../services/student-absence.service.js';
 
 export class StudentController {
   /**
@@ -272,6 +273,80 @@ export class StudentController {
    * Retrieves transport attendance history (boarding/drop-off events) for a student
    * GET /api/v1/schools/:schoolId/students/:studentId/transport-history
    */
+  /**
+   * Retrieves student transport absence audit ledger and operational stats
+   * GET /api/v1/schools/:schoolId/absences
+   * GET /api/v1/schools/:schoolId/absences/audit
+   */
+  public static async getAbsenceAuditLedger(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
+
+      const date = typeof req.query.date === 'string' ? req.query.date : undefined;
+      const studentId = typeof req.query.studentId === 'string' ? req.query.studentId : undefined;
+      const limit = req.query.limit ? Number(req.query.limit) : 50;
+      const offset = req.query.offset ? Number(req.query.offset) : 0;
+
+      const ledger = await StudentAbsenceService.getSchoolAbsenceAuditLedger(schoolId, {
+        date,
+        studentId,
+        limit,
+        offset,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: ledger,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Records a student absence on behalf of a parent calling the school transport desk
+   * POST /api/v1/schools/:schoolId/absences
+   */
+  public static async recordAdminAbsence(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { schoolId } = req.params;
+      if (!schoolId) {
+        res.status(400).json({ success: false, error: { message: 'School ID is required' } });
+        return;
+      }
+
+      const { studentId, absenceDate, tripType, reason, reportedByPhone } = req.body;
+      if (!studentId || !absenceDate) {
+        res.status(400).json({
+          success: false,
+          error: { message: 'studentId and absenceDate are required' },
+        });
+        return;
+      }
+
+      const result = await StudentAbsenceService.recordAbsence({
+        schoolId,
+        studentId,
+        absenceDate,
+        tripType: tripType || 'FULL_DAY',
+        reportedVia: 'ADMIN_PHONE',
+        reportedByPhone: reportedByPhone || (req as any).user?.phone || '+910000000000',
+        reason: reason ? `[Admin Desk] ${reason}` : '[Admin Desk] Parent requested absence via phone',
+      });
+
+      res.status(201).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public static async getTransportHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const { schoolId, studentId } = req.params;

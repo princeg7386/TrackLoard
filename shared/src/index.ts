@@ -1648,6 +1648,29 @@ export const ParentAbsenceDetailsSchema = z.object({
 });
 export type ParentAbsenceDetails = z.infer<typeof ParentAbsenceDetailsSchema>;
 
+// Phase 33.3: School Admin Absence Audit & Ledger Types
+export const SchoolAbsenceItemSchema = ParentAbsenceDetailsSchema.extend({
+  suppressedAlertsCount: z.number().int().min(0).default(0),
+});
+export type SchoolAbsenceItem = z.infer<typeof SchoolAbsenceItemSchema>;
+
+export const SchoolAbsenceAuditResponseSchema = z.object({
+  absences: z.array(SchoolAbsenceItemSchema),
+  totalCount: z.number().int().min(0),
+  totalAbsentToday: z.number().int().min(0),
+  totalSuppressedAlertsToday: z.number().int().min(0),
+});
+export type SchoolAbsenceAuditResponse = z.infer<typeof SchoolAbsenceAuditResponseSchema>;
+
+export const CreateAdminAbsenceRequestSchema = z.object({
+  studentId: z.string().uuid(),
+  absenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format'),
+  tripType: z.enum(['MORNING', 'AFTERNOON', 'FULL_DAY']).default('FULL_DAY'),
+  reason: z.string().max(255).optional(),
+  reportedByPhone: z.string().min(5).max(20).optional(),
+});
+export type CreateAdminAbsenceRequest = z.infer<typeof CreateAdminAbsenceRequestSchema>;
+
 // 19. Operational Report
 export const OperationalReportSchema = z.object({
   id: z.string().uuid().optional(),
@@ -4719,6 +4742,7 @@ export const ParentNotificationEventResultSchema = z.object({
   parentsChecked: z.number().int().min(0),
   alreadyNotified: z.number().int().min(0),
   optedOut: z.number().int().min(0),
+  suppressedAbsent: z.number().int().min(0).optional(),
 });
 export type ParentNotificationEventResult = z.infer<typeof ParentNotificationEventResultSchema>;
 

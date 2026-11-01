@@ -2,6 +2,7 @@ import { query } from '../config/database.js';
 import { MessagingService } from './messaging/messaging.service.js';
 import { logger } from './logger.service.js';
 import { env } from '../config/env.js';
+import { StudentAbsenceService } from './student-absence.service.js';
 import {
   NotificationEventType,
   ParentNotificationEventResult,
@@ -20,6 +21,8 @@ interface ParentTargetRow {
   stopName: string;
   trackingToken: string | null;
   notificationsEnabled: boolean;
+  isAbsent?: boolean;
+  absenceReason?: string | null;
 }
 
 /**
@@ -201,7 +204,9 @@ export class ParentNotificationService {
            s.full_name AS "studentName",
            pl.stop_name AS "stopName",
            ptt.token AS "trackingToken",
-           p.notifications_enabled AS "notificationsEnabled"
+           p.notifications_enabled AS "notificationsEnabled",
+           (ar.id IS NOT NULL OR be_absent.id IS NOT NULL) AS "isAbsent",
+           ar.reason AS "absenceReason"
          FROM trips t
          JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
          JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
@@ -213,6 +218,19 @@ export class ParentNotificationService {
          JOIN parents p ON p.student_id = s.id AND p.deleted_at IS NULL
          LEFT JOIN parent_tracking_tokens ptt
            ON ptt.student_id = s.id AND ptt.revoked_at IS NULL AND ptt.expires_at > NOW() AND ptt.deleted_at IS NULL
+         LEFT JOIN absence_records ar
+           ON ar.student_id = s.id
+          AND ar.school_id = t.school_id
+          AND ar.absence_date = COALESCE(t.scheduled_date, CURRENT_DATE)
+          AND (
+            ar.trip_type = 'FULL_DAY'
+            OR (t.route_type = 'MORNING_PICKUP' AND ar.trip_type = 'MORNING')
+            OR (t.route_type = 'AFTERNOON_DROP' AND ar.trip_type = 'AFTERNOON')
+          )
+         LEFT JOIN boarding_events be_absent
+           ON be_absent.student_id = s.id
+          AND be_absent.trip_id = t.id
+          AND be_absent.status = 'ABSENT'
          WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL`,
         [params.tripId, params.schoolId, params.stopId]
       );
@@ -222,6 +240,23 @@ export class ParentNotificationService {
       for (const row of candidates) {
         if (!row.notificationsEnabled) {
           result.optedOut++;
+          continue;
+        }
+
+        if (row.isAbsent) {
+          result.suppressedAbsent = (result.suppressedAbsent || 0) + 1;
+          logger.info('[ParentNotificationService] Suppressing 10M approach alert for absent student', {
+            tripId: params.tripId,
+            studentId: row.studentId,
+            reason: row.absenceReason,
+          });
+          await StudentAbsenceService.logSuppressedBoardingAlert({
+            schoolId: row.schoolId,
+            tripId: params.tripId,
+            studentId: row.studentId,
+            eventType: 'BUS_APPROACHING_10M',
+            reason: row.absenceReason,
+          });
           continue;
         }
 
@@ -292,7 +327,9 @@ export class ParentNotificationService {
            s.full_name AS "studentName",
            pl.stop_name AS "stopName",
            ptt.token AS "trackingToken",
-           p.notifications_enabled AS "notificationsEnabled"
+           p.notifications_enabled AS "notificationsEnabled",
+           (ar.id IS NOT NULL OR be_absent.id IS NOT NULL) AS "isAbsent",
+           ar.reason AS "absenceReason"
          FROM trips t
          JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
          JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
@@ -304,6 +341,19 @@ export class ParentNotificationService {
          JOIN parents p ON p.student_id = s.id AND p.deleted_at IS NULL
          LEFT JOIN parent_tracking_tokens ptt
            ON ptt.student_id = s.id AND ptt.revoked_at IS NULL AND ptt.expires_at > NOW() AND ptt.deleted_at IS NULL
+         LEFT JOIN absence_records ar
+           ON ar.student_id = s.id
+          AND ar.school_id = t.school_id
+          AND ar.absence_date = COALESCE(t.scheduled_date, CURRENT_DATE)
+          AND (
+            ar.trip_type = 'FULL_DAY'
+            OR (t.route_type = 'MORNING_PICKUP' AND ar.trip_type = 'MORNING')
+            OR (t.route_type = 'AFTERNOON_DROP' AND ar.trip_type = 'AFTERNOON')
+          )
+         LEFT JOIN boarding_events be_absent
+           ON be_absent.student_id = s.id
+          AND be_absent.trip_id = t.id
+          AND be_absent.status = 'ABSENT'
          WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL`,
         [params.tripId, params.schoolId, params.stopId]
       );
@@ -313,6 +363,23 @@ export class ParentNotificationService {
       for (const row of candidates) {
         if (!row.notificationsEnabled) {
           result.optedOut++;
+          continue;
+        }
+
+        if (row.isAbsent) {
+          result.suppressedAbsent = (result.suppressedAbsent || 0) + 1;
+          logger.info('[ParentNotificationService] Suppressing 3M approach alert for absent student', {
+            tripId: params.tripId,
+            studentId: row.studentId,
+            reason: row.absenceReason,
+          });
+          await StudentAbsenceService.logSuppressedBoardingAlert({
+            schoolId: row.schoolId,
+            tripId: params.tripId,
+            studentId: row.studentId,
+            eventType: 'BUS_APPROACHING_3M',
+            reason: row.absenceReason,
+          });
           continue;
         }
 
@@ -383,7 +450,9 @@ export class ParentNotificationService {
            s.full_name AS "studentName",
            COALESCE($4, pl.stop_name, 'Designated Stop') AS "stopName",
            ptt.token AS "trackingToken",
-           p.notifications_enabled AS "notificationsEnabled"
+           p.notifications_enabled AS "notificationsEnabled",
+           (ar.id IS NOT NULL OR be_absent.id IS NOT NULL) AS "isAbsent",
+           ar.reason AS "absenceReason"
          FROM trips t
          JOIN buses b ON t.bus_id = b.id AND b.deleted_at IS NULL
          JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
@@ -395,6 +464,19 @@ export class ParentNotificationService {
          JOIN parents p ON p.student_id = s.id AND p.deleted_at IS NULL
          LEFT JOIN parent_tracking_tokens ptt
            ON ptt.student_id = s.id AND ptt.revoked_at IS NULL AND ptt.expires_at > NOW() AND ptt.deleted_at IS NULL
+         LEFT JOIN absence_records ar
+           ON ar.student_id = s.id
+          AND ar.school_id = t.school_id
+          AND ar.absence_date = COALESCE(t.scheduled_date, CURRENT_DATE)
+          AND (
+            ar.trip_type = 'FULL_DAY'
+            OR (t.route_type = 'MORNING_PICKUP' AND ar.trip_type = 'MORNING')
+            OR (t.route_type = 'AFTERNOON_DROP' AND ar.trip_type = 'AFTERNOON')
+          )
+         LEFT JOIN boarding_events be_absent
+           ON be_absent.student_id = s.id
+          AND be_absent.trip_id = t.id
+          AND be_absent.status = 'ABSENT'
          WHERE t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL`,
         [params.tripId, params.schoolId, params.stopId, params.stopName || null]
       );
@@ -404,6 +486,23 @@ export class ParentNotificationService {
       for (const row of candidates) {
         if (!row.notificationsEnabled) {
           result.optedOut++;
+          continue;
+        }
+
+        if (row.isAbsent) {
+          result.suppressedAbsent = (result.suppressedAbsent || 0) + 1;
+          logger.info('[ParentNotificationService] Suppressing bus arrived stop alert for absent student', {
+            tripId: params.tripId,
+            studentId: row.studentId,
+            reason: row.absenceReason,
+          });
+          await StudentAbsenceService.logSuppressedBoardingAlert({
+            schoolId: row.schoolId,
+            tripId: params.tripId,
+            studentId: row.studentId,
+            eventType: 'BUS_ARRIVED_STOP',
+            reason: row.absenceReason,
+          });
           continue;
         }
 

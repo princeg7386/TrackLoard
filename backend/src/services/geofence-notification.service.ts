@@ -233,6 +233,12 @@ export class GeofenceNotificationService {
               AND gnl.student_id = s.id
               AND gnl.notification_type = 'MISSED_BOARDING'
           )
+          AND NOT EXISTS (
+            SELECT 1 FROM absence_records ar
+            WHERE ar.student_id = s.id
+              AND ar.school_id = s.school_id
+              AND ar.absence_date = CURRENT_DATE
+          )
         ORDER BY s.full_name ASC;
       `;
 

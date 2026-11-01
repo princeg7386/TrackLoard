@@ -10,7 +10,11 @@ import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
 import { MessagingService } from './messaging/messaging.service.js';
 import { BadRequestError, NotFoundError } from '../middlewares/error.middleware.js';
-import { ParentAbsenceDetails } from '@school-bus/shared';
+import {
+  ParentAbsenceDetails,
+  SchoolAbsenceAuditResponse,
+  SchoolAbsenceItem,
+} from '@school-bus/shared';
 
 export interface RecordAbsenceParams {
   schoolId: string;
@@ -239,21 +243,25 @@ export class StudentAbsenceService {
       }
 
       // 6c. Operational audit log for school desk
+      const auditRole = reportedVia === 'ADMIN_PHONE' ? 'SCHOOL_ADMIN' : 'PARENT';
       await query(
         `INSERT INTO audit_logs (
            school_id, user_role, action, entity_type, entity_id, diff_json
          ) VALUES (
-           $1, 'PARENT', 'STUDENT_ABSENCE_RECORDED', 'STUDENT', $2, $3::jsonb
+           $1, $2, 'STUDENT_ABSENCE_RECORDED', 'STUDENT', $3, $4::jsonb
          )`,
         [
           schoolId,
+          auditRole,
           studentId,
           JSON.stringify({
             absenceDate,
             tripType,
             reason: reason || null,
             reportedVia,
+            reportedByPhone,
             driverNotified: record.driver_notified,
+            driverNotifiedAt: record.driver_notified ? new Date().toISOString() : null,
           }),
         ]
       );
@@ -402,6 +410,175 @@ export class StudentAbsenceService {
     return {
       cancelled: true,
       message: `Absence record for ${deleteRes[0].absence_date} (${deleteRes[0].trip_type}) has been withdrawn`,
+    };
+  }
+
+  /**
+   * Log an immutable audit entry when a boarding or arrival alert is suppressed due to verified student absence.
+   */
+  public static async logSuppressedBoardingAlert(params: {
+    schoolId: string;
+    tripId: string;
+    studentId: string;
+    eventType: string;
+    reason?: string | null;
+  }): Promise<void> {
+    try {
+      await query(
+        `INSERT INTO audit_logs (
+           school_id, user_role, action, entity_type, entity_id, diff_json
+         ) VALUES (
+           $1, 'SYSTEM', 'BOARDING_SUPPRESSED_ABSENCE', 'STUDENT', $2, $3::jsonb
+         )`,
+        [
+          params.schoolId,
+          params.studentId,
+          JSON.stringify({
+            tripId: params.tripId,
+            eventType: params.eventType,
+            reason: params.reason || 'Student marked absent',
+            suppressedAt: new Date().toISOString(),
+          }),
+        ]
+      );
+    } catch (err: any) {
+      logger.warn(`Could not log BOARDING_SUPPRESSED_ABSENCE audit entry: ${err.message}`);
+    }
+  }
+
+  /**
+   * Retrieve the school-wide absence audit ledger and operational impact stats.
+   * Tenant-isolated to schoolId.
+   */
+  public static async getSchoolAbsenceAuditLedger(
+    schoolId: string,
+    options?: {
+      date?: string;
+      studentId?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<SchoolAbsenceAuditResponse> {
+    const filterDate = options?.date;
+    const studentId = options?.studentId;
+    const limit = Math.min(Math.max(options?.limit ?? 50, 1), 200);
+    const offset = Math.max(options?.offset ?? 0, 0);
+
+    const conditions: string[] = ['ar.school_id = $1'];
+    const params: any[] = [schoolId];
+
+    if (filterDate) {
+      params.push(filterDate);
+      conditions.push(`ar.absence_date = $${params.length}::date`);
+    }
+
+    if (studentId) {
+      params.push(studentId);
+      conditions.push(`ar.student_id = $${params.length}`);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    // 1. Fetch absence items with joined student info and suppressed alerts count
+    const rows = await query<{
+      id: string;
+      school_id: string;
+      student_id: string;
+      student_name: string;
+      admission_number: string | null;
+      class_grade: string | null;
+      section: string | null;
+      absence_date: string;
+      trip_type: 'MORNING' | 'AFTERNOON' | 'FULL_DAY';
+      reported_via: string;
+      reported_by_phone: string;
+      reason: string | null;
+      driver_notified: boolean;
+      created_at: string;
+      suppressed_alerts_count: string;
+    }>(
+      `SELECT
+         ar.id,
+         ar.school_id,
+         ar.student_id,
+         s.full_name AS student_name,
+         s.admission_number,
+         s.class_grade,
+         s.section,
+         ar.absence_date::text,
+         ar.trip_type,
+         ar.reported_via,
+         ar.reported_by_phone,
+         ar.reason,
+         ar.driver_notified,
+         ar.created_at::text,
+         COALESCE(al_counts.cnt, 0)::text AS suppressed_alerts_count
+       FROM absence_records ar
+       JOIN students s ON s.id = ar.student_id AND s.deleted_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) AS cnt
+         FROM audit_logs al
+         WHERE al.school_id = ar.school_id
+           AND al.entity_id = ar.student_id
+           AND al.action = 'BOARDING_SUPPRESSED_ABSENCE'
+           AND al.created_at::date = ar.absence_date
+       ) al_counts ON true
+       WHERE ${whereClause}
+       ORDER BY ar.absence_date DESC, ar.created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    // 2. Total count matching filter
+    const countRes = await query<{ total: string }>(
+      `SELECT COUNT(*)::text AS total
+       FROM absence_records ar
+       WHERE ${whereClause}`,
+      params
+    );
+    const totalCount = parseInt(countRes[0]?.total || '0', 10);
+
+    // 3. School summary: Total absent today
+    const todayRes = await query<{ cnt: string }>(
+      `SELECT COUNT(DISTINCT student_id)::text AS cnt
+       FROM absence_records
+       WHERE school_id = $1 AND absence_date = CURRENT_DATE`,
+      [schoolId]
+    );
+    const totalAbsentToday = parseInt(todayRes[0]?.cnt || '0', 10);
+
+    // 4. School summary: Total suppressed boarding alerts today
+    const suppressedRes = await query<{ cnt: string }>(
+      `SELECT COUNT(*)::text AS cnt
+       FROM audit_logs
+       WHERE school_id = $1
+         AND action = 'BOARDING_SUPPRESSED_ABSENCE'
+         AND created_at::date = CURRENT_DATE`,
+      [schoolId]
+    );
+    const totalSuppressedAlertsToday = parseInt(suppressedRes[0]?.cnt || '0', 10);
+
+    return {
+      absences: rows.map((r) => ({
+        id: r.id,
+        schoolId: r.school_id,
+        studentId: r.student_id,
+        studentName: r.student_name,
+        admissionNumber: r.admission_number,
+        classGrade: r.class_grade,
+        section: r.section,
+        absenceDate: r.absence_date,
+        tripType: r.trip_type,
+        reportedVia: r.reported_via,
+        reportedByPhone: r.reported_by_phone,
+        reason: r.reason,
+        driverNotified: r.driver_notified,
+        createdAt: r.created_at,
+        suppressedAlertsCount: parseInt(r.suppressed_alerts_count || '0', 10),
+      })),
+      totalCount,
+      totalAbsentToday,
+      totalSuppressedAlertsToday,
     };
   }
 }

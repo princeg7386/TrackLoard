@@ -75,6 +75,9 @@ interface RawStudentJourneyRow {
   drop_lat_recorded: number | null;
   drop_lng_recorded: number | null;
   school_arrival_at: string | null;
+  absence_record_id: string | null;
+  absence_reason: string | null;
+  absence_reported_via: string | null;
 }
 
 interface RawCorrectionRow {
@@ -188,7 +191,10 @@ export class StudentJourneyService {
          de.marked_by AS drop_marked_by,
          de.latitude AS drop_lat_recorded,
          de.longitude AS drop_lng_recorded,
-         ge_school.recorded_at::text AS school_arrival_at
+         ge_school.recorded_at::text AS school_arrival_at,
+         ar_today.id AS absence_record_id,
+         ar_today.reason AS absence_reason,
+         ar_today.reported_via AS absence_reported_via
        FROM students s
        JOIN trips t
          ON t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
@@ -232,6 +238,20 @@ export class StudentJourneyService {
           WHERE trip_id = t.id AND target_type IN ('CAMPUS', 'SCHOOL') AND event_type = 'ENTRY'
           ORDER BY recorded_at ASC LIMIT 1
        ) ge_school ON true
+       LEFT JOIN LATERAL (
+         SELECT id, reason, reported_via
+         FROM absence_records
+         WHERE student_id = s.id
+           AND school_id = s.school_id
+           AND absence_date = COALESCE(t.scheduled_date, CURRENT_DATE)
+           AND (
+             trip_type = 'FULL_DAY'
+             OR (t.route_type = 'MORNING_PICKUP' AND trip_type = 'MORNING')
+             OR (t.route_type = 'AFTERNOON_DROP' AND trip_type = 'AFTERNOON')
+           )
+         ORDER BY created_at DESC
+         LIMIT 1
+       ) ar_today ON true
        WHERE s.id = $3 AND s.school_id = $2 AND s.deleted_at IS NULL
        LIMIT 1`,
       [targetTripId, schoolId, studentId]
@@ -274,6 +294,7 @@ export class StudentJourneyService {
     // 5. Evaluate the 6 Core Stages
     const pickupStopName = row.pickup_stop_name || 'Designated Pickup Stop';
     const dropStopName = row.drop_stop_name || 'Designated Drop Stop';
+    const isAbsentToday = Boolean(row.absence_record_id || row.boarding_status === 'ABSENT');
 
     // Stage 1: Pickup (Scheduled Stop & Time)
     const pickupStage: StudentJourneyStage = {
@@ -281,7 +302,7 @@ export class StudentJourneyService {
       title: 'Pickup Scheduled',
       status: 'COMPLETED',
       timestamp: row.pickup_scheduled_time || row.scheduled_date,
-      description: `Assigned stop: ${pickupStopName} (${row.pickup_scheduled_time || 'Scheduled'})`,
+      description: isAbsentToday ? `Assigned stop: ${pickupStopName} (Pickup not expected - student absent today)` : `Assigned stop: ${pickupStopName} (${row.pickup_scheduled_time || 'Scheduled'})`,
       stopName: pickupStopName,
       stopSequence: row.pickup_stop_sequence,
       latitude: row.pickup_lat,
@@ -303,6 +324,12 @@ export class StudentJourneyService {
     ) {
       busArrivalStatus = STAGE_IN_PROGRESS;
       busArrivalDesc = `Bus is en route to ${pickupStopName}`;
+    }
+
+    if (isAbsentToday) {
+      busArrivalDesc = busArrivalStatus === 'COMPLETED'
+        ? `Bus arrived at ${pickupStopName} (Pickup skipped - student absent)`
+        : `Bus en route to ${pickupStopName} (Pickup skipped - student absent)`;
     }
 
     const busArrivalStage: StudentJourneyStage = {
@@ -329,12 +356,14 @@ export class StudentJourneyService {
       boardingDesc = 'Student safely boarded the bus';
       boardingTimestamp = row.boarded_at;
     } else if (
-      row.boarding_status === 'ABSENT' ||
+      isAbsentToday ||
       row.boarding_status === 'SKIPPED'
     ) {
       boardingStageStatus = 'SKIPPED';
-      boardingTitle = `Not Boarded (${row.boarding_status})`;
-      boardingDesc = `Student marked ${row.boarding_status.toLowerCase()}`;
+      boardingTitle = isAbsentToday ? 'Not Boarded (ABSENT)' : `Not Boarded (${row.boarding_status})`;
+      boardingDesc = isAbsentToday
+        ? (row.absence_reason ? `Absence recorded: ${row.absence_reason} (Not traveling today)` : 'Absence recorded: Not traveling today')
+        : `Student marked ${row.boarding_status?.toLowerCase()}`;
       boardingTimestamp = row.boarded_at;
     } else if (busArrivalStatus === 'COMPLETED') {
       boardingStageStatus = STAGE_IN_PROGRESS;
@@ -376,7 +405,7 @@ export class StudentJourneyService {
         onRouteDesc = `Travelling on bus ${row.bus_number} (${row.route_name})`;
       }
     } else if (
-      row.boarding_status === 'ABSENT' ||
+      isAbsentToday ||
       row.boarding_status === 'SKIPPED'
     ) {
       onRouteStatus = 'SKIPPED';
@@ -411,7 +440,7 @@ export class StudentJourneyService {
       schoolArrivalStatus = STAGE_IN_PROGRESS;
       schoolArrivalDesc = 'En route to school campus';
     } else if (
-      row.boarding_status === 'ABSENT' ||
+      isAbsentToday ||
       row.boarding_status === 'SKIPPED'
     ) {
       schoolArrivalStatus = 'SKIPPED';
@@ -448,7 +477,7 @@ export class StudentJourneyService {
       dropTitle = 'Deboarding Pending';
       dropDesc = 'Bus at school, deboarding in progress';
     } else if (
-      row.boarding_status === 'ABSENT' ||
+      isAbsentToday ||
       row.boarding_status === 'SKIPPED'
     ) {
       dropStatus = 'SKIPPED';
@@ -497,8 +526,8 @@ export class StudentJourneyService {
     let currentStatus = 'PENDING';
     if (row.drop_status === 'DEBOARDED' || row.drop_status === 'HANDOVER_CONFIRMED') {
       currentStatus = 'DROPPED';
-    } else if (row.boarding_status === 'ABSENT' || row.boarding_status === 'SKIPPED') {
-      currentStatus = row.boarding_status;
+    } else if (isAbsentToday || row.boarding_status === 'SKIPPED') {
+      currentStatus = isAbsentToday ? 'ABSENT' : (row.boarding_status || 'PENDING');
     } else if (row.trip_status === 'ARRIVED_SCHOOL' && row.boarding_status === 'BOARDED') {
       currentStatus = 'ARRIVED_SCHOOL';
     } else if (row.boarding_status === 'BOARDED') {

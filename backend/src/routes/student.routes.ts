@@ -8,6 +8,7 @@ import {
   SendParentNoticeRequestSchema,
   UpdateParentNotificationPreferencesSchema,
   UpdateNotificationStatusRequestSchema,
+  CreateAdminAbsenceRequestSchema,
   UserRole,
 } from '@school-bus/shared';
 import { authenticateToken, requireRoles } from '../middlewares/auth.middleware.js';
@@ -285,6 +286,44 @@ studentRouter.delete(
     UserRole.SUPER_ADMIN
   ),
   StudentController.deleteParent
+);
+
+// 15. Student Absence Management & Audit Ledger (Phase 33.3)
+studentRouter.get(
+  '/:schoolId/absences',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  StudentController.getAbsenceAuditLedger
+);
+
+studentRouter.get(
+  '/:schoolId/absences/audit',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  StudentController.getAbsenceAuditLedger
+);
+
+studentRouter.post(
+  '/:schoolId/absences',
+  authenticateToken,
+  requireTenantScope('params', 'schoolId'),
+  requireRoles(
+    UserRole.SCHOOL_ADMIN,
+    UserRole.TRANSPORT_COORDINATOR,
+    UserRole.SUPER_ADMIN
+  ),
+  validateBody(CreateAdminAbsenceRequestSchema),
+  StudentController.recordAdminAbsence
 );
 
 export default studentRouter;
