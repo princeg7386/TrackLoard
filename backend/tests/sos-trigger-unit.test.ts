@@ -34,12 +34,30 @@ const DRIVER_ID = '44444444-4444-4444-4444-444444444444';
 const SOS_ID    = '55555555-5555-5555-5555-555555555555';
 const ADMIN_ID  = '66666666-6666-6666-6666-666666666666';
 
-function makeTripRow() {
-  return { id: TRIP_ID, busId: BUS_ID, driverId: DRIVER_ID, schoolId: SCHOOL_ID, status: 'IN_TRANSIT' };
+function makeTripRow(statusOverride = 'IN_TRANSIT') {
+  return {
+    id: TRIP_ID,
+    busId: BUS_ID,
+    driverId: DRIVER_ID,
+    schoolId: SCHOOL_ID,
+    status: statusOverride,
+    // Phase 30.2 snapshot fields (from JOINed buses/drivers/routes)
+    busNumber: 'MH-12-AB-1234',
+    driverName: 'Ravi Shankar',
+    driverPhone: '+919876543210',
+    routeName: 'Route B - Evening',
+  };
 }
 
 function makeGpsRow() {
-  return { latitude: 28.6139, longitude: 77.209, speedKmh: 42 };
+  // Phase 30.2: includes accuracy_meters and recorded_at
+  return {
+    latitude: 28.6139,
+    longitude: 77.209,
+    speedKmh: 42,
+    accuracyMeters: 6.0,
+    recordedAt: new Date().toISOString(),
+  };
 }
 
 function makeSosRow(overrides: Record<string, unknown> = {}) {
@@ -59,6 +77,13 @@ function makeSosRow(overrides: Record<string, unknown> = {}) {
     resolved_at: null,
     resolution_notes: null,
     created_at: new Date().toISOString(),
+    // Phase 30.2 snapshot columns
+    bus_number: 'MH-12-AB-1234',
+    driver_name: 'Ravi Shankar',
+    driver_phone: '+919876543210',
+    route_name: 'Route B - Evening',
+    gps_accuracy_m: '6.0',
+    gps_recorded_at: new Date().toISOString(),
     ...overrides,
   };
 }
