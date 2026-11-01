@@ -190,15 +190,8 @@ export class StudentJourneyService {
          de.longitude AS drop_lng_recorded,
          ge_school.recorded_at::text AS school_arrival_at
        FROM students s
-       JOIN student_stop_assignments ssa
-         ON ssa.student_id = s.id AND ssa.deleted_at IS NULL
-       LEFT JOIN pickup_locations pl_pickup
-         ON ssa.pickup_stop_id = pl_pickup.id AND pl_pickup.deleted_at IS NULL
-       LEFT JOIN pickup_locations pl_drop
-         ON ssa.drop_stop_id = pl_drop.id AND pl_drop.deleted_at IS NULL
        JOIN trips t
-         ON (t.route_id = pl_pickup.route_id OR t.route_id = pl_drop.route_id)
-        AND t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
+         ON t.id = $1 AND t.school_id = $2 AND t.deleted_at IS NULL
        JOIN buses b
          ON t.bus_id = b.id AND b.deleted_at IS NULL
        JOIN routes r
@@ -207,14 +200,33 @@ export class StudentJourneyService {
          ON t.driver_id = d.id AND d.deleted_at IS NULL
        LEFT JOIN users u
          ON d.user_id = u.id
-       LEFT JOIN parents p
-         ON p.student_id = s.id AND p.deleted_at IS NULL
-       LEFT JOIN trip_stop_geofence_states gs_pickup
-         ON gs_pickup.trip_id = t.id AND gs_pickup.stop_id = pl_pickup.id
+       LEFT JOIN LATERAL (
+         SELECT full_name, phone
+           FROM parents
+          WHERE student_id = s.id AND deleted_at IS NULL
+          ORDER BY created_at ASC
+          LIMIT 1
+       ) p ON true
+       LEFT JOIN LATERAL (
+         SELECT ssa.pickup_stop_id, ssa.drop_stop_id
+           FROM student_stop_assignments ssa
+      LEFT JOIN pickup_locations pl_p ON ssa.pickup_stop_id = pl_p.id AND pl_p.deleted_at IS NULL
+      LEFT JOIN pickup_locations pl_d ON ssa.drop_stop_id = pl_d.id AND pl_d.deleted_at IS NULL
+          WHERE ssa.student_id = s.id AND ssa.deleted_at IS NULL
+            AND (pl_p.route_id = t.route_id OR pl_d.route_id = t.route_id)
+          ORDER BY ssa.created_at DESC
+          LIMIT 1
+       ) ssa_canonical ON true
        LEFT JOIN boarding_events be
          ON be.trip_id = t.id AND be.student_id = s.id
        LEFT JOIN drop_events de
          ON de.trip_id = t.id AND de.student_id = s.id
+       LEFT JOIN pickup_locations pl_pickup
+         ON pl_pickup.id = COALESCE(be.stop_id, ssa_canonical.pickup_stop_id) AND pl_pickup.deleted_at IS NULL
+       LEFT JOIN pickup_locations pl_drop
+         ON pl_drop.id = COALESCE(de.stop_id, ssa_canonical.drop_stop_id) AND pl_drop.deleted_at IS NULL
+       LEFT JOIN trip_stop_geofence_states gs_pickup
+         ON gs_pickup.trip_id = t.id AND gs_pickup.stop_id = pl_pickup.id
        LEFT JOIN LATERAL (
          SELECT recorded_at FROM geofence_events
           WHERE trip_id = t.id AND target_type IN ('CAMPUS', 'SCHOOL') AND event_type = 'ENTRY'
@@ -827,6 +839,68 @@ export class StudentJourneyService {
       },
       trips,
       totalCount,
+    };
+  }
+
+  /**
+   * Phase 32.3 — Validates that a student has at most one journey on a trip,
+   * with zero duplicate or contradictory attendance events.
+   */
+  public static async validateAttendanceConsistency(
+    tripId: string,
+    studentId: string
+  ): Promise<{
+    isConsistent: boolean;
+    boardingCount: number;
+    dropCount: number;
+    hasConflictingStates: boolean;
+    violations: string[];
+  }> {
+    const boardingRows = await query<{ id: string; status: string; recorded_at: string }>(
+      `SELECT id, status, recorded_at::text
+         FROM boarding_events
+        WHERE trip_id = $1 AND student_id = $2`,
+      [tripId, studentId]
+    );
+
+    const dropRows = await query<{ id: string; status: string; recorded_at: string }>(
+      `SELECT id, status, recorded_at::text
+         FROM drop_events
+        WHERE trip_id = $1 AND student_id = $2`,
+      [tripId, studentId]
+    );
+
+    const violations: string[] = [];
+    if (boardingRows.length > 1) {
+      violations.push(
+        `Duplicate boarding events detected (${boardingRows.length}) for trip ${tripId} and student ${studentId}`
+      );
+    }
+    if (dropRows.length > 1) {
+      violations.push(
+        `Duplicate drop events detected (${dropRows.length}) for trip ${tripId} and student ${studentId}`
+      );
+    }
+
+    const isAbsent = boardingRows.some(
+      (b) => b.status === 'ABSENT' || b.status === 'SKIPPED'
+    );
+    const isDropped = dropRows.some(
+      (d) => d.status === 'DEBOARDED' || d.status === 'HANDOVER_CONFIRMED'
+    );
+
+    if (isAbsent && isDropped) {
+      violations.push(
+        `Contradictory attendance: student marked absent on boarding but also recorded as dropped`
+      );
+    }
+
+    return {
+      isConsistent: violations.length === 0,
+      boardingCount: boardingRows.length,
+      dropCount: dropRows.length,
+      hasConflictingStates: isAbsent && isDropped,
+      violations,
     };
   }
 }

@@ -577,7 +577,42 @@ export class DriverAttendanceService {
       }
     }
 
-    // 4. Upsert into boarding_events ledger (Idempotent per trip + student)
+    // 4. Duplicate and conflicting attendance checks (Phase 32.3 Data Consistency)
+    const existingBoarding = await query<{
+      id: string;
+      trip_id: string;
+      student_id: string;
+      stop_id: string;
+      status: string;
+      marked_by: string;
+      latitude: number | null;
+      longitude: number | null;
+      recorded_at: string;
+    }>(
+      `SELECT id, trip_id, student_id, stop_id, status, marked_by, latitude, longitude, recorded_at::text
+       FROM boarding_events
+       WHERE trip_id = $1 AND student_id = $2
+       LIMIT 1`,
+      [payload.tripId, payload.studentId]
+    );
+
+    // If marked absent, verify student has not already deboarded on this trip
+    if (payload.status === 'ABSENT') {
+      const existingDrop = await query<{ id: string; status: string }>(
+        `SELECT id, status FROM drop_events WHERE trip_id = $1 AND student_id = $2 LIMIT 1`,
+        [payload.tripId, payload.studentId]
+      );
+      if (existingDrop.length > 0) {
+        throw new BadRequestError(
+          `Cannot mark student as ${payload.status}: student has already deboarded on this trip. An attendance correction is required.`
+        );
+      }
+    }
+
+    const isDuplicateBoarding =
+      existingBoarding.length > 0 && existingBoarding[0]!.status === payload.status;
+
+    // 4b. Upsert into boarding_events ledger (Idempotent per trip + student)
     const markedBy = actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN');
     const recordedAt = payload.recordedAt || new Date().toISOString();
     const lat = payload.latitude != null ? payload.latitude : null;
@@ -636,11 +671,11 @@ export class DriverAttendanceService {
     const event = eventRows[0]!;
 
     logger.info(
-      `[DriverAttendance] Recorded boarding for student ${student.full_name} (${student.admission_number}): ${payload.status} at stop ${resolvedStopId} (Trip: ${payload.tripId})`
+      `[DriverAttendance] Recorded boarding for student ${student.full_name} (${student.admission_number}): ${payload.status} at stop ${resolvedStopId} (Trip: ${payload.tripId})${isDuplicateBoarding ? ' [idempotent duplicate]' : ''}`
     );
 
-    // Notify parent on WhatsApp when student is marked BOARDED (non-blocking)
-    if (payload.status === 'BOARDED') {
+    // Notify parent on WhatsApp when student is marked BOARDED (non-blocking, skip if duplicate)
+    if (payload.status === 'BOARDED' && !isDuplicateBoarding) {
       setImmediate(() => {
         ParentNotificationService.notifyStudentBoarded({
           schoolId,
@@ -726,9 +761,17 @@ export class DriverAttendanceService {
       throw new BadRequestError('At least one boarding record is required in batch payload');
     }
 
+    // Deduplicate records in batch by studentId to prevent duplicate attendance events
+    const seenBoardingStudents = new Set<string>();
+    const deduplicatedRecords = payload.records.filter((rec) => {
+      if (seenBoardingStudents.has(rec.studentId)) return false;
+      seenBoardingStudents.add(rec.studentId);
+      return true;
+    });
+
     const events: BoardingEventRecord[] = [];
 
-    for (const item of payload.records) {
+    for (const item of deduplicatedRecords) {
       const res = await this.recordBoarding(
         schoolId,
         {
@@ -896,7 +939,43 @@ export class DriverAttendanceService {
       }
     }
 
-    // 4. Upsert into drop_events ledger (Idempotent per trip + student)
+    // 4. Duplicate and conflicting attendance checks (Phase 32.3 Data Consistency)
+    const existingBoarding = await query<{ id: string; status: string }>(
+      `SELECT id, status FROM boarding_events WHERE trip_id = $1 AND student_id = $2 LIMIT 1`,
+      [payload.tripId, payload.studentId]
+    );
+
+    if (
+      existingBoarding.length > 0 &&
+      (existingBoarding[0]!.status === 'ABSENT' || existingBoarding[0]!.status === 'SKIPPED')
+    ) {
+      throw new BadRequestError(
+        `Cannot record drop event: student was recorded as ${existingBoarding[0]!.status} on this trip. An attendance correction is required.`
+      );
+    }
+
+    const existingDrop = await query<{
+      id: string;
+      trip_id: string;
+      student_id: string;
+      stop_id: string;
+      status: string;
+      marked_by: string;
+      latitude: number | null;
+      longitude: number | null;
+      recorded_at: string;
+    }>(
+      `SELECT id, trip_id, student_id, stop_id, status, marked_by, latitude, longitude, recorded_at::text
+       FROM drop_events
+       WHERE trip_id = $1 AND student_id = $2
+       LIMIT 1`,
+      [payload.tripId, payload.studentId]
+    );
+
+    const isDuplicateDrop =
+      existingDrop.length > 0 && existingDrop[0]!.status === (payload.status || 'DEBOARDED');
+
+    // 4b. Upsert into drop_events ledger (Idempotent per trip + student)
     const status = payload.status || 'DEBOARDED';
     const markedBy = actor?.userRole || (actor?.isDriver ? 'DRIVER' : 'SCHOOL_ADMIN');
     const recordedAt = payload.recordedAt || new Date().toISOString();
@@ -956,11 +1035,11 @@ export class DriverAttendanceService {
     const event = eventRows[0]!;
 
     logger.info(
-      `[DriverAttendance] Recorded drop for student ${student.full_name} (${student.admission_number}): ${status} at stop ${resolvedStopId} (Trip: ${payload.tripId})`
+      `[DriverAttendance] Recorded drop for student ${student.full_name} (${student.admission_number}): ${status} at stop ${resolvedStopId} (Trip: ${payload.tripId})${isDuplicateDrop ? ' [idempotent duplicate]' : ''}`
     );
 
-    // Notify parent on WhatsApp when student is marked DEBOARDED (non-blocking)
-    if (status === 'DEBOARDED') {
+    // Notify parent on WhatsApp when student is marked DEBOARDED (non-blocking, skip if duplicate)
+    if (status === 'DEBOARDED' && !isDuplicateDrop) {
       setImmediate(() => {
         ParentNotificationService.notifyStudentDropped({
           schoolId,
@@ -1054,9 +1133,17 @@ export class DriverAttendanceService {
       throw new BadRequestError('At least one drop record is required in batch payload');
     }
 
+    // Deduplicate records in batch by studentId to prevent duplicate attendance events
+    const seenDropStudents = new Set<string>();
+    const deduplicatedRecords = payload.records.filter((rec) => {
+      if (seenDropStudents.has(rec.studentId)) return false;
+      seenDropStudents.add(rec.studentId);
+      return true;
+    });
+
     const events: DropEventRecord[] = [];
 
-    for (const item of payload.records) {
+    for (const item of deduplicatedRecords) {
       const res = await this.recordDrop(
         schoolId,
         {
