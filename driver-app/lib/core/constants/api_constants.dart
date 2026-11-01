@@ -24,6 +24,11 @@ class ApiConstants {
   // Telemetry Ingestion Endpoint (used in Phase 10.2 / 10.3)
   static const String telemetryEndpoint = '/telemetry/batch';
 
+  // Pickup Arrival Endpoints (Phase 31)
+  /// Returns the upcoming-students endpoint for the given school and trip.
+  static String upcomingStudentsEndpoint(String schoolId, String tripId) =>
+      '/schools/$schoolId/trips/$tripId/upcoming-students';
+
   // Storage Keys
   static const String keyAuthToken = 'driver_auth_token';
   static const String keyDriverId = 'driver_id';

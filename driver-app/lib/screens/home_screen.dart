@@ -16,6 +16,8 @@ import '../services/permission_service.dart';
 import '../services/telemetry_queue_service.dart';
 import '../services/trip_status_service.dart';
 import '../widgets/active_trip_card.dart';
+import '../widgets/upcoming_students_card.dart';
+import '../models/upcoming_students_model.dart';
 import '../widgets/live_status_bar.dart';
 import '../widgets/queue_sync_indicator.dart';
 import 'login_screen.dart';
@@ -40,6 +42,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _isLoading = true;
   String? _errorMessage;
   bool _isOffline = false;
+
+  // Phase 31.2: Upcoming students state
+  UpcomingPickupResult? _upcomingResult;
+  bool _isUpcomingLoading = false;
+  String? _upcomingError;
+  bool _isUpcomingOffline = false;
 
   DriverProfileData? _profileData;
   Map<String, String?> _storedDriver = {};
@@ -124,6 +132,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final activeTripMap = result.data!.activeTrip ??
             (result.data!.todayTrips.isNotEmpty ? result.data!.todayTrips.first : null);
         _tripStatusService.updateActiveTrip(activeTripMap);
+        // Phase 31.2: Fetch upcoming students when active trip is detected
+        if (activeTripMap != null) {
+          final tripId = activeTripMap['id']?.toString() ?? activeTripMap['tripId']?.toString() ?? '';
+          final schoolId = activeTripMap['schoolId']?.toString() ?? '';
+          if (tripId.isNotEmpty && schoolId.isNotEmpty) {
+            _fetchUpcomingStudents(schoolId: schoolId, tripId: tripId);
+          }
+        }
       } else {
         _errorMessage = result.message;
         _isOffline = result.isOffline;
@@ -134,6 +150,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Phase 31.2: Fetches upcoming students for the next pickup stop.
+  /// Called whenever an active trip is detected in the profile.
+  Future<void> _fetchUpcomingStudents({
+    required String schoolId,
+    required String tripId,
+  }) async {
+    if (!mounted) return;
+    setState(() {
+      _isUpcomingLoading = true;
+      _upcomingError = null;
+    });
+
+    final apiService = ApiService();
+    final res = await apiService.getUpcomingStudents(
+      schoolId: schoolId,
+      tripId: tripId,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _isUpcomingLoading = false;
+      if (res.success && res.data != null) {
+        _upcomingResult = res.data;
+        _upcomingError = null;
+        _isUpcomingOffline = false;
+      } else {
+        _upcomingError = res.message ?? 'Failed to load upcoming stop.';
+        _isUpcomingOffline = res.isOffline;
+      }
+    });
+  }
   Future<void> _handleRefresh() async {
     await Future.wait([
       _fetchProfile(),
@@ -433,6 +480,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           ),
                           const SizedBox(height: 8),
                           ActiveTripCard(trip: activeTrip),
+                          // Phase 31.2: Show upcoming students when trip is active (PICKUP)
+                          if (activeTrip.isActive && activeTrip.tripType == 'PICKUP') ...[
+                            const SizedBox(height: 12),
+                            UpcomingStudentsCard(
+                              isLoading: _isUpcomingLoading,
+                              result: _upcomingResult,
+                              errorMessage: _upcomingError,
+                              isOffline: _isUpcomingOffline,
+                              onRefresh: () {
+                                _fetchUpcomingStudents(
+                                  schoolId: activeTrip.schoolId,
+                                  tripId: activeTrip.tripId,
+                                );
+                              },
+                            ),
+                          ],
                           const SizedBox(height: 20),
                         ],
                       );

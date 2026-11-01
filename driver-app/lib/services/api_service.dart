@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants/api_constants.dart';
 import '../models/student_attendance_model.dart';
+import '../models/upcoming_students_model.dart';
 
 /// Response wrapper for API calls
 class ApiResponse<T> {
@@ -291,6 +292,41 @@ class ApiService {
     return get('${ApiConstants.attendanceTripHistoryEndpoint}/$tripId/history');
   }
 
+  /// Phase 31.2: Fetches upcoming students for the next pickup stop on an active trip.
+  ///
+  /// Calls Route 117: GET /schools/:schoolId/trips/:tripId/upcoming-students
+  Future<ApiResponse<UpcomingPickupResult>> getUpcomingStudents({
+    required String schoolId,
+    required String tripId,
+  }) async {
+    final endpoint = ApiConstants.upcomingStudentsEndpoint(schoolId, tripId);
+    final res = await get(endpoint);
+
+    if (!res.success || res.data == null) {
+      return ApiResponse<UpcomingPickupResult>(
+        success: false,
+        message: res.message,
+        statusCode: res.statusCode,
+        isOffline: res.isOffline,
+      );
+    }
+
+    try {
+      final model = UpcomingPickupResult.fromJson(res.data!);
+      return ApiResponse<UpcomingPickupResult>(
+        success: true,
+        data: model,
+        message: res.message,
+        statusCode: res.statusCode,
+      );
+    } catch (e) {
+      return ApiResponse<UpcomingPickupResult>(
+        success: false,
+        message: 'Failed to parse upcoming students: ',
+        statusCode: 500,
+      );
+    }
+  }
   ApiResponse<Map<String, dynamic>> _processResponse(http.Response response) {
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
