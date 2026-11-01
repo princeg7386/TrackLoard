@@ -44,4 +44,47 @@ export class StudentJourneyController {
       next(err);
     }
   }
+
+  /**
+   * Route 120 — GET /schools/:schoolId/students/:studentId/journey/history
+   *
+   * Query params:
+   *   startDate — optional ISO date filter (YYYY-MM-DD)
+   *   endDate   — optional ISO date filter (YYYY-MM-DD)
+   *   limit     — optional result limit (default 20, max 100)
+   *   offset    — optional pagination offset (default 0)
+   */
+  static async getStudentJourneyHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { schoolId, studentId } = req.params;
+      const { startDate, endDate, limit, offset } = req.query;
+
+      if (!schoolId || !studentId) {
+        throw new ValidationError('schoolId and studentId parameters are required');
+      }
+
+      const history = await StudentJourneyService.getStudentMultiTripHistory(
+        schoolId,
+        studentId,
+        {
+          startDate: typeof startDate === 'string' ? startDate : undefined,
+          endDate: typeof endDate === 'string' ? endDate : undefined,
+          limit: limit ? Number(limit) : undefined,
+          offset: offset ? Number(offset) : undefined,
+        }
+      );
+
+      res.status(200).json({
+        success: true,
+        message: 'Student journey history retrieved successfully',
+        data: history,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
 }

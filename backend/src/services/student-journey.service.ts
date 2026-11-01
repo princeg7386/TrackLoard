@@ -19,6 +19,8 @@ import {
   JourneyStageKey,
   JourneyStageStatus,
   AttendanceCorrectionRecord,
+  StudentHistoricalTripJourney,
+  StudentMultiTripHistoryResponse,
 } from '@school-bus/shared';
 import { query } from '../config/database.js';
 import { logger } from './logger.service.js';
@@ -44,6 +46,7 @@ interface RawStudentJourneyRow {
   registration_number: string;
   route_name: string;
   route_code: string | null;
+  route_type: string;
   driver_name: string | null;
   driver_phone: string | null;
   pickup_stop_id: string | null;
@@ -157,6 +160,7 @@ export class StudentJourneyService {
          b.registration_number,
          r.name AS route_name,
          r.code AS route_code,
+         r.route_type AS route_type,
          u.full_name AS driver_name,
          d.phone AS driver_phone,
          pl_pickup.id AS pickup_stop_id,
@@ -609,15 +613,220 @@ export class StudentJourneyService {
         registrationNumber: row.registration_number,
         routeName: row.route_name,
         routeCode: row.route_code,
+        routeType: row.route_type,
         scheduledDate: row.scheduled_date,
         status: row.trip_status,
         driverName: row.driver_name,
+        driverPhone: row.driver_phone,
       },
       currentStatus,
       currentStage,
       stages,
       timeline,
       corrections,
+    };
+  }
+
+  /**
+   * Phase 32.2 — Student Multi-Trip Transport & Attendance History
+   * Retrieves historical trips taken by the student with complete 3-part record:
+   * 1. Transport history summary (total trips, boarded, absent, deboarded, attendance rate, last rode at)
+   * 2. Trip history (tripId, date, shift/routeType, routeName, routeCode, busNumber, regNumber, driver)
+   * 3. Attendance history (boarding, deboarding, conductor/driver, attendance corrections, and 6-stage lifecycle)
+   */
+  public static async getStudentMultiTripHistory(
+    schoolId: string,
+    studentId: string,
+    options: {
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+      offset?: number;
+    } = {}
+  ): Promise<StudentMultiTripHistoryResponse> {
+    const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+    const offset = Math.max(Number(options.offset) || 0, 0);
+
+    // 1. Verify student exists in this school
+    const studentRows = await query<{
+      id: string;
+      full_name: string;
+      admission_number: string;
+      grade: string | null;
+      section: string | null;
+      emergency_phone: string | null;
+    }>(
+      `SELECT id, full_name, admission_number, grade, section, emergency_phone
+         FROM students
+        WHERE id = $1 AND school_id = $2 AND deleted_at IS NULL`,
+      [studentId, schoolId]
+    );
+
+    if (studentRows.length === 0 || !studentRows[0]) {
+      throw new NotFoundError(`Student ${studentId} not found in this school`);
+    }
+
+    const student = studentRows[0];
+
+    // 2. Query distinct trips linked to student (either by boarding, drop, or route assignment)
+    const sqlParams: any[] = [schoolId, studentId];
+    let dateFilter = '';
+
+    if (options.startDate) {
+      sqlParams.push(options.startDate);
+      dateFilter += ` AND t.scheduled_date >= $${sqlParams.length}`;
+    }
+    if (options.endDate) {
+      sqlParams.push(options.endDate);
+      dateFilter += ` AND t.scheduled_date <= $${sqlParams.length}`;
+    }
+
+    // Total count query
+    const countSql = `
+      SELECT COUNT(DISTINCT t.id)::int AS total_count
+        FROM trips t
+        JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+   LEFT JOIN boarding_events be ON be.trip_id = t.id AND be.student_id = $2
+   LEFT JOIN drop_events de ON de.trip_id = t.id AND de.student_id = $2
+   LEFT JOIN pickup_locations pl ON pl.route_id = r.id AND pl.deleted_at IS NULL
+   LEFT JOIN student_stop_assignments ssa
+          ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+         AND ssa.student_id = $2
+         AND ssa.deleted_at IS NULL
+       WHERE t.school_id = $1
+         AND t.deleted_at IS NULL
+         AND (be.id IS NOT NULL OR de.id IS NOT NULL OR ssa.id IS NOT NULL)
+         ${dateFilter}
+    `;
+
+    const countRows = await query<{ total_count: number }>(countSql, sqlParams);
+    const totalCount = countRows[0]?.total_count ?? 0;
+
+    // Fetch paginated trips
+    const tripsSql = `
+      SELECT DISTINCT
+             t.id AS trip_id,
+             t.scheduled_date,
+             t.created_at
+        FROM trips t
+        JOIN routes r ON t.route_id = r.id AND r.deleted_at IS NULL
+   LEFT JOIN boarding_events be ON be.trip_id = t.id AND be.student_id = $2
+   LEFT JOIN drop_events de ON de.trip_id = t.id AND de.student_id = $2
+   LEFT JOIN pickup_locations pl ON pl.route_id = r.id AND pl.deleted_at IS NULL
+   LEFT JOIN student_stop_assignments ssa
+          ON (ssa.pickup_stop_id = pl.id OR ssa.drop_stop_id = pl.id)
+         AND ssa.student_id = $2
+         AND ssa.deleted_at IS NULL
+       WHERE t.school_id = $1
+         AND t.deleted_at IS NULL
+         AND (be.id IS NOT NULL OR de.id IS NOT NULL OR ssa.id IS NOT NULL)
+         ${dateFilter}
+       ORDER BY t.scheduled_date DESC, t.created_at DESC
+       LIMIT $${sqlParams.length + 1} OFFSET $${sqlParams.length + 2}
+    `;
+
+    const paginatedTrips = await query<{ trip_id: string }>(tripsSql, [
+      ...sqlParams,
+      limit,
+      offset,
+    ]);
+
+    // 3. For each trip, assemble the complete 3-part historical record
+    const trips: StudentHistoricalTripJourney[] = [];
+    let totalBoarded = 0;
+    let totalAbsent = 0;
+    let totalDeboarded = 0;
+    let lastRodeAt: string | null = null;
+
+    for (const pt of paginatedTrips) {
+      try {
+        const journey = await this.getStudentJourneyTimeline(schoolId, studentId, pt.trip_id);
+        
+        // Find boarding & drop specifics from timeline/events
+        const boardingEvent = journey.timeline.find((t) => t.type === 'BOARDING');
+        const dropEvent = journey.timeline.find((t) => t.type === 'DROP');
+
+        const boardingStatus = boardingEvent?.status || (journey.currentStatus === 'BOARDED' ? 'BOARDED' : null);
+        const dropStatus = dropEvent?.status || (journey.currentStatus === 'DROPPED' ? 'DEBOARDED' : null);
+
+        if (boardingStatus === 'BOARDED') {
+          totalBoarded++;
+          if (!lastRodeAt && boardingEvent?.timestamp) {
+            lastRodeAt = boardingEvent.timestamp;
+          }
+        } else if (boardingStatus === 'ABSENT' || boardingStatus === 'SKIPPED') {
+          totalAbsent++;
+        }
+
+        if (dropStatus === 'DEBOARDED' || dropStatus === 'HANDOVER_CONFIRMED') {
+          totalDeboarded++;
+        }
+
+        trips.push({
+          tripId: journey.trip.id,
+          scheduledDate: journey.trip.scheduledDate,
+          routeType: (journey.trip as any).routeType || 'MORNING_PICKUP',
+          routeName: journey.trip.routeName,
+          routeCode: journey.trip.routeCode,
+          busNumber: journey.trip.busNumber,
+          registrationNumber: journey.trip.registrationNumber,
+          driverName: journey.trip.driverName,
+          driverPhone: (journey.trip as any).driverPhone || null,
+          tripStatus: journey.trip.status,
+          currentStage: journey.currentStage || 'PICKUP',
+          stages: journey.stages || [],
+          attendance: {
+            boardingStatus,
+            boardedAt: boardingEvent?.timestamp || null,
+            pickupStopName: boardingEvent?.stopName || null,
+            pickupStopSequence: boardingEvent?.stopSequence || null,
+            boardingMarkedBy: boardingEvent?.markedBy || null,
+            dropStatus,
+            droppedAt: dropEvent?.timestamp || null,
+            dropStopName: dropEvent?.stopName || null,
+            dropStopSequence: dropEvent?.stopSequence || null,
+            dropMarkedBy: dropEvent?.markedBy || null,
+          },
+          corrections: journey.corrections,
+        });
+      } catch (err) {
+        logger.warn('[StudentJourneyService] Failed to load timeline for trip history item', {
+          tripId: pt.trip_id,
+          studentId,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    const attendanceRatePercent =
+      trips.length > 0 ? Math.round((totalBoarded / trips.length) * 100) : 100;
+
+    logger.info('[StudentJourneyService] Multi-trip history assembled', {
+      studentId,
+      schoolId,
+      totalCount,
+      returnedTrips: trips.length,
+    });
+
+    return {
+      student: {
+        id: student.id,
+        fullName: student.full_name,
+        admissionNumber: student.admission_number,
+        classGrade: student.grade,
+        section: student.section,
+        emergencyPhone: student.emergency_phone,
+      },
+      summary: {
+        totalTrips: totalCount,
+        totalBoarded,
+        totalAbsent,
+        totalDeboarded,
+        attendanceRatePercent,
+        lastRodeAt,
+      },
+      trips,
+      totalCount,
     };
   }
 }

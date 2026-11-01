@@ -1,4 +1,4 @@
-﻿import {
+import {
   StudentWithDetails,
   CreateStudentRequest,
   UpdateStudentRequest,
@@ -7,6 +7,7 @@
   RouteWithStopsOption,
   AssignStudentTransportPayload,
   StudentTransportHistoryResponse,
+  StudentMultiTripHistoryResponse,
   ParentRecordWithStudent,
   ParentAssignmentDetails,
   ParentCommunicationItem,
@@ -304,6 +305,46 @@ export async function fetchStudentTransportHistory(
         headers: getAuthHeaders(),
       }
     );
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('UNAUTHORIZED');
+      }
+      return null;
+    }
+
+    const json = await res.json();
+    return json.data || null;
+  } catch (error: any) {
+    if (error.message === 'UNAUTHORIZED') throw error;
+    return null;
+  }
+}
+
+/**
+ * Phase 32.2 — Fetches complete multi-trip transport & attendance history for a student
+ */
+export async function fetchStudentJourneyHistory(
+  schoolId: string,
+  studentId: string,
+  filters?: {
+    startDate?: string;
+    endDate?: string;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<StudentMultiTripHistoryResponse | null> {
+  try {
+    const url = new URL(`${API_BASE_URL}/schools/${schoolId}/students/${studentId}/journey/history`);
+    if (filters?.startDate) url.searchParams.append('startDate', filters.startDate);
+    if (filters?.endDate) url.searchParams.append('endDate', filters.endDate);
+    if (filters?.limit) url.searchParams.append('limit', String(filters.limit));
+    if (filters?.offset) url.searchParams.append('offset', String(filters.offset));
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
 
     if (!res.ok) {
       if (res.status === 401 || res.status === 403) {

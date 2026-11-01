@@ -1,4 +1,4 @@
-﻿import { z } from 'zod';
+import { z } from 'zod';
 
 /**
  * User Roles in School Transport
@@ -3658,9 +3658,11 @@ export const StudentJourneyHistoryResponseSchema = z.object({
     registrationNumber: z.string(),
     routeName: z.string(),
     routeCode: z.string().optional().nullable(),
+    routeType: z.string().optional().nullable(),
     scheduledDate: z.string(),
     status: z.string(),
     driverName: z.string().optional().nullable(),
+    driverPhone: z.string().optional().nullable(),
   }),
   currentStatus: z.string(),
   currentStage: JourneyStageKeySchema.optional(),
@@ -3669,6 +3671,58 @@ export const StudentJourneyHistoryResponseSchema = z.object({
   corrections: z.array(AttendanceCorrectionRecordSchema),
 });
 export type StudentJourneyHistoryResponse = z.infer<typeof StudentJourneyHistoryResponseSchema>;
+
+// Phase 32.2: Multi-Trip Student Transport & Attendance History Schemas
+export const StudentHistoricalTripJourneySchema = z.object({
+  tripId: z.string().uuid(),
+  scheduledDate: z.string(),
+  routeType: z.string(),
+  routeName: z.string(),
+  routeCode: z.string().optional().nullable(),
+  busNumber: z.string(),
+  registrationNumber: z.string(),
+  driverName: z.string().optional().nullable(),
+  driverPhone: z.string().optional().nullable(),
+  tripStatus: z.string(),
+  currentStage: JourneyStageKeySchema,
+  stages: z.array(StudentJourneyStageSchema),
+  attendance: z.object({
+    boardingStatus: z.string().optional().nullable(),
+    boardedAt: z.string().optional().nullable(),
+    pickupStopName: z.string().optional().nullable(),
+    pickupStopSequence: z.number().optional().nullable(),
+    boardingMarkedBy: z.string().optional().nullable(),
+    dropStatus: z.string().optional().nullable(),
+    droppedAt: z.string().optional().nullable(),
+    dropStopName: z.string().optional().nullable(),
+    dropStopSequence: z.number().optional().nullable(),
+    dropMarkedBy: z.string().optional().nullable(),
+  }),
+  corrections: z.array(AttendanceCorrectionRecordSchema),
+});
+export type StudentHistoricalTripJourney = z.infer<typeof StudentHistoricalTripJourneySchema>;
+
+export const StudentMultiTripHistoryResponseSchema = z.object({
+  student: z.object({
+    id: z.string().uuid(),
+    fullName: z.string(),
+    admissionNumber: z.string(),
+    classGrade: z.string().optional().nullable(),
+    section: z.string().optional().nullable(),
+    emergencyPhone: z.string().optional().nullable(),
+  }),
+  summary: z.object({
+    totalTrips: z.number(),
+    totalBoarded: z.number(),
+    totalAbsent: z.number(),
+    totalDeboarded: z.number(),
+    attendanceRatePercent: z.number(),
+    lastRodeAt: z.string().optional().nullable(),
+  }),
+  trips: z.array(StudentHistoricalTripJourneySchema),
+  totalCount: z.number(),
+});
+export type StudentMultiTripHistoryResponse = z.infer<typeof StudentMultiTripHistoryResponseSchema>;
 
 // 4. Trip / Date Attendance History Schemas
 export const TripAttendanceStudentItemSchema = z.object({

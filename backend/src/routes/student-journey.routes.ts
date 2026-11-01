@@ -26,4 +26,17 @@ studentJourneyRouter.get(
   StudentJourneyController.getStudentJourneyTimeline
 );
 
+/**
+ * Route 120 — Retrieve student multi-trip transport & attendance history
+ * GET /schools/:schoolId/students/:studentId/journey/history
+ * Auth: school admin, transport coordinator, or driver
+ */
+studentJourneyRouter.get(
+  '/:schoolId/students/:studentId/journey/history',
+  authenticateToken,
+  requireRoles(UserRole.SCHOOL_ADMIN, UserRole.TRANSPORT_COORDINATOR, UserRole.DRIVER),
+  requireTenantScope('params', 'schoolId'),
+  StudentJourneyController.getStudentJourneyHistory
+);
+
 export default studentJourneyRouter;

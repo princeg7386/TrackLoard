@@ -401,6 +401,41 @@ export class ParentIdentityController {
   }
 
   /**
+   * Phase 32.2 — GET /api/v1/parent/journey/history (or /journey/history/:token)
+   * Return multi-trip transport and attendance history for the authenticated parent tracking session.
+   */
+  public static async getParentJourneyHistory(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const session = req.parentTrackingSession || (req as any).parentSession;
+      if (!session) {
+        res.status(401).json({ success: false, error: { message: 'Parent tracking session not found' } });
+        return;
+      }
+
+      const { startDate, endDate, limit, offset } = req.query;
+
+      const history = await StudentJourneyService.getStudentMultiTripHistory(
+        session.school.id,
+        session.student.id,
+        {
+          startDate: typeof startDate === 'string' ? startDate : undefined,
+          endDate: typeof endDate === 'string' ? endDate : undefined,
+          limit: limit ? Number(limit) : undefined,
+          offset: offset ? Number(offset) : undefined,
+        }
+      );
+
+      sendSuccess(res, history, 'Student journey history retrieved successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * List all parents registered in a school with linked student details
    */
   public static async listParents(

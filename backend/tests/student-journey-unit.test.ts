@@ -281,4 +281,103 @@ describe('StudentJourneyService.getStudentJourneyTimeline', () => {
     expect(sql2).toContain('t.school_id = $2');
     expect(params2[1]).toBe(SCHOOL_ID);
   });
+
+  describe('getStudentMultiTripHistory (Micro-phase 32.2)', () => {
+    it('returns complete multi-trip history with accurate attendance rate and summary', async () => {
+      // 1. student verification
+      mockQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          full_name: 'Aarav Sharma',
+          admission_number: 'ADM-001',
+          grade: '5',
+          section: 'A',
+          emergency_phone: '+919876543210',
+        },
+      ]);
+      // 2. count query
+      mockQuery.mockResolvedValueOnce([{ total_count: 2 }]);
+      // 3. paginated trips
+      mockQuery.mockResolvedValueOnce([{ trip_id: 'trip-1' }, { trip_id: 'trip-2' }]);
+      // 4. trip 1 journey: student verify, journey row, corrections
+      mockQuery.mockResolvedValueOnce([{ id: STUDENT_ID }]);
+      mockQuery.mockResolvedValueOnce([
+        makeRawJourneyRow({
+          trip_id: 'trip-1',
+          boarding_status: 'BOARDED',
+          boarded_at: '2026-11-01T07:30:00.000Z',
+          drop_status: 'DEBOARDED',
+          dropped_at: '2026-11-01T08:00:00.000Z',
+        }),
+      ]);
+      mockQuery.mockResolvedValueOnce([]);
+      // 5. trip 2 journey: student verify, journey row, corrections
+      mockQuery.mockResolvedValueOnce([{ id: STUDENT_ID }]);
+      mockQuery.mockResolvedValueOnce([
+        makeRawJourneyRow({
+          trip_id: 'trip-2',
+          boarding_status: 'ABSENT',
+          boarded_at: '2026-10-31T07:30:00.000Z',
+        }),
+      ]);
+      mockQuery.mockResolvedValueOnce([]);
+
+      const result = await StudentJourneyService.getStudentMultiTripHistory(
+        SCHOOL_ID,
+        STUDENT_ID,
+        { limit: 10, offset: 0 }
+      );
+
+      expect(result.student.id).toBe(STUDENT_ID);
+      expect(result.summary.totalTrips).toBe(2);
+      expect(result.summary.totalBoarded).toBe(1);
+      expect(result.summary.totalAbsent).toBe(1);
+      expect(result.summary.totalDeboarded).toBe(1);
+      expect(result.summary.attendanceRatePercent).toBe(50);
+      expect(result.trips).toHaveLength(2);
+      expect(result.trips[0].tripId).toBe('trip-1');
+      expect(result.trips[0].attendance.boardingStatus).toBe('BOARDED');
+      expect(result.trips[1].tripId).toBe('trip-2');
+      expect(result.trips[1].attendance.boardingStatus).toBe('ABSENT');
+    });
+
+    it('throws NotFoundError if student does not exist or belongs to another school', async () => {
+      mockQuery.mockResolvedValueOnce([]); // no student found
+
+      await expect(
+        StudentJourneyService.getStudentMultiTripHistory(SCHOOL_ID, 'nonexistent-student')
+      ).rejects.toThrow('Student nonexistent-student not found in this school');
+    });
+
+    it('passes date filters into the count and trips queries', async () => {
+      mockQuery.mockResolvedValueOnce([
+        {
+          id: STUDENT_ID,
+          full_name: 'Aarav Sharma',
+          admission_number: 'ADM-001',
+          grade: '5',
+          section: 'A',
+          emergency_phone: '+919876543210',
+        },
+      ]);
+      mockQuery.mockResolvedValueOnce([{ total_count: 0 }]);
+      mockQuery.mockResolvedValueOnce([]);
+
+      const result = await StudentJourneyService.getStudentMultiTripHistory(
+        SCHOOL_ID,
+        STUDENT_ID,
+        { startDate: '2026-11-01', endDate: '2026-11-05' }
+      );
+
+      expect(result.totalCount).toBe(0);
+      expect(result.trips).toHaveLength(0);
+
+      // Check count query params had the dates
+      const countCall = mockQuery.mock.calls[1] as [string, unknown[]];
+      expect(countCall[0]).toContain('t.scheduled_date >= $3');
+      expect(countCall[0]).toContain('t.scheduled_date <= $4');
+      expect(countCall[1]).toContain('2026-11-01');
+      expect(countCall[1]).toContain('2026-11-05');
+    });
+  });
 });
