@@ -16,6 +16,7 @@ import driverAttendanceRouter from './driver-attendance.routes.js';
 import parentWhatsappRouter from './parent-whatsapp.routes.js';
 import notificationRouter from './notification.routes.js';
 import sosRouter from './sos.routes.js';
+import pickupArrivalRouter from './pickup-arrival.routes.js';
 
 const apiRouter = Router();
 
@@ -38,6 +39,7 @@ apiRouter.use('/schools', studentRouter);
 apiRouter.use('/schools', tripRouter);
 apiRouter.use('/schools', notificationRouter);
 apiRouter.use('', sosRouter);
+apiRouter.use('/schools', pickupArrivalRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({

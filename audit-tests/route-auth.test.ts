@@ -13,6 +13,7 @@ const mounts: Record<string, string> = {
   'bus.routes.ts': '/api/v1/schools', 'driver.routes.ts': '/api/v1/schools', 'student.routes.ts': '/api/v1/schools',
 
   'sos.routes.ts': '/api/v1',
+  'pickup-arrival.routes.ts': '/api/v1/schools',
 };
 // Routes that are intentionally public (login / reset / tokenised parent links)
 const PUBLIC = new Set([
