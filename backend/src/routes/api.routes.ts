@@ -15,6 +15,7 @@ import driverWhatsappRouter from './driver-whatsapp.routes.js';
 import driverAttendanceRouter from './driver-attendance.routes.js';
 import parentWhatsappRouter from './parent-whatsapp.routes.js';
 import notificationRouter from './notification.routes.js';
+import sosRouter from './sos.routes.js';
 
 const apiRouter = Router();
 
@@ -36,6 +37,7 @@ apiRouter.use('/schools', driverRouter);
 apiRouter.use('/schools', studentRouter);
 apiRouter.use('/schools', tripRouter);
 apiRouter.use('/schools', notificationRouter);
+apiRouter.use('', sosRouter);
 
 apiRouter.get('/', (_req: Request, res: Response) => {
   res.json({

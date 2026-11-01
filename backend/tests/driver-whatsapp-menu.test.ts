@@ -389,8 +389,8 @@ describe('Phase 17.1: Driver WhatsApp Core — Menu & Daily Operations', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.actionTriggered).toBe(DriverWhatsAppAction.REPORT_PROBLEM);
       expect(res.body.data.replyText).toContain('Report Operational Problem');
-      expect(res.body.data.replyText).toContain('TRAFFIC');
-      expect(res.body.data.replyText).toContain('BREAKDOWN');
+      expect(res.body.data.replyText).toContain('Traffic');
+      expect(res.body.data.replyText).toContain('Vehicle problem');
     });
 
     it('handles Emergency command (5 / emergency / sos)', async () => {

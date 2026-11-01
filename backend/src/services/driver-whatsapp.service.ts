@@ -22,6 +22,7 @@ import { TripService } from './trip.service.js';
 import { ParentIdentityService } from './parent-identity.service.js';
 import { DriverAttendanceService } from './driver-attendance.service.js';
 import { OperationalNotificationService } from './operational-notification.service.js';
+import { SosService } from './sos.service.js';
 import { LongStopDetectionService } from './long-stop-detection.service.js';
 import { BadRequestError, NotFoundError } from '../middlewares/error.middleware.js';
 
@@ -1232,16 +1233,13 @@ export class DriverWhatsappService {
         const isConfirmed = cleanInput.includes('confirm');
 
         if (isConfirmed && menu.activeTrip) {
-          // Trigger immediate SOS broadcast via OperationalNotificationService
-          OperationalNotificationService.notifyEmergencySos({
+          // Route through SosService so last known GPS is fetched automatically
+          SosService.triggerSos({
             schoolId: driver.schoolId,
             tripId: menu.activeTrip.id,
             triggerSource: 'WHATSAPP_DRIVER_CONFIRM_SOS',
-            latitude: 0,
-            longitude: 0,
-            notes: `Emergency SOS triggered via WhatsApp by Driver ${driver.fullName} (${driver.phone})`,
           }).catch((err: unknown) => {
-            logger.warn('[DriverWhatsAppService] Failed to dispatch SOS notification (suppressed)', {
+            logger.warn('[DriverWhatsAppService] SosService.triggerSos fire-and-forget error (suppressed)', {
               tripId: menu.activeTrip?.id,
               error: err instanceof Error ? err.message : String(err),
             });

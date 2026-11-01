@@ -11,6 +11,8 @@ const mounts: Record<string, string> = {
   'auth.routes.ts': '/api/v1/auth', 'driver-auth.routes.ts': '/api/v1/driver/auth', 'parent-identity.routes.ts': '/api/v1/parent',
   'telemetry.routes.ts': '/api/v1/telemetry', 'school-profile.routes.ts': '/api/v1/schools', 'dashboard.routes.ts': '/api/v1/schools',
   'bus.routes.ts': '/api/v1/schools', 'driver.routes.ts': '/api/v1/schools', 'student.routes.ts': '/api/v1/schools',
+
+  'sos.routes.ts': '/api/v1',
 };
 // Routes that are intentionally public (login / reset / tokenised parent links)
 const PUBLIC = new Set([
