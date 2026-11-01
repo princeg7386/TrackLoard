@@ -1556,6 +1556,20 @@ export const IncidentSchema = z.object({
 export type Incident = z.infer<typeof IncidentSchema>;
 
 // 16. SOS Event
+/**
+ * SosEventSchema — Phase 30 software SOS only.
+ *
+ * triggerSource values are deliberately limited to software-initiated sources:
+ *   APP_SOS_BUTTON   — Flutter driver app SOS button
+ *   WHATSAPP_SOS     — Driver confirmed via WhatsApp /sos command
+ *   ADMIN_OVERRIDE   — Admin manually raised an SOS record
+ *
+ * AIS140_PANIC_BUTTON is intentionally NOT included.
+ * Physical AIS-140 VLTD panic button events flow via the MoRTH VAHAN state portal
+ * (a government-mandated parallel channel).  Any future AIS-140 ingest adapter
+ * must be introduced via a dedicated ADR and adapter layer — not by extending
+ * this enum.  See docs/adr/0004-sos-software-vs-ais140-hardware-boundary.md.
+ */
 export const SosEventSchema = z.object({
   id: z.string().uuid().optional(),
   schoolId: z.string().uuid(),

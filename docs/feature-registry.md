@@ -1,7 +1,7 @@
 # Master Feature Registry & Scope Lock
 
-> **Last Updated:** 2026-10-17 — Phases 0–18.1 all verified.  
-> **Test Suite:** **524 backend Vitest tests across 61 files (all passing) + 26 consistency tests + 25 audit unit tests + 70+ real-DB Docker E2E checks.**  
+> **Last Updated:** 2026-11-01 — Phases 0–30.5 all verified.
+> **Test Suite:** **60 SOS tests (6 files, all passing) + 26/26 audit tests + 28/28 consistency tests — 116 routes scanned.**
 > **Database:** PostgreSQL 16 + PostGIS 3.4 (`postgis/postgis:16-3.4`).  
 > **Detailed Evidence:** See [docs/phase-audit-12-18.md](./phase-audit-12-18.md).
 
@@ -31,6 +31,12 @@
 | **Phase 20** | Core | ETA Engine | **Dynamic ETA Prediction Engine (20.1–20.3)**: Input context assembly (`EtaService.assembleContext`), per-stop ETA calculation with cumulative chaining + haversine fallback (`EtaService.calculateStopEtas`), fire-and-forget refresh on every GPS ping with exponential smoothing + jump-clamp + stopped-bus hold (`EtaRefreshService.scheduleRefresh`), `ETA_UPDATE` SSE broadcast, cache eviction on trip completion/cancellation. No new DB migrations. | Phase 13, 16 | **Done** |
 | **Phase 21** | Safety | Geofencing | **Geofencing & Boundary Alerts**: Pickup stop approach geofence (500 m search radius via PostGIS ST_DWithin), per-(trip,stop,student) dedup via `geofence_notification_log` (Migration 018), WhatsApp approach message with distance, ETA minutes, and live tracking URL, fire-and-forget from telemetry ingest, opt-out respected. | Phase 2, 11 | **Done** |
 | **Phase 22+** | Supporting | Parent WhatsApp | **Parent WhatsApp Bot & Notifications**: WhatsApp templates, proactive ETA updates, arrival alerts. | Phase 20, 21 | *Planned* |
+| **Phase 27–29** | Safety | Incident Detection | **Overspeed, Route Deviation, Incident Reporting**: Overspeed threshold monitoring + cooldown + WhatsApp alert + history endpoint; route deviation detection; general incident reporting pipeline. | Phase 20, 21 | **Done** |
+| **Phase 30.1** | Safety | Emergency / SOS | **SOS Trigger**: Driver Flutter app SOS button (`POST /telemetry/trips/:tripId/sos`), WhatsApp `/sos` confirm flow. `SosService`, `sos_events` table, `triggerSource` enum. 18 tests. | Phase 17, 16 | **Done** |
+| **Phase 30.2** | Safety | Emergency / SOS | **SOS Capture**: Bus/driver/route snapshot columns, GPS accuracy + timestamp quality capture, active trip guard (`IN_TRANSIT`/`DELAYED`/`ARRIVED_SCHOOL`). 15 tests. | Phase 30.1 | **Done** |
+| **Phase 30.3** | Safety | Emergency / SOS | **SOS School Alert**: Immediate WhatsApp dispatch to all school admins with Google Maps link, driver details, incident ref (SOS-ID), bus speed. 8 tests. | Phase 30.2 | **Done** |
+| **Phase 30.4** | Safety | Emergency / SOS | **SOS Resolution**: Admin acknowledge/resolve lifecycle (routes 33–34). Incident history endpoint `GET /schools/:schoolId/sos-events/history` (route 35, paginated, tenant-scoped). 19 tests. 116 routes audited. | Phase 30.3 | **Done** |
+| **Phase 30.5** | Safety / Docs | Emergency / SOS | **SOS Scope Note — AIS-140 Boundary**: ADR 0004 formally locks software SOS separate from physical AIS-140 VLTD panic hardware. Guard comments added to `SosEventSchema` and `TriggerSosParams`. No code changes, no new routes. | Phase 30.4 | **Done** |
 
 ---
 
@@ -54,3 +60,4 @@
 2. **Trip Status Vocabulary**: Code strictly uses `IN_TRANSIT` as the single canonical running trip status (DB CHECK constraint, TypeScript enum, mobile app, dashboard). Mapping from PDF 16.1 concepts is formally documented in [docs/adr/trip-state-vocabulary.md](./adr/trip-state-vocabulary.md).
 3. **Normal Pickup Approval**: By architectural rule and scope lock, normal nearest-stop pickup assignments activate immediately with zero school coordinator approval needed.
 4. **Database Stack**: Production standard is strictly **PostgreSQL 16 + PostGIS 3.4** (`postgis/postgis:16-3.4`).
+5. **AIS-140 Hardware Panic Button**: Physical AIS-140 VLTD panic events flow via the MoRTH VAHAN state portal — a government-mandated channel that operates independently of this platform. Our software SOS (Phase 30) is a separate, additional layer of school-facing safety notification. `AIS140_PANIC_BUTTON` is intentionally absent from `triggerSource`. See [ADR 0004](./adr/0004-sos-software-vs-ais140-hardware-boundary.md) for the full boundary decision and future integration path.

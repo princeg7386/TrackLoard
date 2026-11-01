@@ -60,7 +60,21 @@ export interface SosEventRecord {
 export interface TriggerSosParams {
   schoolId: string;
   tripId: string;
-  /** Source of trigger — defaults to APP_SOS_BUTTON */
+  /**
+   * Source of trigger — defaults to APP_SOS_BUTTON.
+   *
+   * Allowed values:
+   *   APP_SOS_BUTTON              — Driver tapped the SOS button in the Flutter app.
+   *   WHATSAPP_DRIVER_CONFIRM_SOS — Driver confirmed SOS via WhatsApp /sos command.
+   *   ADMIN_OVERRIDE              — School administrator manually raised an SOS record.
+   *
+   * ⚠️  AIS-140 HARDWARE PANIC BUTTON IS NOT INCLUDED HERE (by design).
+   * Physical AIS-140 VLTD panic events flow via the MoRTH VAHAN state portal — a
+   * separate, government-mandated channel that operates independently of this
+   * platform.  See docs/adr/0004-sos-software-vs-ais140-hardware-boundary.md.
+   * Any future AIS-140 ingest MUST go through a dedicated adapter and a new ADR;
+   * do NOT add 'AIS140_PANIC_BUTTON' to this union without that process.
+   */
   triggerSource?: 'APP_SOS_BUTTON' | 'WHATSAPP_DRIVER_CONFIRM_SOS' | 'ADMIN_OVERRIDE';
   /** Override coordinates. If omitted, last known GPS point is used. */
   latitude?: number;
